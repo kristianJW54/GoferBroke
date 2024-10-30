@@ -27,3 +27,11 @@
 > - -//
 
 
+### 6) **PhoneBook Registry**
+
+> - -//
+
+
+### 7) **Scaling, Partitioning and Replication**
+
+> - -//
