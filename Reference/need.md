@@ -27,11 +27,15 @@
 > - -//
 
 
-### 6) **PhoneBook Registry**
+### 6) **Scaling, Partitioning and Replication**
 
 > - -//
 
 
-### 7) **Scaling, Partitioning and Replication**
+### 7) **Gossip Protocol**
 
-> - -//
+> - Will need cluster URLS as entry point
+> - Message protocol for gossip exchange
+> - Heartbeat and health checks
+> - Dead checks
+> - 
