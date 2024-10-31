@@ -15,11 +15,11 @@ func TestServerRunning(t *testing.T) {
 
 	gbs := NewServer("test-server", "localhost", "8081", lc)
 
-	go gbs.AcceptLoop("Client Loop")
+	go gbs.StartServer()
 	//
-	time.Sleep(3 * time.Second)
+	time.Sleep(8 * time.Second)
 	//
-	gbs.Shutdown()
+	go gbs.Shutdown()
 
 	//fmt.Printf("Server Name: %s \nResult: %s\n", gbs.ServerName, gbs.Status())
 
