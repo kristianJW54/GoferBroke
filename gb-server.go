@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"sync"
-	"time"
 )
 
 //TODO -- STEPS FOR TCP ACCEPT LOOP SERVER CONTROL
@@ -61,25 +60,25 @@ func (s *GBServer) StartServer() {
 	// Reach out to clusters
 	// Get info etc
 
-	s.serverWg.Add(1)
-
-	go func() {
-		defer s.serverWg.Done()
-		for i := 0; i < 3; i++ {
-			switch i {
-			case 0:
-				log.Println("Connecting...")
-				time.Sleep(1 * time.Second)
-			case 1:
-				log.Println("Reaching out to cluster map")
-				time.Sleep(1 * time.Second)
-			case 2:
-				log.Println("Gossiping with Seed Server")
-				time.Sleep(1 * time.Second)
-			}
-		}
-	}()
-	s.serverWg.Wait()
+	//s.serverWg.Add(1)
+	//
+	//go func() {
+	//	defer s.serverWg.Done()
+	//	for i := 0; i < 3; i++ {
+	//		switch i {
+	//		case 0:
+	//			log.Println("Connecting...")
+	//			time.Sleep(1 * time.Second)
+	//		case 1:
+	//			log.Println("Reaching out to cluster map")
+	//			time.Sleep(1 * time.Second)
+	//		case 2:
+	//			log.Println("Gossiping with Seed Server")
+	//			time.Sleep(1 * time.Second)
+	//		}
+	//	}
+	//}()
+	//s.serverWg.Wait()
 
 	s.AcceptLoop("client-test")
 
@@ -109,46 +108,41 @@ func (s *GBServer) AcceptLoop(name string) {
 
 // Clients are created and stored by the server to propagate during gossip with the mesh
 
-func (s *GBServer) accept(l net.Listener, name string) {
+//=======================================================
 
-	retryAttempt := 5
+func (s *GBServer) accept(l net.Listener, name string) {
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			select {
 			case <-s.serverContext.Done():
-				log.Printf("Closing listener %s\n", name)
+				log.Println("Server context done")
 				return
 			default:
-				if retryAttempt < 0 {
-					log.Printf("Error accepting connection: %s\n", err) // retry mechanism...?
-					break
-				}
-				log.Printf("Retrying connection %s\n", name)
-				retryAttempt--
-				continue
+				log.Printf("Error accepting connection: %s\n", err)
+				break
 			}
 		}
-
-		// Need to create a go-routine manager which will use client count + lead metrics to determine if
-		// more can be added to the wait group and more go-routines made
 		s.serverWg.Add(1)
-		go func(c net.Conn) {
+		go func() {
 			defer s.serverWg.Done()
-			defer c.Close()
-			s.handle(c)
-		}(conn)
+			defer conn.Close()
+			s.handle(conn)
+		}()
 	}
 
-	//////////////
 }
 
-func (s *GBServer) Shutdown() {
+//=======================================================
 
+func (s *GBServer) Shutdown() {
+	s.serverContextCancel()
 	if s.listener != nil {
 		s.listener.Close()
 	}
+
+	close(s.quitCtx)
 
 	log.Printf("Waiting for connections to close")
 	s.serverWg.Wait()
