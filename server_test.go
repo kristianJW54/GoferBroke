@@ -14,7 +14,7 @@ func TestServerRunning(t *testing.T) {
 
 	lc := net.ListenConfig{}
 
-	gbs := NewServer("test-server", "localhost", "8081", lc)
+	gbs := NewServer("test-server", "tcp", "localhost", "8081", lc)
 
 	go gbs.StartServer()
 

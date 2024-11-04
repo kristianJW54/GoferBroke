@@ -15,16 +15,33 @@ import (
 // - 2) Server Context and signals to control the server instance
 // - 3) An Accept Loop function which sets up an accept loop and controls the internal accept go-routine
 // - 4) An internal accept connection function which will hold the accept loop
+// - 5) Add comprehensive wrappers for go routine control and tracking
+
+// Maybe want to declare some global const names for contexts -- seedServerContext -- nodeContext etc
+
+type Config struct{} //Temp will be moved
 
 type GBServer struct {
-	ServerName          string
-	Address             string
-	Port                string
-	listener            net.Listener
-	listenConfig        net.ListenConfig
-	status              int
+	//Server Info
+	ServerName string //Set by config or flags
+	addr       string
+	tcpAddr    *net.TCPAddr
+	// May want some resolver here to get name or something returnable for server info from the addr
+
+	//TCP
+	listener     net.Listener
+	listenConfig net.ListenConfig
+
+	//Context
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
+
+	config *Config
+
+	//Distributed Info
+	theIn         string //Address and port of seed server -- config || flags
+	itsWhoYouKnow map[string]string
+	// func (ip IP) Equal(x IP) bool
 
 	quitCtx chan struct{}
 	done    chan bool
@@ -33,16 +50,22 @@ type GBServer struct {
 	serverWg sync.WaitGroup
 }
 
-func NewServer(serverName string, address string, port string, lc net.ListenConfig) *GBServer {
+func NewServer(serverName string, network, host string, port string, lc net.ListenConfig) *GBServer {
+
+	// TODO May want a more robust IP checking and resolving -- ?
+	addr := net.JoinHostPort(host, port)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
 		ServerName:          serverName,
-		Address:             address,
-		Port:                port,
+		addr:                addr,
+		tcpAddr:             tcpAddr,
 		listenConfig:        lc,
-		status:              0,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
 
@@ -56,29 +79,7 @@ func NewServer(serverName string, address string, port string, lc net.ListenConf
 
 func (s *GBServer) StartServer() {
 
-	// Run checks
-	// Reach out to clusters
-	// Get info etc
-
-	//s.serverWg.Add(1)
-	//
-	//go func() {
-	//	defer s.serverWg.Done()
-	//	for i := 0; i < 3; i++ {
-	//		switch i {
-	//		case 0:
-	//			log.Println("Connecting...")
-	//			time.Sleep(1 * time.Second)
-	//		case 1:
-	//			log.Println("Reaching out to cluster map")
-	//			time.Sleep(1 * time.Second)
-	//		case 2:
-	//			log.Println("Gossiping with Seed Server")
-	//			time.Sleep(1 * time.Second)
-	//		}
-	//	}
-	//}()
-	//s.serverWg.Wait()
+	//Checks and other start up here
 
 	s.AcceptLoop("client-test")
 
@@ -93,7 +94,7 @@ func (s *GBServer) AcceptLoop(name string) {
 
 	log.Printf("Creating listener on %s\n", s.ServerName)
 
-	l, err := s.listenConfig.Listen(s.serverContext, "tcp", net.JoinHostPort(s.Address, s.Port))
+	l, err := s.listenConfig.Listen(s.serverContext, s.tcpAddr.Network(), s.tcpAddr.String())
 	if err != nil {
 		log.Printf("Error creating listener: %s\n", err)
 	}
@@ -163,17 +164,4 @@ func (s *GBServer) handle(conn net.Conn) {
 	}
 }
 
-func (s *GBServer) Status() string {
-
-	var stat string
-
-	switch s.status {
-	case 2:
-		stat = "_CLOSED_"
-	case 1:
-		stat = "_ALIVE_"
-	case 0:
-		stat = "_OFF_"
-	}
-	return stat
-}
+//=======================================================
