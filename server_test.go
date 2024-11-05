@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"goferMQ/src"
 	"net"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ func TestServerRunning(t *testing.T) {
 
 	lc := net.ListenConfig{}
 
-	gbs := NewServer("test-server", "tcp", "localhost", "8081", lc)
+	gbs := src.NewServer("test-server", "tcp", "localhost", "8081", lc)
 
 	go gbs.StartServer()
 
