@@ -2,10 +2,12 @@ package src
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 //TODO -- STEPS FOR TCP ACCEPT LOOP SERVER CONTROL
@@ -17,18 +19,43 @@ import (
 // - 4) An internal accept connection function which will hold the accept loop
 // - 5) Add comprehensive wrappers for go routine control and tracking
 
+// CONSIDERATIONS //
+// - TCP Keep-Alives default to no less than two hours which means that using anti-entropy with direct and in-direct
+//		heartbeats along with gossip exchanges, the TCP connection will be kept alive unless detected otherwise by the
+//		algorithm
+//------------------------
+
 // Maybe want to declare some global const names for contexts -- seedServerContext -- nodeContext etc
 
-type Config struct{} //Temp will be moved
+const (
+	PING = "PING\r\n"
+	ACK  = "ACK\r\n"
+	MTU  = 1500
+)
+
+type Config struct {
+	Seed net.IP
+} //Temp will be moved
+
+//===================================================================================
+// Main Server
+//===================================================================================
 
 type GBServer struct {
-	//Server Info
-	ServerName string //Set by config or flags
-	addr       string
-	tcpAddr    *net.TCPAddr
-	// May want some resolver here to get name or something returnable for server info from the addr
+	//Server Info - can add separate info struct later
+	ServerName    string //Set by config or flags
+	BroadcastName string //ID and timestamp
+	initialised   int64  //time of server creation
+	addr          string
+	tcpAddr       *net.TCPAddr
 
-	//TCP
+	// Metrics or values for gossip
+	// CPU Load
+	// Latency ...
+	//
+
+	//TCP - May want to abstract or package this elsewhere and let the server hold that package to conduct it's networking...?
+	// Network package here?? which can hold persistent connections?
 	listener     net.Listener
 	listenConfig net.ListenConfig
 
@@ -39,8 +66,12 @@ type GBServer struct {
 	config *Config
 
 	//Distributed Info
-	theIn         string //Address and port of seed server -- config || flags
-	itsWhoYouKnow map[string]string
+	isOriginal    bool
+	itsWhoYouKnow *ClusterMap
+	//Connections map??
+
+	cRM sync.RWMutex
+
 	// func (ip IP) Equal(x IP) bool
 
 	quitCtx chan struct{}
@@ -50,7 +81,7 @@ type GBServer struct {
 	serverWg sync.WaitGroup
 }
 
-func NewServer(serverName string, network, host string, port string, lc net.ListenConfig) *GBServer {
+func NewServer(serverName string, config *Config, host string, port string, lc net.ListenConfig) *GBServer {
 
 	// TODO May want a more robust IP checking and resolving -- ?
 	addr := net.JoinHostPort(host, port)
@@ -59,15 +90,26 @@ func NewServer(serverName string, network, host string, port string, lc net.List
 		log.Fatal(err)
 	}
 
+	createdAt := time.Now()
+
+	broadCastName := fmt.Sprintf("%s_%s", serverName, createdAt.Format("20060102150405"))
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
 		ServerName:          serverName,
+		BroadcastName:       broadCastName,
+		initialised:         createdAt.Unix(),
 		addr:                addr,
 		tcpAddr:             tcpAddr,
 		listenConfig:        lc,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
+
+		config: config,
+
+		isOriginal:    false,
+		itsWhoYouKnow: &ClusterMap{},
 
 		quitCtx: make(chan struct{}, 1),
 		done:    make(chan bool, 1),
@@ -77,22 +119,48 @@ func NewServer(serverName string, network, host string, port string, lc net.List
 	return s
 }
 
+// Start server will be a go routine alongside this, the server will have to perform connection dials to other servers
+// to maintain persistent connections and perform reconciliation of cluster map
+
 func (s *GBServer) StartServer() {
 
 	//Checks and other start up here
+
+	//Need to:
+	//	Initialise the cluster map and check for seed ip
+	//	If seed ip is equal to our identity then we are the seed
+	//
+	//	Construct our identity
+	//
+	//	Figure out if we need to contact seed and perform update request to begin gossip
+	//
+	//	Establish time synchronisations
+
+	// This needs to be a method with locks
+	seed := s.config.Seed
+	switch {
+	case seed == nil:
+		s.isOriginal = true
+		s.itsWhoYouKnow.seedServer.seedAddr = s.tcpAddr
+	case seed.Equal(s.tcpAddr.IP):
+		s.isOriginal = true
+	default:
+		s.isOriginal = false
+	}
 
 	s.AcceptLoop("client-test")
 
 }
 
-// Serve - Accept should be a go-routine which sits within a wait group or a blocking channel
-// handle connections are within which are their own go-routine and will have signals and context
+// handle connections are within AcceptLoop which are their own go-routine and will have signals and context
+//
 
 func (s *GBServer) AcceptLoop(name string) {
 
 	log.Printf("Starting accept loop -- %s\n", name)
 
-	log.Printf("Creating listener on %s\n", s.ServerName)
+	log.Printf("Creating listener on %s\n", s.BroadcastName)
+	log.Printf("Seed Server %v\n", s.itsWhoYouKnow.seedServer.seedAddr.String())
 
 	l, err := s.listenConfig.Listen(s.serverContext, s.tcpAddr.Network(), s.tcpAddr.String())
 	if err != nil {
@@ -148,6 +216,8 @@ func (s *GBServer) Shutdown() {
 	log.Printf("Waiting for connections to close")
 	s.serverWg.Wait()
 }
+
+//=======================================================
 
 func (s *GBServer) handle(conn net.Conn) {
 	buf := make([]byte, 2048)
