@@ -1,8 +1,7 @@
-package main
+package src
 
 import (
 	"fmt"
-	"goferMQ/src"
 	"net"
 	"testing"
 	"time"
@@ -17,11 +16,11 @@ func TestServerRunning(t *testing.T) {
 
 	ip := net.ParseIP("localhost:8081")
 
-	config := &src.Config{
+	config := &Config{
 		Seed: ip,
 	}
 
-	gbs := src.NewServer("test-server", config, "localhost", "8081", lc)
+	gbs := NewServer("test-server", config, "localhost", "8081", lc)
 
 	go gbs.StartServer()
 

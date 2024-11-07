@@ -4,12 +4,12 @@ node 1 sends digest high level to node 2
 
 SYN ACK =
 
-node 2 computes a delta for node 1 based on what it is missing
+node 2 computes a delta for node 1 based on what it is missing - sends the delta
 node 2 also sends its own digest
 
 ACK =
 
-node 1 applies the changes from node 2s delta
+node 1 applies the changes from node 2s delta - sends the delta
 node 1 sends its own delta based on node 2s digest
 
 FINISH =
@@ -24,3 +24,12 @@ CONSIDERATION:
 message size and omitting data
 flow control
 cleaning up dead nodes
+
+
+-------------------------------------
+
+Handling Server Connections
+
+Dial
+Make Chan
+Access Chan?

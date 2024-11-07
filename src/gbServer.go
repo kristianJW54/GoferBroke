@@ -69,7 +69,11 @@ type GBServer struct {
 	isOriginal    bool
 	itsWhoYouKnow *ClusterMap
 	isGossiping   chan bool
-	//Connections map??
+
+	//Connection Handling
+	phoneBook map[string]*net.Conn //Can we point to a wrapped conn struct which is designed for our use case?
+	connMutex sync.RWMutex
+	pool      sync.Pool // Maybe to use with varying buffer sizes
 
 	cRM sync.RWMutex
 
