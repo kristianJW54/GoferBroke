@@ -27,15 +27,14 @@ import (
 
 // Maybe want to declare some global const names for contexts -- seedServerContext -- nodeContext etc
 
-const (
-	PING = "PING\r\n"
-	ACK  = "ACK\r\n"
-	MTU  = 1500
-)
-
 type Config struct {
 	Seed net.IP
 } //Temp will be moved
+
+type gbNet struct {
+	net.Listener
+	listenerConfig net.ListenConfig
+}
 
 //===================================================================================
 // Main Server
@@ -56,6 +55,7 @@ type GBServer struct {
 
 	//TCP - May want to abstract or package this elsewhere and let the server hold that package to conduct it's networking...?
 	// Network package here?? which can hold persistent connections?
+	// We can give an interface here which we can pass in mocks or different methods with controls and configs?
 	listener     net.Listener
 	listenConfig net.ListenConfig
 
@@ -68,11 +68,10 @@ type GBServer struct {
 	//Distributed Info
 	isOriginal    bool
 	itsWhoYouKnow *ClusterMap
+	isGossiping   chan bool
 	//Connections map??
 
 	cRM sync.RWMutex
-
-	// func (ip IP) Equal(x IP) bool
 
 	quitCtx chan struct{}
 	done    chan bool
@@ -83,7 +82,6 @@ type GBServer struct {
 
 func NewServer(serverName string, config *Config, host string, port string, lc net.ListenConfig) *GBServer {
 
-	// TODO May want a more robust IP checking and resolving -- ?
 	addr := net.JoinHostPort(host, port)
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {

@@ -18,7 +18,14 @@ MTU And Gossip Messages
 
 STEP BY STEP
 
+Initialise server with configs
+    -
+
 Server starts and needs to get the lay of the land
+    -
+
+
+
 Checks for seed IPs
 If it is a seed then it establishes its identity and listens for connections
 
