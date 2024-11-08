@@ -30,6 +30,6 @@ cleaning up dead nodes
 
 Handling Server Connections
 
-Dial
-Make Chan
+Dial - initially
+
 Access Chan?

@@ -222,7 +222,11 @@ func (s *GBServer) Shutdown() {
 //=======================================================
 
 func (s *GBServer) handle(conn net.Conn) {
-	buf := make([]byte, 2048)
+	buf := make([]byte, MAX_MESSAGE_SIZE)
+
+	//TODO Look at implementing a specific read function to handle our TCP Packets and have
+	// our own protocol specific rules around read
+
 	for {
 		n, err := conn.Read(buf)
 		if err != nil && err != io.EOF {
@@ -232,8 +236,22 @@ func (s *GBServer) handle(conn net.Conn) {
 		if n == 0 {
 			return
 		}
-		log.Printf("received from %v: %s", conn.RemoteAddr(), string(buf[:n]))
+
+		//TODO Implement a handler router for server-server connections and client-server connections
+		// Similar to Nats where the read and write loop are run inside the handle (or in NATS case the connFunc)
+
+		// Create a GossipPayload to unmarshal the received data into
+		var dataPayload TCPPayload
+		err = dataPayload.UnmarshallBinaryV1(buf[:n]) // Read the exact number of bytes
+		if err != nil {
+			log.Println("unmarshall error", err)
+			return
+		}
+
+		// Log the decoded data (as a string)
+		log.Printf("%v %v %v %v %s", dataPayload.Header.ProtoVersion, dataPayload.Header.MessageType, dataPayload.Header.Command, dataPayload.Header.MessageLength, string(dataPayload.Data))
 	}
+
 }
 
 //=======================================================
