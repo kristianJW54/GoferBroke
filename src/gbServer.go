@@ -28,7 +28,7 @@ import (
 // Maybe want to declare some global const names for contexts -- seedServerContext -- nodeContext etc
 
 type Config struct {
-	Seed net.IP
+	Seed *net.TCPAddr
 } //Temp will be moved
 
 type gbNet struct {
@@ -126,32 +126,78 @@ func NewServer(serverName string, config *Config, host string, port string, lc n
 
 func (s *GBServer) StartServer() {
 
+	fmt.Printf("Server starting: %s\n", s.ServerName)
+	fmt.Printf("Server address: %s, Seed address: %s\n", s.tcpAddr, s.config.Seed)
+
 	//Checks and other start up here
 
-	//Need to:
-	//	Initialise the cluster map and check for seed ip
-	//	If seed ip is equal to our identity then we are the seed
-	//
-	//	Construct our identity
-	//
-	//	Figure out if we need to contact seed and perform update request to begin gossip
-	//
-	//	Establish time synchronisations
-
 	// This needs to be a method with locks
-	seed := s.config.Seed
+
+	// Move this seed logic elsewhere
+	seed := s.config
 	switch {
-	case seed == nil:
+	case seed.Seed == nil:
+		// If the Seed is nil, we are the original (seed) node
 		s.isOriginal = true
 		s.itsWhoYouKnow.seedServer.seedAddr = s.tcpAddr
-	case seed.Equal(s.tcpAddr.IP):
+	case seed.Seed.IP.Equal(s.tcpAddr.IP) && seed.Seed.Port == s.tcpAddr.Port:
+		// If the seed's IP and Port match our own TCP address, we're the original (seed) node
 		s.isOriginal = true
 	default:
+		// Otherwise, we're not the original seed node
 		s.isOriginal = false
 	}
 
-	s.AcceptLoop("client-test")
+	//---------------- Accept Loop ----------------//
+	s.AcceptLoop("client-test") //TODO Need to look at this
 
+	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
+
+	//---------------- Seed Dial ----------------//
+	if !s.isOriginal {
+		// If we're not the original (seed) node, connect to the seed server
+		go s.connectToSeed()
+	}
+
+}
+
+func (s *GBServer) connectToSeed() error {
+
+	//Create info message
+	data := []byte(s.ServerName)
+
+	header := ProtoHeader{
+		ProtoVersion:  PROTO_VERSION_1,
+		ClientType:    NODE,
+		MessageType:   ENTRY_TO_CLUSTER,
+		Command:       NEW_NODE,
+		MessageLength: uint16(len(data)),
+	}
+
+	payload := &TCPPayload{
+		header,
+		data,
+	}
+
+	fmt.Println("Attempting to connect to seed server:", s.config.Seed.String())
+
+	conn, err := net.Dial("tcp", s.config.Seed.String())
+	if err != nil {
+		return fmt.Errorf("error connecting to server: %s", err)
+	}
+	defer conn.Close()
+
+	packet, err := payload.MarshallBinary()
+	if err != nil {
+		return fmt.Errorf("error marshalling payload: %s", err)
+	}
+
+	_, err = conn.Write(packet) // Sending the packet
+	if err != nil {
+		return fmt.Errorf("error writing to connection: %s", err)
+	}
+
+	return nil
 }
 
 // handle connections are within AcceptLoop which are their own go-routine and will have signals and context
@@ -162,7 +208,7 @@ func (s *GBServer) AcceptLoop(name string) {
 	log.Printf("Starting accept loop -- %s\n", name)
 
 	log.Printf("Creating listener on %s\n", s.BroadcastName)
-	log.Printf("Seed Server %v\n", s.itsWhoYouKnow.seedServer.seedAddr.String())
+	log.Printf("Seed Server %v %v\n", s.config.Seed, s.config.Seed.Port)
 
 	l, err := s.listenConfig.Listen(s.serverContext, s.tcpAddr.Network(), s.tcpAddr.String())
 	if err != nil {
@@ -199,7 +245,7 @@ func (s *GBServer) accept(l net.Listener, name string) {
 		go func() {
 			defer s.serverWg.Done()
 			defer conn.Close()
-			s.handle(conn)
+			s.handle(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
 		}()
 	}
 
@@ -249,7 +295,15 @@ func (s *GBServer) handle(conn net.Conn) {
 		}
 
 		// Log the decoded data (as a string)
-		log.Printf("%v %v %v %v %s", dataPayload.Header.ProtoVersion, dataPayload.Header.MessageType, dataPayload.Header.Command, dataPayload.Header.MessageLength, string(dataPayload.Data))
+		log.Printf(
+			"%v %v %v %v %v %s",
+			dataPayload.Header.ProtoVersion,
+			dataPayload.Header.ClientType,
+			dataPayload.Header.MessageType,
+			dataPayload.Header.Command,
+			dataPayload.Header.MessageLength,
+			string(dataPayload.Data),
+		)
 	}
 
 }

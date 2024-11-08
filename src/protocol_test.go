@@ -11,9 +11,12 @@ func TestDataTransfer(t *testing.T) {
 	lc := net.ListenConfig{}
 
 	ip := net.ParseIP("localhost:8081")
+	port := 8081
+
+	confAddr := &net.TCPAddr{IP: ip, Port: port}
 
 	config := &Config{
-		Seed: ip,
+		confAddr,
 	}
 
 	gbs := NewServer("test-server", config, "localhost", "8081", lc)
@@ -70,6 +73,7 @@ func mockDataConn(t *testing.T) []byte {
 	// Set up the header
 	header := ProtoHeader{
 		ProtoVersion:  PROTO_VERSION_1,
+		ClientType:    NODE,
 		MessageType:   TEST,
 		Command:       GOSSIP,
 		MessageLength: length,

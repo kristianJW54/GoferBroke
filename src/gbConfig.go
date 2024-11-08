@@ -1,11 +1,7 @@
 package src
 
-type GbConfig struct {
-	SeedServers []SeedServer
-}
+import "net"
 
-type SeedServer struct {
-	ServerName string
-	ServerIP   string
-	ServerPort int
+type GbConfig struct {
+	SeedServers []net.Addr
 }

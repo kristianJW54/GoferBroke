@@ -14,15 +14,20 @@ func TestServerRunning(t *testing.T) {
 
 	lc := net.ListenConfig{}
 
-	ip := net.ParseIP("localhost:8081")
+	ip := net.ParseIP("127.0.0.1") // Use the full IP address
+	port := 8081
+	confAddr := &net.TCPAddr{IP: ip, Port: port}
 
+	// Initialize config with the seed server address
 	config := &Config{
-		Seed: ip,
+		Seed: confAddr, // Ensure the seed contains both the IP and port
 	}
 
 	gbs := NewServer("test-server", config, "localhost", "8081", lc)
+	gbs2 := NewServer("test-server-2", config, "localhost", "8082", lc)
 
 	go gbs.StartServer()
+	go gbs2.StartServer()
 
 	time.Sleep(1 * time.Second)
 	// Dial the TCP server
@@ -38,6 +43,7 @@ func TestServerRunning(t *testing.T) {
 	//
 
 	go gbs.Shutdown()
+	go gbs2.Shutdown()
 
 	// Wait for 10 seconds
 	time.Sleep(10 * time.Second)
