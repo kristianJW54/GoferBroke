@@ -156,7 +156,7 @@ func (s *GBServer) StartServer() {
 	//---------------- Seed Dial ----------------//
 	if !s.isOriginal {
 		// If we're not the original (seed) node, connect to the seed server
-		go s.connectToSeed()
+		s.connectToSeed()
 	}
 
 }
@@ -166,7 +166,7 @@ func (s *GBServer) connectToSeed() error {
 	//Create info message
 	data := []byte(s.ServerName)
 
-	header := ProtoHeader{
+	header := &ProtoHeader{
 		ProtoVersion:  PROTO_VERSION_1,
 		ClientType:    NODE,
 		MessageType:   ENTRY_TO_CLUSTER,
@@ -219,7 +219,7 @@ func (s *GBServer) AcceptLoop(name string) {
 	s.listener = l
 
 	// Can begin go-routine for accepting connections
-	go s.accept(l, "client-test")
+	go s.accept(l, "client-test") // TODO Need to make inti a client management with routines for read + write for both server and client types
 
 }
 
@@ -287,7 +287,8 @@ func (s *GBServer) handle(conn net.Conn) {
 		// Similar to Nats where the read and write loop are run inside the handle (or in NATS case the connFunc)
 
 		// Create a GossipPayload to unmarshal the received data into
-		var dataPayload TCPPayload
+		dataPayload := &TCPPayload{&ProtoHeader{}, buf} //TODO This needs to a function to create a buffered payload
+
 		err = dataPayload.UnmarshallBinaryV1(buf[:n]) // Read the exact number of bytes
 		if err != nil {
 			log.Println("unmarshall error", err)

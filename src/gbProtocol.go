@@ -49,6 +49,23 @@ type ProtoHeader struct {
 	//May Implement Data length if we want dynamic header size for evolving protocol
 }
 
+func NewProtoHeader(version, clientType, messageType, command uint8) *ProtoHeader {
+	return &ProtoHeader{
+		version,
+		clientType,
+		messageType,
+		command,
+		0,
+	}
+}
+
+func (header *ProtoHeader) addMessageLength() {
+	return //TODO Finish
+}
+
+//TODO Think about adding protocol specific serialisation independent of client data
+//TODO Think about header serialisation...? adding to data after...? easier to get length?
+
 type synNodeMap struct { //Maps node id to max version
 	nodeID     []byte
 	maxVersion uint64
@@ -71,7 +88,7 @@ type synAckPacket struct {
 }
 
 type TCPPayload struct {
-	Header ProtoHeader
+	Header *ProtoHeader
 	Data   []byte
 }
 
@@ -110,6 +127,7 @@ func (gp *TCPPayload) MarshallBinary() (data []byte, err error) {
 }
 
 func (gp *TCPPayload) UnmarshallBinaryV1(data []byte) error {
+
 	if data[0] != PROTO_VERSION_1 {
 		return fmt.Errorf("protocol version mismatch. Expected %d, got %d", gp.Header.ProtoVersion, data[0])
 	}

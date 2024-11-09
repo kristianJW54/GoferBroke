@@ -7,16 +7,16 @@ import (
 	"time"
 )
 
-func TestDataTransfer(t *testing.T) {
+func TestHeaders(t *testing.T) {
 	lc := net.ListenConfig{}
 
-	ip := net.ParseIP("localhost:8081")
+	ip := net.ParseIP("127.0.0.1") // Use the full IP address
 	port := 8081
-
 	confAddr := &net.TCPAddr{IP: ip, Port: port}
 
+	// Initialize config with the seed server address
 	config := &Config{
-		confAddr,
+		Seed: confAddr, // Ensure the seed contains both the IP and port
 	}
 
 	gbs := NewServer("test-server", config, "localhost", "8081", lc)
@@ -71,7 +71,7 @@ func mockDataConn(t *testing.T) []byte {
 	length := uint16(len(data))
 
 	// Set up the header
-	header := ProtoHeader{
+	header := &ProtoHeader{
 		ProtoVersion:  PROTO_VERSION_1,
 		ClientType:    NODE,
 		MessageType:   TEST,
