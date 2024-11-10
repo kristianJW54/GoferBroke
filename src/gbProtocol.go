@@ -42,19 +42,19 @@ const (
 
 //Think about versioning, if more things get added to the header - in serialisation we need to account for different versions
 
-type ProtoHeader struct {
+type PacketHeader struct {
 	ProtoVersion  uint8 // Protocol version (1 byte)
 	ClientType    uint8
 	MessageType   uint8 // Message type (e.g., SYN, SYN_ACK, ACK..)
 	Command       uint8
-	MessageLength uint16 // Total message length (2 bytes)
+	PayloadLength uint16 // Total message length (2 bytes)
 	//May Implement Data length if we want dynamic header size for evolving protocol
 }
 
 //Type v2 header struct??
 
-func newProtoHeader(version, clientType, messageType, command uint8) *ProtoHeader {
-	return &ProtoHeader{
+func newProtoHeader(version, clientType, messageType, command uint8) *PacketHeader {
+	return &PacketHeader{
 		version,
 		clientType,
 		messageType,
@@ -63,7 +63,7 @@ func newProtoHeader(version, clientType, messageType, command uint8) *ProtoHeade
 	}
 }
 
-func (pr *ProtoHeader) headerV1Serialize(length uint16) ([]byte, error) {
+func (pr *PacketHeader) headerV1Serialize(length uint16) ([]byte, error) {
 
 	if pr.ProtoVersion != PROTO_VERSION_1 {
 		return nil, fmt.Errorf("version must be %v", PROTO_VERSION_1)
@@ -78,37 +78,11 @@ func (pr *ProtoHeader) headerV1Serialize(length uint16) ([]byte, error) {
 	return b, nil
 }
 
-func (pr *ProtoHeader) headerV1Deserialize() (data []byte, err error) {
-
-	return
-}
-
 //TODO Think about adding protocol specific serialisation independent of client data
 //TODO Think about header serialisation...? adding to data after...? easier to get length?
 
-type synNodeMap struct { //Maps node id to max version
-	nodeID     []byte
-	maxVersion uint64
-}
-
-type synPacket struct {
-	ProtoHeader
-	digest []synNodeMap
-}
-
-type synAckData struct {
-	nodeID []byte
-	delta  []Delta
-}
-
-type synAckPacket struct {
-	ProtoHeader
-	delta  []synAckData
-	digest []synNodeMap
-}
-
-type TCPPayload struct {
-	Header *ProtoHeader
+type TCPPacket struct {
+	Header *PacketHeader
 	Data   []byte
 }
 
@@ -118,7 +92,7 @@ type TCPPayload struct {
 
 //TODO At the moment we have one type to serialise - if we get more then think about an interface
 
-func (gp *TCPPayload) MarshallBinary() (data []byte, err error) {
+func (gp *TCPPacket) MarshallBinary() (data []byte, err error) {
 
 	//TODO - we have header serialise - maybe also make data serialise by looking at header message type and length
 	// and pass it to the correct serializer based on version also
@@ -134,7 +108,7 @@ func (gp *TCPPayload) MarshallBinary() (data []byte, err error) {
 	return nil, fmt.Errorf("protocol version not supported")
 }
 
-func (gp *TCPPayload) marshallBinaryV1() (data []byte, err error) {
+func (gp *TCPPacket) marshallBinaryV1() (data []byte, err error) {
 
 	// Calculate the length of the data (payload)
 	dataLength := uint16(len(gp.Data)) // The length of the data section
@@ -157,9 +131,9 @@ func (gp *TCPPayload) marshallBinaryV1() (data []byte, err error) {
 //TODO Once the header is fully read, parse the message length, and then proceed to read the
 // payload based on this length.
 
-// TODO Need to look at how parsing is impacted by this
+// This seems to stay after reading raw bytes from the stream
 
-func (gp *TCPPayload) UnmarshallBinaryV1(data []byte) error {
+func (gp *TCPPacket) UnmarshallBinaryV1(data []byte) error {
 
 	if data[0] != PROTO_VERSION_1 {
 		return fmt.Errorf("protocol version mismatch. Expected %d, got %d", gp.Header.ProtoVersion, data[0])
@@ -175,15 +149,22 @@ func (gp *TCPPayload) UnmarshallBinaryV1(data []byte) error {
 	gp.Header.ClientType = data[1]
 	gp.Header.MessageType = data[2]
 	gp.Header.Command = data[3]
-	gp.Header.MessageLength = binary.BigEndian.Uint16(data[4:6])
+	gp.Header.PayloadLength = binary.BigEndian.Uint16(data[4:6])
 
 	// Extract the data (after the header, starting at byte 5)
-	gp.Data = make([]byte, gp.Header.MessageLength)
-	copy(gp.Data, data[6:6+gp.Header.MessageLength])
+	gp.Data = make([]byte, gp.Header.PayloadLength)
+	copy(gp.Data, data[6:6+gp.Header.PayloadLength])
 
 	// Log the parsed header fields for debugging
 	log.Printf("Parsed Header: ProtoVersion=%d, ClientType=%d, MessageType=%d, Command=%d, MessageLength=%d",
-		gp.Header.ProtoVersion, gp.Header.ClientType, gp.Header.MessageType, gp.Header.Command, gp.Header.MessageLength)
+		gp.Header.ProtoVersion, gp.Header.ClientType, gp.Header.MessageType, gp.Header.Command, gp.Header.PayloadLength)
 
 	return nil
 }
+
+// WHY CHECK FOR LEN > HEADER SIZE ON EACH READ
+
+//In the for loop, you’re incrementally adding data to pre with each read. With each new addition,
+//the goal is to check if you now have at least enough bytes to start interpreting the message (starting with the header).
+//If len(pre) >= HEADER_SIZE, you’re assured you have enough bytes to proceed to header parsing.
+//If not, the loop will read more bytes and append them to pre until this condition is met.

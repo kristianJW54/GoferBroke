@@ -171,7 +171,7 @@ func (s *GBServer) connectToSeed() error {
 
 	header := newProtoHeader(1, 0, 4, 0)
 
-	payload := &TCPPayload{
+	payload := &TCPPacket{
 		header,
 		data,
 	}
@@ -264,6 +264,30 @@ func (s *GBServer) Shutdown() {
 
 //=======================================================
 
+// Handle a pre []byte which is a payload and non-packet header
+
+// This needs to be wrapped by client
+func (s *GBServer) newHandle(conn net.Conn) {
+
+	//buff := make([]byte, 512)
+
+	//If your protocol specifies specific delimiters (e.g., 0x00 as an end-of-message marker),
+	//can scan pre for the delimiter after reading each chunk.
+
+	//var reader io.Reader
+	//reader = conn
+
+	// Process header first based on protocol version
+	// Add to pre
+	// Keep reading from buffer
+	// Add each segment to pre
+	// May want to dynamically resize buffer
+	// How can we add parsing mechanism and character parsing etc...
+
+	return
+
+}
+
 func (s *GBServer) handle(conn net.Conn) {
 	buf := make([]byte, MAX_MESSAGE_SIZE)
 
@@ -284,7 +308,7 @@ func (s *GBServer) handle(conn net.Conn) {
 		// Similar to Nats where the read and write loop are run inside the handle (or in NATS case the connFunc)
 
 		// Create a GossipPayload to unmarshal the received data into
-		dataPayload := &TCPPayload{&ProtoHeader{}, buf} //TODO This needs to a function to create a buffered payload
+		dataPayload := &TCPPacket{&PacketHeader{}, buf} //TODO This needs to a function to create a buffered payload
 
 		err = dataPayload.UnmarshallBinaryV1(buf[:n]) // Read the exact number of bytes
 		if err != nil {
@@ -299,7 +323,7 @@ func (s *GBServer) handle(conn net.Conn) {
 			dataPayload.Header.ClientType,
 			dataPayload.Header.MessageType,
 			dataPayload.Header.Command,
-			dataPayload.Header.MessageLength,
+			dataPayload.Header.PayloadLength,
 			string(dataPayload.Data),
 		)
 	}
