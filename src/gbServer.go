@@ -163,16 +163,13 @@ func (s *GBServer) StartServer() {
 
 func (s *GBServer) connectToSeed() error {
 
+	//With this function - we reach out to seed - so in our connection handling we would need to check protocol version
+	//To understand how this connection is communicating ...
+
 	//Create info message
 	data := []byte(s.ServerName)
 
-	header := &ProtoHeader{
-		ProtoVersion:  PROTO_VERSION_1,
-		ClientType:    NODE,
-		MessageType:   ENTRY_TO_CLUSTER,
-		Command:       NEW_NODE,
-		MessageLength: uint16(len(data)),
-	}
+	header := newProtoHeader(1, 0, 4, 0)
 
 	payload := &TCPPayload{
 		header,

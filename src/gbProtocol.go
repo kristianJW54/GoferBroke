@@ -8,7 +8,7 @@ import (
 
 const (
 	PROTO_VERSION_1 uint8 = 1
-	HEADER_SIZE           = 6
+	HEADER_SIZE_V1        = 6
 )
 
 const (
@@ -40,6 +40,8 @@ const (
 //TODO Consider implementing interface with serialisation methods and sending mehtods for packets
 // which packets can implement, then we can pass an interface to handle connection methods on server...?
 
+//Think about versioning, if more things get added to the header - in serialisation we need to account for different versions
+
 type ProtoHeader struct {
 	ProtoVersion  uint8 // Protocol version (1 byte)
 	ClientType    uint8
@@ -49,7 +51,9 @@ type ProtoHeader struct {
 	//May Implement Data length if we want dynamic header size for evolving protocol
 }
 
-func NewProtoHeader(version, clientType, messageType, command uint8) *ProtoHeader {
+//Type v2 header struct??
+
+func newProtoHeader(version, clientType, messageType, command uint8) *ProtoHeader {
 	return &ProtoHeader{
 		version,
 		clientType,
@@ -59,8 +63,24 @@ func NewProtoHeader(version, clientType, messageType, command uint8) *ProtoHeade
 	}
 }
 
-func (header *ProtoHeader) addMessageLength() {
-	return //TODO Finish
+func (pr *ProtoHeader) headerV1Serialize(length uint16) ([]byte, error) {
+
+	if pr.ProtoVersion != PROTO_VERSION_1 {
+		return nil, fmt.Errorf("version must be %v", PROTO_VERSION_1)
+	}
+
+	b := make([]byte, HEADER_SIZE_V1+length)
+	b[0] = pr.ProtoVersion
+	//We will let these go until they get passed to elements that need to parse them and then let them return the error?
+	b[1] = pr.ClientType
+	b[2] = pr.MessageType
+	b[3] = pr.Command
+	return b, nil
+}
+
+func (pr *ProtoHeader) headerV1Deserialize() (data []byte, err error) {
+
+	return
 }
 
 //TODO Think about adding protocol specific serialisation independent of client data
@@ -96,25 +116,33 @@ type TCPPayload struct {
 // Serialisation
 //==========================================================
 
+//TODO At the moment we have one type to serialise - if we get more then think about an interface
+
 func (gp *TCPPayload) MarshallBinary() (data []byte, err error) {
 
-	//determine header size
-	//TODO implement dynamic header size approach by specifying message size and data size
-	//TODO currently using fixed header size approach
+	//TODO - we have header serialise - maybe also make data serialise by looking at header message type and length
+	// and pass it to the correct serializer based on version also
+
+	switch gp.Header.ProtoVersion {
+	case PROTO_VERSION_1:
+		data, err := gp.marshallBinaryV1()
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("protocol version not supported")
+}
+
+func (gp *TCPPayload) marshallBinaryV1() (data []byte, err error) {
 
 	// Calculate the length of the data (payload)
 	dataLength := uint16(len(gp.Data)) // The length of the data section
 
-	totalLength := uint16(HEADER_SIZE + dataLength) // 5 bytes for the header (ProtoVersion, MessageType, Command, MessageLength) + data length
-
-	// Create a byte slice with enough space for the header + data
-	b := make([]byte, totalLength)
-
-	// Fill the header fields
-	b[0] = gp.Header.ProtoVersion
-	b[1] = gp.Header.ClientType
-	b[2] = gp.Header.MessageType
-	b[3] = gp.Header.Command
+	b, err := gp.Header.headerV1Serialize(dataLength)
+	if err != nil {
+		return nil, err
+	}
 
 	// Write the message length (length of the data) into the byte slice
 	binary.BigEndian.PutUint16(b[4:6], dataLength) // MessageLength
@@ -125,6 +153,11 @@ func (gp *TCPPayload) MarshallBinary() (data []byte, err error) {
 	return b, nil
 
 }
+
+//TODO Once the header is fully read, parse the message length, and then proceed to read the
+// payload based on this length.
+
+// TODO Need to look at how parsing is impacted by this
 
 func (gp *TCPPayload) UnmarshallBinaryV1(data []byte) error {
 

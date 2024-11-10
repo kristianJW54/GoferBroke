@@ -7,6 +7,18 @@ import (
 	"time"
 )
 
+//func TestHeaderCreation(t *testing.T) {
+//
+//	header := newProtoHeader(1, 0, 4, 1)
+//	_, err := header.headerSerialize()
+//	if err != nil {
+//		t.Error(err)
+//	}
+//
+//	t.Log("header: ", *header)
+//
+//}
+
 func TestHeaders(t *testing.T) {
 	lc := net.ListenConfig{}
 
