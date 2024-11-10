@@ -78,6 +78,8 @@ func (pr *PacketHeader) headerV1Serialize(length uint16) ([]byte, error) {
 	return b, nil
 }
 
+func (pr *PacketHeader) parseHeader(data []byte) {}
+
 //TODO Think about adding protocol specific serialisation independent of client data
 //TODO Think about header serialisation...? adding to data after...? easier to get length?
 
@@ -168,3 +170,7 @@ func (gp *TCPPacket) UnmarshallBinaryV1(data []byte) error {
 //the goal is to check if you now have at least enough bytes to start interpreting the message (starting with the header).
 //If len(pre) >= HEADER_SIZE, you’re assured you have enough bytes to proceed to header parsing.
 //If not, the loop will read more bytes and append them to pre until this condition is met.
+
+// for a read loop function i could establish a reader here which takes a reader interface and define my own framer
+// this will call read and also make calls to parser
+// it will be called in the read loop of client connection

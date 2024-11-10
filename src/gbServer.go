@@ -1,7 +1,9 @@
 package src
 
 import (
+	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -242,7 +244,7 @@ func (s *GBServer) accept(l net.Listener, name string) {
 		go func() {
 			defer s.serverWg.Done()
 			defer conn.Close()
-			s.handle(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
+			s.newHandle(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
 		}()
 	}
 
@@ -266,25 +268,53 @@ func (s *GBServer) Shutdown() {
 
 // Handle a pre []byte which is a payload and non-packet header
 
+func parsePacket(data []byte, headerSize int) int {
+
+	if len(data) < headerSize {
+		return 0
+	}
+	length := int(binary.BigEndian.Uint16(data[headerSize:]))
+	if len(data) < length+headerSize {
+		return 0
+	}
+	return length + headerSize
+}
+
 // This needs to be wrapped by client
 func (s *GBServer) newHandle(conn net.Conn) {
+	buff := make([]byte, INITIAL_BUFF_SIZE) // Buffer to read data from conn
+	//prev := make([]byte, INITIAL_BUFF_SIZE)
 
-	//buff := make([]byte, 512)
+	rdr := bufio.NewReader(conn)
 
-	//If your protocol specifies specific delimiters (e.g., 0x00 as an end-of-message marker),
-	//can scan pre for the delimiter after reading each chunk.
+	// Detect protocol version
+	versionByte, err := rdr.Peek(1) // Peek without consuming
+	if err != nil {
+		log.Printf("Error peeking version byte: %v\n", err)
+		return
+	}
 
-	//var reader io.Reader
-	//reader = conn
+	var headerSize int
+	if versionByte[0] == 1 {
+		log.Printf("YAY")
+		headerSize = HEADER_SIZE_V1
+	} else {
+		log.Println(headerSize)
+	}
 
-	// Process header first based on protocol version
-	// Add to pre
-	// Keep reading from buffer
-	// Add each segment to pre
-	// May want to dynamically resize buffer
-	// How can we add parsing mechanism and character parsing etc...
+	for {
 
-	return
+		n, err := rdr.Read(buff)
+		if err != nil && err != io.EOF {
+			log.Println("read error", err)
+			return
+		}
+		if n == 0 {
+			return
+		}
+		log.Printf("Read %d bytes\n", n)
+
+	}
 
 }
 
