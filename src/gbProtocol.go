@@ -12,7 +12,8 @@ const (
 )
 
 const (
-	MAX_MESSAGE_SIZE  = 1024
+	MAX_BUFF_SIZE     = 4096
+	MIN_BUFF_SIZE     = 128
 	INITIAL_BUFF_SIZE = 512
 )
 

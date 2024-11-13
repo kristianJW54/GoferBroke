@@ -244,7 +244,7 @@ func (s *GBServer) accept(l net.Listener, name string) {
 		go func() {
 			defer s.serverWg.Done()
 			defer conn.Close()
-			s.newHandle(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
+			s.readWireLoop(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
 		}()
 	}
 
@@ -268,58 +268,82 @@ func (s *GBServer) Shutdown() {
 
 // Handle a pre []byte which is a payload and non-packet header
 
-func parsePacket(data []byte, headerSize int) int {
+type ReadWireControl struct {
+	buffer      []byte
+	bytesRead   int
+	shrinkCount int32
+	offset      int
+}
 
-	if len(data) < headerSize {
-		return 0
+func (rc *ReadWireControl) parsePacket() {
+
+	if rc.offset >= 4 {
+		msgLength := int(binary.BigEndian.Uint32(rc.buffer[:4]))
+		log.Printf("message length: %d\n", msgLength)
+
+		if rc.offset >= 4+msgLength {
+			message := rc.buffer[4 : 4+msgLength]
+			log.Printf("complete message: %s\n", message)
+
+			remainingData := rc.buffer[4+msgLength : rc.offset]
+			copy(rc.buffer, remainingData)
+
+			rc.offset -= 4 + msgLength
+		}
 	}
-	length := int(binary.BigEndian.Uint16(data[headerSize:]))
-	if len(data) < length+headerSize {
-		return 0
-	}
-	return length + headerSize
 }
 
 // This needs to be wrapped by client
-func (s *GBServer) newHandle(conn net.Conn) {
-	buff := make([]byte, INITIAL_BUFF_SIZE) // Buffer to read data from conn
-	//prev := make([]byte, INITIAL_BUFF_SIZE)
+func (s *GBServer) readWireLoop(conn net.Conn) {
+
+	//initialise read controller here but it would have been done already once we embed within client
+	rc := &ReadWireControl{
+		buffer:      make([]byte, MIN_BUFF_SIZE),
+		bytesRead:   0,
+		shrinkCount: 0,
+		offset:      0,
+	}
 
 	rdr := bufio.NewReader(conn)
 
-	// Detect protocol version
-	versionByte, err := rdr.Peek(1) // Peek without consuming
-	if err != nil {
-		log.Printf("Error peeking version byte: %v\n", err)
-		return
-	}
-
-	var headerSize int
-	if versionByte[0] == 1 {
-		log.Printf("YAY")
-		headerSize = HEADER_SIZE_V1
-	} else {
-		log.Println(headerSize)
-	}
-
 	for {
+		if len(rc.buffer)-rc.offset < MIN_BUFF_SIZE && len(rc.buffer) < MAX_BUFF_SIZE {
+			newSize := len(rc.buffer) * 2
+			if newSize > MAX_BUFF_SIZE {
+				newSize = MAX_BUFF_SIZE
+			}
+			newBuf := make([]byte, newSize)
+			copy(newBuf, rc.buffer[:rc.offset])
+			rc.buffer = newBuf
+			log.Printf("data %s", string(rc.buffer))
+			log.Printf("increased buffer size: %d", newSize)
+		}
 
-		n, err := rdr.Read(buff)
-		if err != nil && err != io.EOF {
-			log.Println("read error", err)
+		// Read data into the buffer starting at the offset
+		n := rc.bytesRead
+		n, err := rdr.Read(rc.buffer[:rc.offset])
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Error reading from connection: %s\n", err)
+				return
+			}
+			log.Printf("error reading %v", err)
 			return
 		}
-		if n == 0 {
-			return
-		}
-		log.Printf("Read %d bytes\n", n)
+
+		log.Printf("data %s", string(rc.buffer[:n]))
+		rc.offset += n
+		rc.parsePacket()
+
+		log.Printf("read %d bytes", n)
+		log.Printf("current buffer usage: %d / %d", rc.bytesRead, len(rc.buffer))
 
 	}
 
 }
 
 func (s *GBServer) handle(conn net.Conn) {
-	buf := make([]byte, MAX_MESSAGE_SIZE)
+	buf := make([]byte, MAX_BUFF_SIZE)
 
 	//TODO Look at implementing a specific read function to handle our TCP Packets and have
 	// our own protocol specific rules around read
