@@ -80,15 +80,14 @@ func mockDataConn(t *testing.T) []byte {
 	t.Helper()
 
 	data := []byte("I am a test, I always have been a test. :(")
-	length := uint16(len(data))
+	length := uint32(len(data))
 
 	// Set up the header
 	header := &PacketHeader{
 		ProtoVersion:  PROTO_VERSION_1,
-		ClientType:    NODE,
-		MessageType:   TEST,
-		Command:       GOSSIP,
-		PayloadLength: length,
+		Command:       SYN,
+		MsgLength:     length,
+		PayloadLength: 0,
 	}
 
 	// Create the GossipPayload

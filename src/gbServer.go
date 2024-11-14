@@ -1,9 +1,7 @@
 package src
 
 import (
-	"bufio"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -73,9 +71,10 @@ type GBServer struct {
 	isGossiping   chan bool
 
 	//Connection Handling
-	phoneBook map[string]*net.Conn //Can we point to a wrapped conn struct which is designed for our use case?
-	connMutex sync.RWMutex
-	pool      sync.Pool // Maybe to use with varying buffer sizes
+	clientCount int
+	phoneBook   map[string]*gbClient
+	connMutex   sync.RWMutex
+	pool        sync.Pool // Maybe to use with varying buffer sizes
 
 	cRM sync.RWMutex
 
@@ -171,7 +170,7 @@ func (s *GBServer) connectToSeed() error {
 	//Create info message
 	data := []byte(s.ServerName)
 
-	header := newProtoHeader(1, 0, 4, 0)
+	header := newProtoHeader(1, 1)
 
 	payload := &TCPPacket{
 		header,
@@ -244,7 +243,7 @@ func (s *GBServer) accept(l net.Listener, name string) {
 		go func() {
 			defer s.serverWg.Done()
 			defer conn.Close()
-			s.readWireLoop(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
+			s.handle(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
 		}()
 	}
 
@@ -267,80 +266,6 @@ func (s *GBServer) Shutdown() {
 //=======================================================
 
 // Handle a pre []byte which is a payload and non-packet header
-
-type ReadWireControl struct {
-	buffer      []byte
-	bytesRead   int
-	shrinkCount int32
-	offset      int
-}
-
-func (rc *ReadWireControl) parsePacket() {
-
-	if rc.offset >= 4 {
-		msgLength := int(binary.BigEndian.Uint32(rc.buffer[:4]))
-		log.Printf("message length: %d\n", msgLength)
-
-		if rc.offset >= 4+msgLength {
-			message := rc.buffer[4 : 4+msgLength]
-			log.Printf("complete message: %s\n", message)
-
-			remainingData := rc.buffer[4+msgLength : rc.offset]
-			copy(rc.buffer, remainingData)
-
-			rc.offset -= 4 + msgLength
-		}
-	}
-}
-
-// This needs to be wrapped by client
-func (s *GBServer) readWireLoop(conn net.Conn) {
-
-	//initialise read controller here but it would have been done already once we embed within client
-	rc := &ReadWireControl{
-		buffer:      make([]byte, MIN_BUFF_SIZE),
-		bytesRead:   0,
-		shrinkCount: 0,
-		offset:      0,
-	}
-
-	rdr := bufio.NewReader(conn)
-
-	for {
-		if len(rc.buffer)-rc.offset < MIN_BUFF_SIZE && len(rc.buffer) < MAX_BUFF_SIZE {
-			newSize := len(rc.buffer) * 2
-			if newSize > MAX_BUFF_SIZE {
-				newSize = MAX_BUFF_SIZE
-			}
-			newBuf := make([]byte, newSize)
-			copy(newBuf, rc.buffer[:rc.offset])
-			rc.buffer = newBuf
-			log.Printf("data %s", string(rc.buffer))
-			log.Printf("increased buffer size: %d", newSize)
-		}
-
-		// Read data into the buffer starting at the offset
-		n := rc.bytesRead
-		n, err := rdr.Read(rc.buffer[:rc.offset])
-		if err != nil {
-			if err != io.EOF {
-				log.Printf("Error reading from connection: %s\n", err)
-				return
-			}
-			log.Printf("error reading %v", err)
-			return
-		}
-
-		log.Printf("data %s", string(rc.buffer[:n]))
-		rc.offset += n
-		rc.parsePacket()
-
-		log.Printf("read %d bytes", n)
-		log.Printf("current buffer usage: %d / %d", rc.bytesRead, len(rc.buffer))
-
-	}
-
-}
 
 func (s *GBServer) handle(conn net.Conn) {
 	buf := make([]byte, MAX_BUFF_SIZE)
@@ -372,11 +297,10 @@ func (s *GBServer) handle(conn net.Conn) {
 
 		// Log the decoded data (as a string)
 		log.Printf(
-			"%v %v %v %v %v %s",
+			"%v %v %v %v %s",
 			dataPayload.Header.ProtoVersion,
-			dataPayload.Header.ClientType,
-			dataPayload.Header.MessageType,
 			dataPayload.Header.Command,
+			dataPayload.Header.MsgLength,
 			dataPayload.Header.PayloadLength,
 			string(dataPayload.Data),
 		)
@@ -385,3 +309,26 @@ func (s *GBServer) handle(conn net.Conn) {
 }
 
 //=======================================================
+// Creating a client
+//=======================================================
+
+// TODO Need both route listener and client listener
+
+func (s *GBServer) handShake(conn net.Conn) (int, error) {
+
+}
+
+func (s *GBServer) createClient(conn net.Conn) *gbClient {
+
+	//Perform handshake and determine client type + accept or reject connection
+
+	c := &gbClient{
+
+		srv: s,
+		gbc: conn,
+	}
+
+	s.clientCount++
+	net.DialTCP()
+
+}
