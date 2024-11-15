@@ -19,7 +19,7 @@ import (
 //
 //}
 
-func TestHeaders(t *testing.T) {
+func TestAcceptConnection(t *testing.T) {
 	lc := net.ListenConfig{}
 
 	ip := net.ParseIP("127.0.0.1") // Use the full IP address
@@ -31,18 +31,18 @@ func TestHeaders(t *testing.T) {
 		Seed: confAddr, // Ensure the seed contains both the IP and port
 	}
 
-	gbs := NewServer("test-server", config, "localhost", "8081", lc)
+	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
 
 	go gbs.StartServer()
 
 	time.Sleep(1 * time.Second)
 	// Dial the TCP server
-	conn, err := net.Dial("tcp", "localhost:8081")
+	conn, err := net.Dial("tcp", "localhost:8080")
 	if err != nil {
 		fmt.Printf("Failed to connect: %v\n", err)
 		return
 	}
-	fmt.Println("Connected to the server.")
+	fmt.Printf("Connected to the server %v\n", conn.RemoteAddr())
 
 	time.Sleep(1 * time.Second)
 
@@ -85,7 +85,7 @@ func mockDataConn(t *testing.T) []byte {
 	// Set up the header
 	header := &PacketHeader{
 		ProtoVersion:  PROTO_VERSION_1,
-		Command:       SYN,
+		Command:       GOSS_ACK,
 		MsgLength:     length,
 		PayloadLength: 0,
 	}

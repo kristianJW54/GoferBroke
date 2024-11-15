@@ -23,8 +23,8 @@ func TestServerRunning(t *testing.T) {
 		Seed: confAddr, // Ensure the seed contains both the IP and port
 	}
 
-	gbs := NewServer("test-server", config, "localhost", "8081", lc)
-	gbs2 := NewServer("test-server-2", config, "localhost", "8082", lc)
+	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+	gbs2 := NewServer("test-server-2", config, "localhost", "8082", "8080", lc)
 
 	go gbs.StartServer()
 	go gbs2.StartServer()

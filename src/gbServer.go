@@ -3,7 +3,6 @@ package src
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -46,7 +45,8 @@ type GBServer struct {
 	BroadcastName string //ID and timestamp
 	initialised   int64  //time of server creation
 	addr          string
-	tcpAddr       *net.TCPAddr
+	nodeTCPAddr   *net.TCPAddr
+	clientTCPAddr *net.TCPAddr
 
 	// Metrics or values for gossip
 	// CPU Load
@@ -70,6 +70,9 @@ type GBServer struct {
 	itsWhoYouKnow *ClusterMap
 	isGossiping   chan bool
 
+	nodeListener       net.Listener
+	nodeListenerConfig net.ListenConfig
+
 	//Connection Handling
 	clientCount int
 	phoneBook   map[string]*gbClient
@@ -85,10 +88,19 @@ type GBServer struct {
 	serverWg sync.WaitGroup
 }
 
-func NewServer(serverName string, config *Config, host string, port string, lc net.ListenConfig) *GBServer {
+//TODO Add a node listener config + also client and node addr
 
-	addr := net.JoinHostPort(host, port)
-	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+func NewServer(serverName string, config *Config, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) *GBServer {
+
+	addr := net.JoinHostPort(nodeHost, nodePort)
+	nodeTCPAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cAddr := net.JoinHostPort("0.0.0.0", clientPort)
+
+	clientAddr, err := net.ResolveTCPAddr("tcp", cAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -104,7 +116,8 @@ func NewServer(serverName string, config *Config, host string, port string, lc n
 		BroadcastName:       broadCastName,
 		initialised:         createdAt.Unix(),
 		addr:                addr,
-		tcpAddr:             tcpAddr,
+		nodeTCPAddr:         nodeTCPAddr,
+		clientTCPAddr:       clientAddr,
 		listenConfig:        lc,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
@@ -128,20 +141,21 @@ func NewServer(serverName string, config *Config, host string, port string, lc n
 func (s *GBServer) StartServer() {
 
 	fmt.Printf("Server starting: %s\n", s.ServerName)
-	fmt.Printf("Server address: %s, Seed address: %s\n", s.tcpAddr, s.config.Seed)
+	fmt.Printf("Server address: %s, Seed address: %s\n", s.clientTCPAddr, s.config.Seed)
 
 	//Checks and other start up here
 
 	// This needs to be a method with locks
 
 	// Move this seed logic elsewhere
+	// TODO if we are not seed then we need to reach out - set a flag for this (initiator)
 	seed := s.config
 	switch {
 	case seed.Seed == nil:
 		// If the Seed is nil, we are the original (seed) node
 		s.isOriginal = true
-		s.itsWhoYouKnow.seedServer.seedAddr = s.tcpAddr
-	case seed.Seed.IP.Equal(s.tcpAddr.IP) && seed.Seed.Port == s.tcpAddr.Port:
+		s.itsWhoYouKnow.seedServer.seedAddr = s.nodeTCPAddr
+	case seed.Seed.IP.Equal(s.nodeTCPAddr.IP) && seed.Seed.Port == s.nodeTCPAddr.Port:
 		// If the seed's IP and Port match our own TCP address, we're the original (seed) node
 		s.isOriginal = true
 	default:
@@ -150,7 +164,8 @@ func (s *GBServer) StartServer() {
 	}
 
 	//---------------- Accept Loop ----------------//
-	s.AcceptLoop("client-test") //TODO Need to look at this
+	//TODO Need to make one for client and one for node
+	s.AcceptLoop("client-test")
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 
@@ -161,6 +176,22 @@ func (s *GBServer) StartServer() {
 	}
 
 }
+
+//=======================================================
+
+func (s *GBServer) Shutdown() {
+	s.serverContextCancel()
+	if s.listener != nil {
+		s.listener.Close()
+	}
+
+	close(s.quitCtx)
+
+	log.Printf("Waiting for connections to close")
+	s.serverWg.Wait()
+}
+
+//=======================================================
 
 func (s *GBServer) connectToSeed() error {
 
@@ -203,12 +234,12 @@ func (s *GBServer) connectToSeed() error {
 
 func (s *GBServer) AcceptLoop(name string) {
 
-	log.Printf("Starting accept loop -- %s\n", name)
+	log.Printf("Starting client accept loop -- %s\n", name)
 
-	log.Printf("Creating listener on %s\n", s.BroadcastName)
-	log.Printf("Seed Server %v %v\n", s.config.Seed, s.config.Seed.Port)
+	log.Printf("Creating client listener on %s\n", s.BroadcastName)
+	log.Printf("Seed Server %v\n", s.config.Seed)
 
-	l, err := s.listenConfig.Listen(s.serverContext, s.tcpAddr.Network(), s.tcpAddr.String())
+	l, err := s.listenConfig.Listen(s.serverContext, s.nodeTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
 		log.Printf("Error creating listener: %s\n", err)
 	}
@@ -217,15 +248,11 @@ func (s *GBServer) AcceptLoop(name string) {
 	s.listener = l
 
 	// Can begin go-routine for accepting connections
-	go s.accept(l, "client-test") // TODO Need to make inti a client management with routines for read + write for both server and client types
+	go s.acceptConnection(l, "client-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", NODE) })
 
 }
 
-// Clients are created and stored by the server to propagate during gossip with the mesh
-
-//=======================================================
-
-func (s *GBServer) accept(l net.Listener, name string) {
+func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn)) {
 
 	for {
 		conn, err := l.Accept()
@@ -242,93 +269,12 @@ func (s *GBServer) accept(l net.Listener, name string) {
 		s.serverWg.Add(1)
 		go func() {
 			defer s.serverWg.Done()
-			defer conn.Close()
-			s.handle(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
+			createConnFunc(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
 		}()
 	}
 
 }
 
 //=======================================================
-
-func (s *GBServer) Shutdown() {
-	s.serverContextCancel()
-	if s.listener != nil {
-		s.listener.Close()
-	}
-
-	close(s.quitCtx)
-
-	log.Printf("Waiting for connections to close")
-	s.serverWg.Wait()
-}
-
+// Creating a node server
 //=======================================================
-
-// Handle a pre []byte which is a payload and non-packet header
-
-func (s *GBServer) handle(conn net.Conn) {
-	buf := make([]byte, MAX_BUFF_SIZE)
-
-	//TODO Look at implementing a specific read function to handle our TCP Packets and have
-	// our own protocol specific rules around read
-
-	for {
-		n, err := conn.Read(buf)
-		if err != nil && err != io.EOF {
-			log.Println("read error", err)
-			return
-		}
-		if n == 0 {
-			return
-		}
-
-		//TODO Implement a handler router for server-server connections and client-server connections
-		// Similar to Nats where the read and write loop are run inside the handle (or in NATS case the connFunc)
-
-		// Create a GossipPayload to unmarshal the received data into
-		dataPayload := &TCPPacket{&PacketHeader{}, buf} //TODO This needs to a function to create a buffered payload
-
-		err = dataPayload.UnmarshallBinaryV1(buf[:n]) // Read the exact number of bytes
-		if err != nil {
-			log.Println("unmarshall error", err)
-			return
-		}
-
-		// Log the decoded data (as a string)
-		log.Printf(
-			"%v %v %v %v %s",
-			dataPayload.Header.ProtoVersion,
-			dataPayload.Header.Command,
-			dataPayload.Header.MsgLength,
-			dataPayload.Header.PayloadLength,
-			string(dataPayload.Data),
-		)
-	}
-
-}
-
-//=======================================================
-// Creating a client
-//=======================================================
-
-// TODO Need both route listener and client listener
-
-func (s *GBServer) handShake(conn net.Conn) (int, error) {
-
-}
-
-func (s *GBServer) createClient(conn net.Conn) *gbClient {
-
-	//Perform handshake and determine client type + accept or reject connection
-
-	c := &gbClient{
-
-		srv: s,
-		gbc: conn,
-	}
-
-	s.clientCount++
-	net.DialTCP()
-
-}
