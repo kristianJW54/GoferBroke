@@ -1,7 +1,10 @@
 package src
 
-import "net"
-
 type GbConfig struct {
-	SeedServers []net.Addr
+	SeedServers []Seeds
+}
+
+type Seeds struct {
+	SeedIP   string
+	SeedPort string
 }

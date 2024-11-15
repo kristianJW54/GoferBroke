@@ -42,6 +42,30 @@ type readCache struct {
 }
 
 //===================================================================================
+// Client creation
+//===================================================================================
+
+func (s *GBServer) createClient(conn net.Conn, name string, clientType int) *gbClient {
+
+	log.Printf("creating connection --> %s --> type: %d\n", name, clientType)
+
+	client := &gbClient{
+		Name:  name,
+		srv:   s,
+		gbc:   conn,
+		cType: clientType,
+	}
+
+	go func() {
+		defer conn.Close()
+		client.readLoop()
+	}()
+
+	return client
+
+}
+
+//===================================================================================
 // Client Connection + Wire Handling
 //===================================================================================
 
@@ -54,7 +78,7 @@ func (c *gbClient) readLoop() {
 
 	//Check locks and if anything is closed or shutting down
 
-	buf := make([]byte, MAX_BUFF_SIZE)
+	buf := make([]byte, INITIAL_BUFF_SIZE)
 
 	var reader io.Reader
 	reader = c.gbc

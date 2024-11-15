@@ -10,13 +10,16 @@ import (
 )
 
 //TODO -- STEPS FOR TCP ACCEPT LOOP SERVER CONTROL
-// - 1) Will need a start function which creates a listener and initialises channels/processes
-// 		- May want a StartListener function which takes a signal for when start up is complete
-// 		- And then maybe a AcceptLoop from here
 // - 2) Server Context and signals to control the server instance
-// - 3) An Accept Loop function which sets up an accept loop and controls the internal accept go-routine
-// - 4) An internal accept connection function which will hold the accept loop
 // - 5) Add comprehensive wrappers for go routine control and tracking
+
+//=================================
+
+//TODO -- 151124 !! -- Now server node can connect to seed will need -->
+// 1) Server info and metrics and connection map
+// 2) Signals for syncing
+// 3) Seed server needs to reply with its info and make connection
+// 4) Protocol reading and parsing
 
 // CONSIDERATIONS //
 // - TCP Keep-Alives default to no less than two hours which means that using anti-entropy with direct and in-direct
@@ -29,11 +32,6 @@ import (
 type Config struct {
 	Seed *net.TCPAddr
 } //Temp will be moved
-
-type gbNet struct {
-	net.Listener
-	listenerConfig net.ListenConfig
-}
 
 //===================================================================================
 // Main Server
@@ -63,12 +61,12 @@ type GBServer struct {
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
 
-	config *Config
+	gbConfig *GbConfig
+	seedAddr []*net.TCPAddr
 
 	//Distributed Info
-	isOriginal    bool
-	itsWhoYouKnow *ClusterMap
-	isGossiping   chan bool
+	isOriginal  bool
+	isGossiping chan bool
 
 	nodeListener       net.Listener
 	nodeListenerConfig net.ListenConfig
@@ -90,7 +88,7 @@ type GBServer struct {
 
 //TODO Add a node listener config + also client and node addr
 
-func NewServer(serverName string, config *Config, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) *GBServer {
+func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) *GBServer {
 
 	addr := net.JoinHostPort(nodeHost, nodePort)
 	nodeTCPAddr, err := net.ResolveTCPAddr("tcp", addr)
@@ -122,10 +120,10 @@ func NewServer(serverName string, config *Config, nodeHost string, nodePort, cli
 		serverContext:       ctx,
 		serverContextCancel: cancel,
 
-		config: config,
+		gbConfig: gbConfig,
+		seedAddr: make([]*net.TCPAddr, 0),
 
-		isOriginal:    false,
-		itsWhoYouKnow: &ClusterMap{},
+		isOriginal: false,
 
 		quitCtx: make(chan struct{}, 1),
 		done:    make(chan bool, 1),
@@ -141,29 +139,29 @@ func NewServer(serverName string, config *Config, nodeHost string, nodePort, cli
 func (s *GBServer) StartServer() {
 
 	fmt.Printf("Server starting: %s\n", s.ServerName)
-	fmt.Printf("Server address: %s, Seed address: %s\n", s.clientTCPAddr, s.config.Seed)
+	fmt.Printf("Server address: %s, Seed address: %v\n", s.clientTCPAddr, s.gbConfig.SeedServers)
 
 	//Checks and other start up here
+	//Resolve config seed addr
+	err := s.resolveConfigSeedAddr()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// This needs to be a method with locks
 
 	// Move this seed logic elsewhere
 	// TODO if we are not seed then we need to reach out - set a flag for this (initiator)
-	seed := s.config
-	switch {
-	case seed.Seed == nil:
-		// If the Seed is nil, we are the original (seed) node
+	if s.seedCheck() == 1 {
 		s.isOriginal = true
-		s.itsWhoYouKnow.seedServer.seedAddr = s.nodeTCPAddr
-	case seed.Seed.IP.Equal(s.nodeTCPAddr.IP) && seed.Seed.Port == s.nodeTCPAddr.Port:
-		// If the seed's IP and Port match our own TCP address, we're the original (seed) node
-		s.isOriginal = true
-	default:
-		// Otherwise, we're not the original seed node
+	} else {
 		s.isOriginal = false
 	}
 
-	//---------------- Accept Loop ----------------//
+	//---------------- Node Accept Loop ----------------//
+	s.AcceptNodeLoop("node-test")
+
+	//---------------- Client Accept Loop ----------------//
 	//TODO Need to make one for client and one for node
 	s.AcceptLoop("client-test")
 
@@ -193,6 +191,53 @@ func (s *GBServer) Shutdown() {
 
 //=======================================================
 
+//=======================================================
+
+func (s *GBServer) resolveConfigSeedAddr() error {
+
+	// Check if no seed servers are configured
+	if len(s.gbConfig.SeedServers) == 0 {
+		// Ensure s.nodeTCPAddr is initialized
+		if s.nodeTCPAddr == nil {
+			return fmt.Errorf("nodeTCPAddr is not initialized")
+		}
+		// Use this node's TCP address as the seed
+		s.seedAddr = append(s.seedAddr, s.nodeTCPAddr)
+		log.Printf("seed server list --> %v\n", s.seedAddr)
+		return nil
+	}
+
+	if len(s.gbConfig.SeedServers) >= 1 {
+
+		for i := 0; i < len(s.gbConfig.SeedServers); i++ {
+			addr := net.JoinHostPort(s.gbConfig.SeedServers[i].SeedIP, s.gbConfig.SeedServers[i].SeedPort)
+			tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+			if err != nil {
+				return err
+			}
+			s.seedAddr = append(s.seedAddr, tcpAddr)
+			log.Printf("seed server list --> %v\n", s.seedAddr)
+		}
+	}
+	return nil
+}
+
+// Seed Check
+
+func (s *GBServer) seedCheck() int {
+
+	if len(s.seedAddr) >= 1 {
+		for _, addr := range s.seedAddr {
+			if addr.IP.Equal(s.nodeTCPAddr.IP) && addr.Port == s.nodeTCPAddr.Port {
+				return 1
+			}
+		}
+	}
+
+	return 0
+
+}
+
 func (s *GBServer) connectToSeed() error {
 
 	//With this function - we reach out to seed - so in our connection handling we would need to check protocol version
@@ -208,9 +253,11 @@ func (s *GBServer) connectToSeed() error {
 		data,
 	}
 
-	fmt.Println("Attempting to connect to seed server:", s.config.Seed.String())
+	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
 
-	conn, err := net.Dial("tcp", s.config.Seed.String())
+	fmt.Println("Attempting to connect to seed server:", addr)
+
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
@@ -229,17 +276,18 @@ func (s *GBServer) connectToSeed() error {
 	return nil
 }
 
-// handle connections are within AcceptLoop which are their own go-routine and will have signals and context
-//
+//=======================================================
+// Accept Loops
+//=======================================================
 
 func (s *GBServer) AcceptLoop(name string) {
 
 	log.Printf("Starting client accept loop -- %s\n", name)
 
-	log.Printf("Creating client listener on %s\n", s.BroadcastName)
-	log.Printf("Seed Server %v\n", s.config.Seed)
+	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
+	log.Printf("Seed Server %v\n", s.seedAddr[0])
 
-	l, err := s.listenConfig.Listen(s.serverContext, s.nodeTCPAddr.Network(), s.clientTCPAddr.String())
+	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
 		log.Printf("Error creating listener: %s\n", err)
 	}
@@ -248,9 +296,30 @@ func (s *GBServer) AcceptLoop(name string) {
 	s.listener = l
 
 	// Can begin go-routine for accepting connections
-	go s.acceptConnection(l, "client-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", NODE) })
+	go s.acceptConnection(l, "client-test", func(conn net.Conn) { s.createClient(conn, "normal-client", CLIENT) })
 
 }
+
+func (s *GBServer) AcceptNodeLoop(name string) {
+
+	log.Printf("Starting node accept loop -- %s\n", name)
+
+	log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
+
+	nl, err := s.listenConfig.Listen(s.serverContext, s.nodeTCPAddr.Network(), s.nodeTCPAddr.String())
+	if err != nil {
+		log.Printf("Error creating listener: %s\n", err)
+	}
+
+	s.nodeListener = nl
+
+	go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", NODE) })
+
+}
+
+//=======================================================
+// Accept Connection - taking connections from different listeners
+//=======================================================
 
 func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn)) {
 

@@ -22,13 +22,17 @@ import (
 func TestAcceptConnection(t *testing.T) {
 	lc := net.ListenConfig{}
 
-	ip := net.ParseIP("127.0.0.1") // Use the full IP address
-	port := 8081
-	confAddr := &net.TCPAddr{IP: ip, Port: port}
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
 
 	// Initialize config with the seed server address
-	config := &Config{
-		Seed: confAddr, // Ensure the seed contains both the IP and port
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
+			},
+		},
 	}
 
 	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
@@ -42,6 +46,13 @@ func TestAcceptConnection(t *testing.T) {
 		fmt.Printf("Failed to connect: %v\n", err)
 		return
 	}
+	// Dial the TCP server
+	conn2, err := net.Dial("tcp", "localhost:8081")
+	if err != nil {
+		fmt.Printf("Failed to connect: %v\n", err)
+		return
+	}
+	fmt.Printf("Connected to the server %v\n", conn2.RemoteAddr())
 	fmt.Printf("Connected to the server %v\n", conn.RemoteAddr())
 
 	time.Sleep(1 * time.Second)
