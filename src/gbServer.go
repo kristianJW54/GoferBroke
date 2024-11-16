@@ -159,19 +159,17 @@ func (s *GBServer) StartServer() {
 	}
 
 	//---------------- Node Accept Loop ----------------//
-	s.AcceptNodeLoop("node-test")
+	s.serverWg.Add(1)
+	go func() {
+		defer s.serverWg.Done()
+		s.AcceptNodeLoop("node-test") // Wrap this and put in go-routine
+	}()
 
 	//---------------- Client Accept Loop ----------------//
 	//TODO Need to make one for client and one for node
 	s.AcceptLoop("client-test")
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
-
-	//---------------- Seed Dial ----------------//
-	if !s.isOriginal {
-		// If we're not the original (seed) node, connect to the seed server
-		s.connectToSeed()
-	}
 
 }
 
@@ -238,44 +236,6 @@ func (s *GBServer) seedCheck() int {
 
 }
 
-func (s *GBServer) connectToSeed() error {
-
-	//With this function - we reach out to seed - so in our connection handling we would need to check protocol version
-	//To understand how this connection is communicating ...
-
-	//Create info message
-	data := []byte(s.ServerName)
-
-	header := newProtoHeader(1, 1)
-
-	payload := &TCPPacket{
-		header,
-		data,
-	}
-
-	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
-
-	fmt.Println("Attempting to connect to seed server:", addr)
-
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("error connecting to server: %s", err)
-	}
-	defer conn.Close()
-
-	packet, err := payload.MarshallBinary()
-	if err != nil {
-		return fmt.Errorf("error marshalling payload: %s", err)
-	}
-
-	_, err = conn.Write(packet) // Sending the packet
-	if err != nil {
-		return fmt.Errorf("error writing to connection: %s", err)
-	}
-
-	return nil
-}
-
 //=======================================================
 // Accept Loops
 //=======================================================
@@ -296,7 +256,7 @@ func (s *GBServer) AcceptLoop(name string) {
 	s.listener = l
 
 	// Can begin go-routine for accepting connections
-	go s.acceptConnection(l, "client-test", func(conn net.Conn) { s.createClient(conn, "normal-client", CLIENT) })
+	go s.acceptConnection(l, "client-test", func(conn net.Conn) { s.createClient(conn, "normal-client", false, CLIENT) })
 
 }
 
@@ -313,7 +273,14 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	s.nodeListener = nl
 
-	go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", NODE) })
+	go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
+
+	//---------------- Seed Dial ----------------//
+	//This is essentially a solicit
+	if !s.isOriginal {
+		// If we're not the original (seed) node, connect to the seed server
+		go s.connectToSeed()
+	}
 
 }
 
@@ -335,6 +302,7 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 				break
 			}
 		}
+
 		s.serverWg.Add(1)
 		go func() {
 			defer s.serverWg.Done()

@@ -45,9 +45,14 @@ type readCache struct {
 // Client creation
 //===================================================================================
 
-func (s *GBServer) createClient(conn net.Conn, name string, clientType int) *gbClient {
+func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
-	log.Printf("creating connection --> %s --> type: %d\n", name, clientType)
+	// Only log if the connection was initiated by this server (to avoid duplicate logs)
+	if initiated {
+		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
+	} else {
+		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
+	}
 
 	client := &gbClient{
 		Name:  name,

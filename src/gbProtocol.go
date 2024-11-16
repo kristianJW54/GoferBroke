@@ -65,13 +65,16 @@ func (pr *PacketHeader) headerV1Serialize(length uint32) ([]byte, error) {
 		return nil, fmt.Errorf("version must be %v", PROTO_VERSION_1)
 	}
 
-	b := make([]byte, HEADER_SIZE_V1+length)
+	b := make([]byte, HEADER_SIZE_V1+2+length)
 	b[0] = pr.ProtoVersion
 	//We will let these go until they get passed to elements that need to parse them and then let them return the error?
 	b[1] = pr.Command
 
 	binary.BigEndian.PutUint32(b[2:6], length)
 	binary.BigEndian.PutUint32(b[6:10], length+HEADER_SIZE_V1)
+	// Add CRLF at the end of the header
+	b[10] = '\r'
+	b[11] = '\n'
 
 	return b, nil
 }
@@ -109,7 +112,7 @@ func (gp *TCPPacket) marshallBinaryV1() (data []byte, err error) {
 	}
 
 	// Now copy the data into the byte slice after the header (start at byte 5)
-	copy(b[10:], gp.Data)
+	copy(b[HEADER_SIZE_V1+2:], gp.Data) // Start after header + CRLF
 
 	return b, nil
 
@@ -137,9 +140,15 @@ func (gp *TCPPacket) UnmarshallBinaryV1(data []byte) error {
 	gp.Header.MsgLength = binary.BigEndian.Uint32(data[2:6])
 	gp.Header.PayloadLength = binary.BigEndian.Uint32(data[6:10])
 
-	// Extract the data (after the header, starting at byte 10)
+	// Verify CRLF is correct
+	if data[10] != '\r' || data[11] != '\n' {
+		return fmt.Errorf("CRLF sequence missing or corrupted")
+	}
+
+	// Extract the payload (after the header + CRLF)
+	payloadStart := HEADER_SIZE_V1 + 2
 	gp.Data = make([]byte, gp.Header.MsgLength)
-	copy(gp.Data, data[10:10+gp.Header.MsgLength])
+	copy(gp.Data, data[payloadStart:payloadStart+int(gp.Header.MsgLength)])
 
 	// Log the parsed header fields for debugging
 	log.Printf("Parsed Header: ProtoVersion=%d, Command=%d, MessageLength=%d, PayLoadLength=%d",

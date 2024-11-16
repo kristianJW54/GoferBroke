@@ -52,8 +52,8 @@ func TestAcceptConnection(t *testing.T) {
 		fmt.Printf("Failed to connect: %v\n", err)
 		return
 	}
-	fmt.Printf("Connected to the server %v\n", conn2.RemoteAddr())
-	fmt.Printf("Connected to the server %v\n", conn.RemoteAddr())
+	fmt.Printf("Conn: Connected to the server remote --> %v local --> %v\n", conn.RemoteAddr(), conn.LocalAddr())
+	fmt.Printf("Conn2: Connected to the server remote --> %v local --> %v\n", conn2.RemoteAddr(), conn2.LocalAddr())
 
 	time.Sleep(1 * time.Second)
 
