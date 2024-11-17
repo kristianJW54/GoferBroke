@@ -60,6 +60,7 @@ type GBServer struct {
 	//Context
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
+	shuttingDown        bool
 
 	acceptLoopContext context.Context
 
@@ -125,6 +126,7 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		listenConfig:        lc,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
+		shuttingDown:        false,
 
 		gbConfig:       gbConfig,
 		seedAddr:       make([]*net.TCPAddr, 0),
@@ -185,11 +187,9 @@ func (s *GBServer) StartServer() {
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
-	//TODO Need to make one for client and one for node
-	s.AcceptLoop("client-test")
+	//s.AcceptLoop("client-test")
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
-
 }
 
 //=======================================================
@@ -198,8 +198,8 @@ func (s *GBServer) Shutdown() {
 	s.serverContextCancel()
 	log.Println("Waiting for all connections to close...")
 
-	s.serverWg.Wait()        // Wait for the main server goroutines to finish
-	s.grTracking.grWg.Wait() // Ensure goroutines are fully completed
+	s.serverWg.Wait() // Wait for the main server goroutines to finish
+	//s.grTracking.grWg.Wait() // Ensure goroutines are fully completed
 
 	if s.listener != nil {
 		s.listener.Close()
@@ -284,6 +284,8 @@ func (s *GBServer) AcceptLoop(name string) {
 
 }
 
+//TODO Figure out how to manage routines and shutdown signals
+
 func (s *GBServer) AcceptNodeLoop(name string) {
 
 	log.Printf("Starting node accept loop -- %s\n", name)
@@ -298,7 +300,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	s.nodeListener = nl
 
 	//go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
-	s.startGoRoutine("accept node connection routine", func() {
+	s.startGoRoutine(s.ServerName, "accept node connection routine", func() {
 		s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
 	})
 
@@ -306,7 +308,11 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	//This is essentially a solicit
 	if !s.isOriginal {
 		// If we're not the original (seed) node, connect to the seed server
-		go s.connectToSeed()
+		//go s.connectToSeed()
+		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {
+			defer s.grWg.Done()
+			s.connectToSeed()
+		})
 	}
 
 }
@@ -320,6 +326,9 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn)) {
 
+	defer s.grWg.Done()
+
+	// TODO Need better signalling here to exit the accept loop
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -334,11 +343,12 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 			}
 		}
 
-		_, cancel := context.WithCancel(s.serverContext) // Create a child context
-		go func() {
-			defer cancel() // Ensure cancellation
+		s.startGoRoutine(s.ServerName, "create connection routine", func() {
+			s.cRM.Lock()
 			createConnFunc(conn)
-		}()
+			s.cRM.Unlock()
+			s.grWg.Done()
+		})
 	}
 
 }

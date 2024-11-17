@@ -105,7 +105,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	//	client.readLoop()
 	//}()
 	// Track the goroutine for the read loop using startGoRoutine
-	s.startGoRoutine(fmt.Sprintf("read loop for %s", name), func() {
+	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
 		client.readLoop()
 	})
 
@@ -123,9 +123,6 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 //Read Loop
 
 func (c *gbClient) readLoop() {
-
-	c.cLock.Lock()
-	defer c.cLock.Unlock()
 
 	defer c.srv.grWg.Done()
 
