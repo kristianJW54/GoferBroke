@@ -61,6 +61,8 @@ type GBServer struct {
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
 
+	acceptLoopContext context.Context
+
 	gbConfig *GbConfig
 	seedAddr []*net.TCPAddr
 
@@ -72,10 +74,11 @@ type GBServer struct {
 	nodeListenerConfig net.ListenConfig
 
 	//Connection Handling
-	clientCount int
-	phoneBook   map[string]*gbClient
-	connMutex   sync.RWMutex
-	pool        sync.Pool // Maybe to use with varying buffer sizes
+	clientCount    int
+	tmpClientStore map[string]*gbClient
+	phoneBook      map[string]*gbClient
+	connMutex      sync.RWMutex
+	pool           sync.Pool // Maybe to use with varying buffer sizes
 
 	cRM sync.RWMutex
 
@@ -83,7 +86,10 @@ type GBServer struct {
 	done    chan bool
 	ready   chan struct{}
 
-	serverWg sync.WaitGroup
+	serverWg *sync.WaitGroup
+
+	//go-routine tracking
+	grTracking
 }
 
 //TODO Add a node listener config + also client and node addr
@@ -120,14 +126,17 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
 
-		gbConfig: gbConfig,
-		seedAddr: make([]*net.TCPAddr, 0),
+		gbConfig:       gbConfig,
+		seedAddr:       make([]*net.TCPAddr, 0),
+		tmpClientStore: make(map[string]*gbClient),
 
 		isOriginal: false,
 
 		quitCtx: make(chan struct{}, 1),
 		done:    make(chan bool, 1),
 		ready:   make(chan struct{}, 1),
+
+		serverWg: &sync.WaitGroup{},
 	}
 
 	return s
@@ -139,7 +148,7 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 func (s *GBServer) StartServer() {
 
 	fmt.Printf("Server starting: %s\n", s.ServerName)
-	fmt.Printf("Server address: %s, Seed address: %v\n", s.clientTCPAddr, s.gbConfig.SeedServers)
+	fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
 
 	//Checks and other start up here
 	//Resolve config seed addr
@@ -159,11 +168,15 @@ func (s *GBServer) StartServer() {
 	}
 
 	//---------------- Node Accept Loop ----------------//
-	s.serverWg.Add(1)
-	go func() {
-		defer s.serverWg.Done()
-		s.AcceptNodeLoop("node-test") // Wrap this and put in go-routine
-	}()
+	//s.serverWg.Add(1)
+	//go func() {
+	//	defer s.serverWg.Done()
+	//	s.AcceptNodeLoop("node-test") // Wrap this and put in go-routine
+	//}()
+
+	s.grTracking.trackingFlag.Store(true)
+
+	s.startGoRoutine("Accept-Loop", s.serverWg, func() { s.AcceptNodeLoop("node-test") })
 
 	//---------------- Client Accept Loop ----------------//
 	//TODO Need to make one for client and one for node
@@ -184,6 +197,7 @@ func (s *GBServer) Shutdown() {
 	close(s.quitCtx)
 
 	log.Printf("Waiting for connections to close")
+	// TODO FIX THIS - Wait is not waiting or something is being closed before this can wait
 	s.serverWg.Wait()
 }
 
@@ -245,7 +259,6 @@ func (s *GBServer) AcceptLoop(name string) {
 	log.Printf("Starting client accept loop -- %s\n", name)
 
 	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
-	log.Printf("Seed Server %v\n", s.seedAddr[0])
 
 	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
@@ -288,6 +301,9 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 // Accept Connection - taking connections from different listeners
 //=======================================================
 
+// TODO add a callback error function for any read errors to signal client closures?
+// TODO consider adding client connection scoped context...?
+
 func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn)) {
 
 	for {
@@ -296,6 +312,7 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 			select {
 			case <-s.serverContext.Done():
 				log.Println("Server context done")
+				// Delete clients and close go-routines
 				return
 			default:
 				log.Printf("Error accepting connection: %s\n", err)
@@ -303,9 +320,7 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 			}
 		}
 
-		s.serverWg.Add(1)
 		go func() {
-			defer s.serverWg.Done()
 			createConnFunc(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
 		}()
 	}

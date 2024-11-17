@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 )
 
 //===================================================================================
@@ -46,19 +47,28 @@ type ClusterMap struct {
 // createNodeClient method belongs to the server which receives the connection from the connecting server
 func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
-	// Only log if the connection was initiated by this server (to avoid duplicate logs)
-	if initiated {
-		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
-	} else {
-		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
-	}
+	now := time.Now()
+	clientName := fmt.Sprintf("%s_%d", name, now.Unix())
 
 	client := &gbClient{
-		Name:  name,
-		srv:   s,
-		gbc:   conn,
-		cType: clientType,
+		Name:    clientName,
+		created: now,
+		srv:     s,
+		gbc:     conn,
+		cType:   clientType,
 	}
+
+	// Only log if the connection was initiated by this server (to avoid duplicate logs)
+	if initiated {
+		client.directionType = INITIATED
+		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+	} else {
+		client.directionType = RECEIVED
+		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
+	}
+
+	log.Println(s.ServerName + ": storing " + client.Name)
+	s.tmpClientStore["1"] = client
 
 	//May want to update some node connection  metrics which will probably need a write lock from here
 	// Node count + connection map

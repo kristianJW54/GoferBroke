@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"sync"
+	"time"
 )
 
 const (
@@ -12,22 +14,36 @@ const (
 	NODE
 )
 
+const (
+	INITIATED = "Initiated"
+	RECEIVED  = "Received"
+)
+
 //===================================================================================
 // Client
 //===================================================================================
 
 type gbClient struct {
-	Name string
+	Name    string
+	created time.Time
 
 	srv *GBServer
 
-	gbc     net.Conn
+	// Conn is both node and client
+	gbc net.Conn
+	// Inbound is a read cache for wire reads
 	inbound readCache
 
+	// cType determines if the conn is a node or client
 	cType int
+	// directionType determines if the conn was initiated (dialed by this server) or received (accepted in the accept loop)
+	directionType string
 
 	//Routing info
-	nodeUrl url.URL
+	nodeUrl *url.URL
+
+	//Syncing
+	cLock sync.RWMutex
 }
 
 //===================================================================================
@@ -42,17 +58,28 @@ type readCache struct {
 }
 
 //===================================================================================
+// Outbound Write - For Fan-In - Per connection [Node]
+//===================================================================================
+
+const (
+	SMALL_OUT_BUFFER    = 512
+	STANDARD_OUT_BUFFER = 1024
+	MEDIUM_OUT_BUFFER   = 2048
+	LARGE_OUT_BUFFER    = 4096
+)
+
+type outboundNodeQueue struct {
+	bytesInQ    uint64
+	writeBuffer net.Buffers
+	flushSignal *sync.Cond
+	outLock     *sync.RWMutex
+}
+
+//===================================================================================
 // Client creation
 //===================================================================================
 
 func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
-
-	// Only log if the connection was initiated by this server (to avoid duplicate logs)
-	if initiated {
-		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
-	} else {
-		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
-	}
 
 	client := &gbClient{
 		Name:  name,
@@ -61,10 +88,21 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 		cType: clientType,
 	}
 
+	// Only log if the connection was initiated by this server (to avoid duplicate logs)
+	if initiated {
+		client.directionType = INITIATED
+		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
+	} else {
+		client.directionType = RECEIVED
+		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
+	}
+
+	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
 	go func() {
-		defer conn.Close()
 		client.readLoop()
 	}()
+
+	//Write loop -
 
 	return client
 
@@ -78,6 +116,8 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 //Read Loop
 
 func (c *gbClient) readLoop() {
+
+	defer c.gbc.Close()
 
 	// Read and parse inbound messages
 
@@ -123,5 +163,12 @@ func (c *gbClient) readLoop() {
 			string(dataPayload.Data),
 		)
 	}
+
+}
+
+//---------------------------
+//Write Loop
+
+func (c *gbClient) writeLoop() {
 
 }
