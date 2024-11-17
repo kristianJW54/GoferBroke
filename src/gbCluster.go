@@ -74,10 +74,10 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// Node count + connection map
 
 	// Initialise read caches and any buffers and store info
-	go func() {
-		defer conn.Close() // TODO Fine for now but need to properly manage within the read loop
-		client.readLoop()  //Can take in a pre buffer for later tls ??
-	}()
+	// Track the goroutine for the read loop using startGoRoutine
+	s.startGoRoutine(fmt.Sprintf("read loop for %s", name), func() {
+		client.readLoop()
+	})
 
 	// Also a write loop
 

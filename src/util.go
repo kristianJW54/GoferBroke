@@ -10,37 +10,60 @@ import (
 type grTracking struct {
 	numRoutines  int64
 	index        int64
-	routineMap   sync.Map
 	trackingFlag atomic.Value
-	grLock       sync.RWMutex
+	grWg         *sync.WaitGroup
+	routineMap   sync.Map
 }
 
-func (g *grTracking) startGoRoutine(name string, wg *sync.WaitGroup, f func()) {
-	wg.Add(1)
-	if tracking, ok := g.trackingFlag.Load().(bool); ok && tracking {
-		g.grLock.Lock()
-		id := atomic.AddInt64(&g.index, +1)
-		atomic.AddInt64(&g.numRoutines, +1)
-		g.routineMap.Store(id, name)
-		log.Printf("starting go-routine %v - %v", name, id)
-		g.grLock.Unlock()
+func (g *grTracking) startGoRoutine(name string, f func()) {
+	// Add to the WaitGroup to track the goroutine
+	g.grWg.Add(1)
 
+	// Check if tracking is enabled
+	if tracking, ok := g.trackingFlag.Load().(bool); ok && tracking {
+		// Generate a new unique ID for the goroutine
+		id := atomic.AddInt64(&g.index, 1)
+		atomic.AddInt64(&g.numRoutines, 1)
+
+		// Log the start of the goroutine
+		log.Printf("Starting go-routine %v - %v", name, id)
+
+		// Store the routine's information in the map
+		g.routineMap.Store(id, name)
+
+		// Launch the goroutine
 		go func() {
-			defer wg.Done()
 			defer func() {
+				// Recover from any panic that may occur in the goroutine
 				if r := recover(); r != nil {
 					fmt.Printf("Recovered panic in goroutine %s: %v\n", name, r)
 				}
-				g.grLock.Lock()
-				atomic.AddInt64(&g.numRoutines, -1)
-				g.routineMap.Delete(id)
-				log.Printf("ending go-routine %v - %v", name, id)
-				g.grLock.Unlock()
+
+				// If tracking is enabled, decrement the number of routines and remove from the map
+				if g.trackingFlag.Load().(bool) {
+					atomic.AddInt64(&g.numRoutines, -1)
+					g.routineMap.Delete(id)
+					log.Printf("Ending go-routine %v - %v", name, id)
+				}
 			}()
+
+			// Run the provided function for the goroutine
 			f()
 		}()
 	} else {
-		f()
-		//wg.Done()
+		go func() {
+			f()
+		}()
 	}
+
+}
+
+func (g *grTracking) logActiveGoRoutines() {
+	log.Printf("Go routines left in tracker: %v", atomic.LoadInt64(&g.numRoutines))
+	log.Println("Go routines in tracker:")
+
+	g.routineMap.Range(func(key, value interface{}) bool {
+		log.Printf("Goroutine -- %v %s\n", key, value)
+		return true // continue iteration
+	})
 }

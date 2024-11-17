@@ -49,6 +49,8 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	go gbs.Shutdown()
 	go gbs2.Shutdown()
 
+	gbs.logActiveGoRoutines()
+	gbs2.logActiveGoRoutines()
 	time.Sleep(1 * time.Second)
 
 }

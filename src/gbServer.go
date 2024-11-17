@@ -137,6 +137,12 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		ready:   make(chan struct{}, 1),
 
 		serverWg: &sync.WaitGroup{},
+
+		grTracking: grTracking{
+			index:       0,
+			numRoutines: 0,
+			grWg:        &sync.WaitGroup{},
+		},
 	}
 
 	return s
@@ -176,7 +182,7 @@ func (s *GBServer) StartServer() {
 
 	s.grTracking.trackingFlag.Store(true)
 
-	s.startGoRoutine("Accept-Loop", s.serverWg, func() { s.AcceptNodeLoop("node-test") })
+	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
 	//TODO Need to make one for client and one for node
@@ -190,15 +196,20 @@ func (s *GBServer) StartServer() {
 
 func (s *GBServer) Shutdown() {
 	s.serverContextCancel()
+	log.Println("Waiting for all connections to close...")
+
+	s.serverWg.Wait()        // Wait for the main server goroutines to finish
+	s.grTracking.grWg.Wait() // Ensure goroutines are fully completed
+
 	if s.listener != nil {
 		s.listener.Close()
 	}
+	if s.nodeListener != nil {
+		s.nodeListener.Close()
+	}
 
-	close(s.quitCtx)
-
-	log.Printf("Waiting for connections to close")
-	// TODO FIX THIS - Wait is not waiting or something is being closed before this can wait
-	s.serverWg.Wait()
+	close(s.quitCtx) // Close quit channel
+	log.Println("Server shutdown complete")
 }
 
 //=======================================================
@@ -286,7 +297,10 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	s.nodeListener = nl
 
-	go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
+	//go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
+	s.startGoRoutine("accept node connection routine", func() {
+		s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
+	})
 
 	//---------------- Seed Dial ----------------//
 	//This is essentially a solicit
@@ -320,8 +334,10 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 			}
 		}
 
+		_, cancel := context.WithCancel(s.serverContext) // Create a child context
 		go func() {
-			createConnFunc(conn) // This is a new connection entry point - once in here we can handle client type connection loops etc
+			defer cancel() // Ensure cancellation
+			createConnFunc(conn)
 		}()
 	}
 

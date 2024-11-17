@@ -1,6 +1,7 @@
 package src
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -81,6 +82,8 @@ type outboundNodeQueue struct {
 
 func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
+	defer conn.Close()
+
 	client := &gbClient{
 		Name:  name,
 		srv:   s,
@@ -98,9 +101,13 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	}
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
-	go func() {
+	//go func() {
+	//	client.readLoop()
+	//}()
+	// Track the goroutine for the read loop using startGoRoutine
+	s.startGoRoutine(fmt.Sprintf("read loop for %s", name), func() {
 		client.readLoop()
-	}()
+	})
 
 	//Write loop -
 
@@ -117,7 +124,10 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 func (c *gbClient) readLoop() {
 
-	defer c.gbc.Close()
+	c.cLock.Lock()
+	defer c.cLock.Unlock()
+
+	defer c.srv.grWg.Done()
 
 	// Read and parse inbound messages
 
@@ -135,6 +145,7 @@ func (c *gbClient) readLoop() {
 		n, err := reader.Read(buf)
 		if err != nil && err != io.EOF {
 			log.Println("read error", err)
+			c.gbc.Close()
 			return
 		}
 		if n == 0 {
