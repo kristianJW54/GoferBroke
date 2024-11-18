@@ -82,8 +82,6 @@ type outboundNodeQueue struct {
 
 func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
-	defer conn.Close()
-
 	client := &gbClient{
 		Name:  name,
 		srv:   s,
@@ -106,6 +104,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	//}()
 	// Track the goroutine for the read loop using startGoRoutine
 	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
+		defer conn.Close()
 		client.readLoop()
 	})
 
@@ -124,8 +123,6 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 func (c *gbClient) readLoop() {
 
-	defer c.srv.grWg.Done()
-
 	// Read and parse inbound messages
 
 	//Check locks and if anything is closed or shutting down
@@ -140,12 +137,8 @@ func (c *gbClient) readLoop() {
 
 	for {
 		n, err := reader.Read(buf)
-		if err != nil && err != io.EOF {
+		if n == 0 && err != nil {
 			log.Println("read error", err)
-			c.gbc.Close()
-			return
-		}
-		if n == 0 {
 			return
 		}
 

@@ -33,6 +33,7 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 
 		// Launch the goroutine
 		go func() {
+			defer g.grWg.Done()
 			defer func() {
 				// Recover from any panic that may occur in the goroutine
 				if r := recover(); r != nil {
@@ -40,11 +41,10 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 				}
 
 				// If tracking is enabled, decrement the number of routines and remove from the map
-				if g.trackingFlag.Load().(bool) {
-					atomic.AddInt64(&g.numRoutines, -1)
-					g.routineMap.Delete(id)
-					log.Printf("%s Ending go-routine %v - %v", serverName, name, id)
-				}
+				atomic.AddInt64(&g.numRoutines, -1)
+				g.routineMap.Delete(id)
+				log.Printf("%s Ending go-routine %v - %v", serverName, name, id)
+
 			}()
 
 			// Run the provided function for the goroutine

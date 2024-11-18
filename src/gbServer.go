@@ -54,15 +54,15 @@ type GBServer struct {
 	//TCP - May want to abstract or package this elsewhere and let the server hold that package to conduct it's networking...?
 	// Network package here?? which can hold persistent connections?
 	// We can give an interface here which we can pass in mocks or different methods with controls and configs?
-	listener     net.Listener
-	listenConfig net.ListenConfig
+	listener           net.Listener
+	listenConfig       net.ListenConfig
+	nodeListener       net.Listener
+	nodeListenerConfig net.ListenConfig
 
 	//Context
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
-	shuttingDown        bool
-
-	acceptLoopContext context.Context
+	shuttingDown        sync.Map
 
 	gbConfig *GbConfig
 	seedAddr []*net.TCPAddr
@@ -71,23 +71,15 @@ type GBServer struct {
 	isOriginal  bool
 	isGossiping chan bool
 
-	nodeListener       net.Listener
-	nodeListenerConfig net.ListenConfig
-
 	//Connection Handling
-	clientCount    int
 	tmpClientStore map[string]*gbClient
-	phoneBook      map[string]*gbClient
-	connMutex      sync.RWMutex
-	pool           sync.Pool // Maybe to use with varying buffer sizes
+	//phoneBook      map[string]*gbClient
+	//connMutex      sync.RWMutex
+	//pool           sync.Pool // Maybe to use with varying buffer sizes
 
 	cRM sync.RWMutex
 
-	quitCtx chan struct{}
-	done    chan bool
-	ready   chan struct{}
-
-	serverWg *sync.WaitGroup
+	//serverWg *sync.WaitGroup
 
 	//go-routine tracking
 	grTracking
@@ -126,19 +118,12 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		listenConfig:        lc,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
-		shuttingDown:        false,
 
 		gbConfig:       gbConfig,
 		seedAddr:       make([]*net.TCPAddr, 0),
 		tmpClientStore: make(map[string]*gbClient),
 
 		isOriginal: false,
-
-		quitCtx: make(chan struct{}, 1),
-		done:    make(chan bool, 1),
-		ready:   make(chan struct{}, 1),
-
-		serverWg: &sync.WaitGroup{},
 
 		grTracking: grTracking{
 			index:       0,
@@ -195,20 +180,34 @@ func (s *GBServer) StartServer() {
 //=======================================================
 
 func (s *GBServer) Shutdown() {
-	s.serverContextCancel()
-	log.Println("Waiting for all connections to close...")
+	log.Printf("%s -- shut down initiated\n", s.ServerName)
+	//s.shuttingDown.Store("shutdown", true)
 
-	s.serverWg.Wait() // Wait for the main server goroutines to finish
-	//s.grTracking.grWg.Wait() // Ensure goroutines are fully completed
+	log.Println("context called")
+	s.serverContextCancel()
 
 	if s.listener != nil {
+		log.Println("closing client listener")
 		s.listener.Close()
+		s.listener = nil
 	}
 	if s.nodeListener != nil {
+		log.Println("closing node listener")
 		s.nodeListener.Close()
+		s.nodeListener = nil
 	}
 
-	close(s.quitCtx) // Close quit channel
+	//Close connections
+	for name, client := range s.tmpClientStore {
+		log.Printf("closing client %s\n", name)
+		client.gbc.Close()
+		delete(s.tmpClientStore, name)
+	}
+
+	log.Println("waiting...")
+	s.grWg.Wait()
+	log.Println("done")
+
 	log.Println("Server shutdown complete")
 }
 
@@ -265,28 +264,46 @@ func (s *GBServer) seedCheck() int {
 // Accept Loops
 //=======================================================
 
-func (s *GBServer) AcceptLoop(name string) {
-
-	log.Printf("Starting client accept loop -- %s\n", name)
-
-	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
-
-	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
-	if err != nil {
-		log.Printf("Error creating listener: %s\n", err)
-	}
-
-	// Add listener to the server
-	s.listener = l
-
-	// Can begin go-routine for accepting connections
-	go s.acceptConnection(l, "client-test", func(conn net.Conn) { s.createClient(conn, "normal-client", false, CLIENT) })
-
-}
+//func (s *GBServer) AcceptLoop(name string) {
+//
+//	ctx, _ := context.WithCancel(s.serverContext)
+//	//defer cancel()
+//
+//	log.Printf("Starting client accept loop -- %s\n", name)
+//
+//	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
+//
+//	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
+//	if err != nil {
+//		log.Printf("Error creating listener: %s\n", err)
+//	}
+//
+//	// Add listener to the server
+//	s.listener = l
+//
+//	// Can begin go-routine for accepting connections
+//	go s.acceptConnection(l, "client-test",
+//		func(conn net.Conn) {
+//			s.createClient(conn, "normal-client", false, CLIENT)
+//		},
+//		func(err error) bool {
+//			select {
+//			case <-ctx.Done():
+//				log.Println("accept loop context canceled -- exiting loop")
+//				return true
+//			default:
+//				log.Printf("accept loop context error -- %s\n", err)
+//				return false
+//			}
+//		})
+//}
 
 //TODO Figure out how to manage routines and shutdown signals
 
 func (s *GBServer) AcceptNodeLoop(name string) {
+
+	ctx, _ := context.WithCancel(s.serverContext)
+	//defer cancel()
 
 	log.Printf("Starting node accept loop -- %s\n", name)
 
@@ -300,8 +317,21 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	s.nodeListener = nl
 
 	//go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
-	s.startGoRoutine(s.ServerName, "accept node connection routine", func() {
-		s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
+	s.startGoRoutine(s.ServerName, "accept-connection routine", func() {
+		s.acceptConnection(nl, "node-test",
+			func(conn net.Conn) {
+				s.createClient(conn, "node-client", false, NODE)
+			},
+			func(err error) bool {
+				select {
+				case <-ctx.Done():
+					log.Println("accept loop context canceled -- exiting loop")
+					return true
+				default:
+					log.Printf("accept loop context error -- %s\n", err)
+					return false
+				}
+			})
 	})
 
 	//---------------- Seed Dial ----------------//
@@ -310,7 +340,6 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
 		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {
-			defer s.grWg.Done()
 			s.connectToSeed()
 		})
 	}
@@ -324,32 +353,35 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 // TODO add a callback error function for any read errors to signal client closures?
 // TODO consider adding client connection scoped context...?
 
-func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn)) {
+func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn), customErr func(err error) bool) {
 
-	defer s.grWg.Done()
+	delayCount := int(3)
+	tmpDelay := int(0)
 
-	// TODO Need better signalling here to exit the accept loop
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			select {
-			case <-s.serverContext.Done():
-				log.Println("Server context done")
-				// Delete clients and close go-routines
-				return
-			default:
-				log.Printf("Error accepting connection: %s\n", err)
+			if customErr != nil && customErr(err) {
+				log.Println("custom error called")
+				return // we break here to come out of the loop - if we can't reconnect during a reconnect strategy then we break
+			}
+			if tmpDelay < delayCount {
+				log.Println("retry ", tmpDelay)
+				tmpDelay++
+				continue
+			} else {
+				log.Println("retry limit")
 				break
 			}
+			continue
 		}
-
+		// go createFunc(conn)
 		s.startGoRoutine(s.ServerName, "create connection routine", func() {
-			s.cRM.Lock()
 			createConnFunc(conn)
-			s.cRM.Unlock()
-			s.grWg.Done()
 		})
 	}
+
+	log.Println("accept loop exited")
 
 }
 
