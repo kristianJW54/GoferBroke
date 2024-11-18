@@ -39,15 +39,16 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	// Current break is here
 
-	//client := gbs.tmpClientStore["1"]
+	client := gbs.tmpClientStore["1"]
 	client2 := gbs2.tmpClientStore["1"]
 
-	//log.Printf("%s --> temp client is %s --> direction %s", gbs.ServerName, client.Name, client.directionType)
+	log.Printf("%s --> temp client is %s --> direction %s", gbs.ServerName, client.Name, client.directionType)
 	log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.Name, client2.directionType)
 
 	time.Sleep(2 * time.Second)
 
 	go gbs.Shutdown()
+	time.Sleep(2 * time.Second)
 	go gbs2.Shutdown()
 
 	time.Sleep(2 * time.Second)

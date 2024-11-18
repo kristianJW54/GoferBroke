@@ -320,7 +320,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	s.startGoRoutine(s.ServerName, "accept-connection routine", func() {
 		s.acceptConnection(nl, "node-test",
 			func(conn net.Conn) {
-				s.createClient(conn, "node-client", false, NODE)
+				s.createNodeClient(conn, "node-client", false, NODE)
 			},
 			func(err error) bool {
 				select {

@@ -68,9 +68,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	}
 
 	log.Println(s.ServerName + ": storing " + client.Name)
-	s.cRM.Lock()
 	s.tmpClientStore["1"] = client
-	s.cRM.Unlock()
 
 	//May want to update some node connection  metrics which will probably need a write lock from here
 	// Node count + connection map
