@@ -1,6 +1,7 @@
 package src
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -20,8 +21,15 @@ const (
 	RECEIVED  = "Received"
 )
 
+const (
+	SMALL_OUT_BUFFER    = 512
+	STANDARD_OUT_BUFFER = 1024
+	MEDIUM_OUT_BUFFER   = 2048
+	LARGE_OUT_BUFFER    = 4096
+)
+
 //===================================================================================
-// Client
+// Client | Node
 //===================================================================================
 
 type gbClient struct {
@@ -55,19 +63,12 @@ type readCache struct {
 	buffer      []byte
 	offset      int
 	expandCount int
-	buffSize    int
+	buffSize    uint16
 }
 
 //===================================================================================
-// Outbound Write - For Fan-In - Per connection [Node]
+// Outbound Node Write - For Per connection [Node] During Gossip Exchange
 //===================================================================================
-
-const (
-	SMALL_OUT_BUFFER    = 512
-	STANDARD_OUT_BUFFER = 1024
-	MEDIUM_OUT_BUFFER   = 2048
-	LARGE_OUT_BUFFER    = 4096
-)
 
 type outboundNodeQueue struct {
 	bytesInQ    uint64
@@ -127,42 +128,68 @@ func (c *gbClient) readLoop() {
 
 	//Check locks and if anything is closed or shutting down
 
-	buf := make([]byte, INITIAL_BUFF_SIZE)
+	c.inbound.buffSize = MIN_BUFF_SIZE
+	c.inbound.buffer = make([]byte, c.inbound.buffSize)
+	buff := c.inbound.buffer
 
-	var reader io.Reader
-	reader = c.gbc
+	reader := bufio.NewReader(c.gbc)
 
 	//TODO Look at implementing a specific read function to handle our TCP Packets and have
 	// our own protocol specific rules around read
 
 	for {
-		n, err := reader.Read(buf)
-		if n == 0 && err != nil {
-			log.Println("read error", err)
-			return
+
+		//Adjust buffer if we're close to filling it up
+		if len(buff)-c.inbound.offset < c.inbound.buffSize && len(buff) < MAX_BUFF_SIZE {
+			newSize := len(buff) * 2
+			if newSize > MAX_BUFF_SIZE {
+				newSize = MAX_BUFF_SIZE
+			}
+			newBuffer := make([]byte, newSize)
+			copy(newBuffer, buff[:c.inbound.offset])
+			log.Printf("data: %s", buff)
+			log.Printf("increased buffer size to --> %d", newSize)
 		}
 
-		//TODO Implement a handler router for server-server connections and client-server connections
-		// Similar to Nats where the read and write loop are run inside the handle (or in NATS case the connFunc)
-
-		// Create a GossipPayload to unmarshal the received data into
-		dataPayload := &TCPPacket{&PacketHeader{}, buf} //TODO This needs to a function to create a buffered payload
-
-		err = dataPayload.UnmarshallBinaryV1(buf[:n]) // Read the exact number of bytes
+		//Read data into buffer starting at the current offset
+		n, err := reader.Read(buff[c.inbound.offset:])
 		if err != nil {
-			log.Println("unmarshall error", err)
+			if err == io.EOF {
+				log.Println("connection closed")
+				return
+			}
+			log.Printf("read error: %s", err)
 			return
 		}
 
-		// Log the decoded data (as a string)
-		log.Printf(
-			"%v %v %v %v %s",
-			dataPayload.Header.ProtoVersion,
-			dataPayload.Header.Command,
-			dataPayload.Header.MsgLength,
-			dataPayload.Header.PayloadLength,
-			string(dataPayload.Data),
-		)
+		log.Printf("data: %s", buff)
+
+		c.inbound.offset += n
+		// TODO Add parsing here to check for complete packet and process
+
+		log.Printf("bytes read --> %d", n)
+		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
+
+		// TODO Think about flushing and writing and any clean up after the read
+
+		//// Create a GossipPayload to unmarshal the received data into
+		//dataPayload := &TCPPacket{&PacketHeader{}, buf} //TODO This needs to a function to create a buffered payload
+		//
+		//err = dataPayload.UnmarshallBinaryV1(buf[:n]) // Read the exact number of bytes
+		//if err != nil {
+		//	log.Println("unmarshall error", err)
+		//	return
+		//}
+		//
+		//// Log the decoded data (as a string)
+		//log.Printf(
+		//	"%v %v %v %v %s",
+		//	dataPayload.Header.ProtoVersion,
+		//	dataPayload.Header.Command,
+		//	dataPayload.Header.MsgLength,
+		//	dataPayload.Header.PayloadLength,
+		//	string(dataPayload.Data),
+		//)
 	}
 
 }
@@ -171,5 +198,9 @@ func (c *gbClient) readLoop() {
 //Write Loop
 
 func (c *gbClient) writeLoop() {
+
+	// Will have node writes and client writes
+	// Node writes will have a single output queue outputting during gossip exchange
+	// Client writes will be fan-in > fan-out pattern to interested clients to write to
 
 }

@@ -29,10 +29,6 @@ import (
 
 // Maybe want to declare some global const names for contexts -- seedServerContext -- nodeContext etc
 
-type Config struct {
-	Seed *net.TCPAddr
-} //Temp will be moved
-
 //===================================================================================
 // Main Server
 //===================================================================================
@@ -77,7 +73,7 @@ type GBServer struct {
 	//connMutex      sync.RWMutex
 	//pool           sync.Pool // Maybe to use with varying buffer sizes
 
-	cRM sync.RWMutex
+	serverLock sync.RWMutex
 
 	//serverWg *sync.WaitGroup
 
@@ -125,6 +121,7 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 		isOriginal: false,
 
+		// TODO Create init method and point to it here on server initialisation
 		grTracking: grTracking{
 			index:       0,
 			numRoutines: 0,
@@ -160,15 +157,10 @@ func (s *GBServer) StartServer() {
 		s.isOriginal = false
 	}
 
-	//---------------- Node Accept Loop ----------------//
-	//s.serverWg.Add(1)
-	//go func() {
-	//	defer s.serverWg.Done()
-	//	s.AcceptNodeLoop("node-test") // Wrap this and put in go-routine
-	//}()
-
+	// Setting go routine tracking flag to true - mainly used in testing
 	s.grTracking.trackingFlag.Store(true)
 
+	//---------------- Node Accept Loop ----------------//
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
@@ -218,18 +210,23 @@ func (s *GBServer) Shutdown() {
 func (s *GBServer) resolveConfigSeedAddr() error {
 
 	// Check if no seed servers are configured
-	if len(s.gbConfig.SeedServers) == 0 {
+	if s.gbConfig.SeedServers == nil {
 		// Ensure s.nodeTCPAddr is initialized
 		if s.nodeTCPAddr == nil {
 			return fmt.Errorf("nodeTCPAddr is not initialized")
 		}
 		// Use this node's TCP address as the seed
+		s.serverLock.Lock()
 		s.seedAddr = append(s.seedAddr, s.nodeTCPAddr)
+		s.serverLock.Unlock()
 		log.Printf("seed server list --> %v\n", s.seedAddr)
 		return nil
 	}
 
 	if len(s.gbConfig.SeedServers) >= 1 {
+
+		s.serverLock.Lock()
+		defer s.serverLock.Unlock()
 
 		for i := 0; i < len(s.gbConfig.SeedServers); i++ {
 			addr := net.JoinHostPort(s.gbConfig.SeedServers[i].SeedIP, s.gbConfig.SeedServers[i].SeedPort)
@@ -264,46 +261,46 @@ func (s *GBServer) seedCheck() int {
 // Accept Loops
 //=======================================================
 
-//func (s *GBServer) AcceptLoop(name string) {
-//
-//	ctx, _ := context.WithCancel(s.serverContext)
-//	//defer cancel()
-//
-//	log.Printf("Starting client accept loop -- %s\n", name)
-//
-//	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
-//
-//	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
-//	if err != nil {
-//		log.Printf("Error creating listener: %s\n", err)
-//	}
-//
-//	// Add listener to the server
-//	s.listener = l
-//
-//	// Can begin go-routine for accepting connections
-//	go s.acceptConnection(l, "client-test",
-//		func(conn net.Conn) {
-//			s.createClient(conn, "normal-client", false, CLIENT)
-//		},
-//		func(err error) bool {
-//			select {
-//			case <-ctx.Done():
-//				log.Println("accept loop context canceled -- exiting loop")
-//				return true
-//			default:
-//				log.Printf("accept loop context error -- %s\n", err)
-//				return false
-//			}
-//		})
-//}
+func (s *GBServer) AcceptLoop(name string) {
+
+	ctx, cancel := context.WithCancel(s.serverContext)
+	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/client disconnect
+
+	log.Printf("Starting client accept loop -- %s\n", name)
+
+	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
+
+	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
+	if err != nil {
+		log.Printf("Error creating listener: %s\n", err)
+	}
+
+	// Add listener to the server
+	s.listener = l
+
+	// Can begin go-routine for accepting connections
+	go s.acceptConnection(l, "client-test",
+		func(conn net.Conn) {
+			s.createClient(conn, "normal-client", false, CLIENT)
+		},
+		func(err error) bool {
+			select {
+			case <-ctx.Done():
+				log.Println("accept loop context canceled -- exiting loop")
+				return true
+			default:
+				log.Printf("accept loop context error -- %s\n", err)
+				return false
+			}
+		})
+}
 
 //TODO Figure out how to manage routines and shutdown signals
 
 func (s *GBServer) AcceptNodeLoop(name string) {
 
-	ctx, _ := context.WithCancel(s.serverContext)
-	//defer cancel()
+	ctx, cancel := context.WithCancel(s.serverContext)
+	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/node disconnect
 
 	log.Printf("Starting node accept loop -- %s\n", name)
 
@@ -368,6 +365,7 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 			if tmpDelay < delayCount {
 				log.Println("retry ", tmpDelay)
 				tmpDelay++
+				time.Sleep(1 * time.Second)
 				continue
 			} else {
 				log.Println("retry limit")
