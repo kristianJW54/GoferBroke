@@ -91,7 +91,7 @@ func mockDataConn(t *testing.T) []byte {
 	t.Helper()
 
 	data := []byte("I am a test, I always have been a test. :(")
-	length := uint32(len(data))
+	length := uint16(len(data))
 
 	// Set up the header
 	header := &PacketHeader{

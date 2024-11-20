@@ -63,7 +63,7 @@ type readCache struct {
 	buffer      []byte
 	offset      int
 	expandCount int
-	buffSize    uint16
+	buffSize    int
 }
 
 //===================================================================================
@@ -124,9 +124,14 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 func (c *gbClient) readLoop() {
 
-	// Read and parse inbound messages
+	c.cLock.Lock()
+	if c.gbc == nil {
+		c.cLock.Unlock()
+		return
+	}
 
-	//Check locks and if anything is closed or shutting down
+	// Read and parse inbound messages
+	// Check locks and if anything is closed or shutting down
 
 	c.inbound.buffSize = MIN_BUFF_SIZE
 	c.inbound.buffer = make([]byte, c.inbound.buffSize)
@@ -134,24 +139,36 @@ func (c *gbClient) readLoop() {
 
 	reader := bufio.NewReader(c.gbc)
 
-	//TODO Look at implementing a specific read function to handle our TCP Packets and have
-	// our own protocol specific rules around read
+	// TODO: Look at implementing a specific read function to handle our TCP Packets and have
+	// our own protocol-specific rules around read
 
+	//------------------
+	//Beginning the read loop - read into buffer and adjust size if necessary - parse and process
 	for {
 
-		//Adjust buffer if we're close to filling it up
-		if len(buff)-c.inbound.offset < c.inbound.buffSize && len(buff) < MAX_BUFF_SIZE {
-			newSize := len(buff) * 2
-			if newSize > MAX_BUFF_SIZE {
-				newSize = MAX_BUFF_SIZE
+		c.cLock.Lock()
+
+		// Adjust buffer if we're close to filling it up
+		if c.inbound.offset >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
+			c.inbound.buffSize = cap(buff) * 2
+			if c.inbound.buffSize > MAX_BUFF_SIZE {
+				c.inbound.buffSize = MAX_BUFF_SIZE
 			}
-			newBuffer := make([]byte, newSize)
-			copy(newBuffer, buff[:c.inbound.offset])
-			log.Printf("data: %s", buff)
-			log.Printf("increased buffer size to --> %d", newSize)
+			newBuffer := make([]byte, c.inbound.buffSize)
+			copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
+			buff = newBuffer                         // Assign new buffer to the inbound buffer
+			log.Printf("increased buffer size to --> %d", c.inbound.buffSize)
+		} else if c.inbound.offset < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
+			c.inbound.buffSize = int(cap(buff) / 2)
+			newBuffer := make([]byte, c.inbound.buffSize)
+			copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
+			buff = newBuffer                         // Assign new buffer to the inbound buffer
+			log.Printf("decreased buffer size to --> %d", c.inbound.buffSize)
 		}
 
-		//Read data into buffer starting at the current offset
+		c.cLock.Unlock()
+
+		// Read data into buffer starting at the current offset
 		n, err := reader.Read(buff[c.inbound.offset:])
 		if err != nil {
 			if err == io.EOF {
@@ -162,10 +179,26 @@ func (c *gbClient) readLoop() {
 			return
 		}
 
-		log.Printf("data: %s", buff)
+		// Check if we need to expand or shrink the buffer - if the buffer is half empty more than twice, we shrink
+		if n > cap(buff) {
+			c.inbound.expandCount = 0
+			log.Printf("reseting expand count to: %d", c.inbound.expandCount)
+		} else if n < cap(buff)/2 {
+			c.inbound.expandCount++
+			log.Printf("increasing expand count to: %d", c.inbound.expandCount)
+		}
 
+		log.Printf("raw data string: %s", string(buff[c.inbound.offset:c.inbound.offset+n]))
+
+		log.Printf("data: %v", buff)
+
+		// Update offset
 		c.inbound.offset += n
-		// TODO Add parsing here to check for complete packet and process
+
+		//-----------------------------
+		// Parsing the packet - we send the buffer to be parsed, if we hit CLRF (for either header or data)
+		// then we have complete packet and can call processing handlers
+		// TODO: Add parsing here to check for complete packet and process
 
 		log.Printf("bytes read --> %d", n)
 		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))

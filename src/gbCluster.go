@@ -95,7 +95,7 @@ func (s *GBServer) connectToSeed() error {
 	//To understand how this connection is communicating ...
 
 	////Create info message
-	data := []byte(s.ServerName + s.nodeTCPAddr.String())
+	data := []byte("This is a test")
 
 	header := newProtoHeader(1, 1)
 

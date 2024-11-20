@@ -6,15 +6,19 @@ import (
 	"log"
 )
 
+const (
+	CLRF = "\r\n"
+)
+
 // Version + Header Sizes
 const (
 	PROTO_VERSION_1 uint8 = 1
-	HEADER_SIZE_V1        = 10
+	HEADER_SIZE_V1        = 6
 )
 
 const (
 	MAX_BUFF_SIZE     = 4096
-	MIN_BUFF_SIZE     = 128
+	MIN_BUFF_SIZE     = 256
 	INITIAL_BUFF_SIZE = 512
 )
 
@@ -43,8 +47,8 @@ const (
 type PacketHeader struct {
 	ProtoVersion  uint8  // Protocol version (1 byte)
 	Command       uint8  // Message type (e.g., SYN, SYN_ACK, ACK..)
-	MsgLength     uint32 // Total message length (4 bytes)
-	PayloadLength uint32 // Total length (4 bytes)
+	MsgLength     uint16 // Total message length (4 bytes)
+	PayloadLength uint16 // Total length (4 bytes)
 	//May Implement Data length if we want dynamic header size for evolving protocol
 }
 
@@ -59,7 +63,7 @@ func newProtoHeader(version, command uint8) *PacketHeader {
 	}
 }
 
-func (pr *PacketHeader) headerV1Serialize(length uint32) ([]byte, error) {
+func (pr *PacketHeader) headerV1Serialize(length uint16) ([]byte, error) {
 
 	if pr.ProtoVersion != PROTO_VERSION_1 {
 		return nil, fmt.Errorf("version must be %v", PROTO_VERSION_1)
@@ -70,11 +74,10 @@ func (pr *PacketHeader) headerV1Serialize(length uint32) ([]byte, error) {
 	//We will let these go until they get passed to elements that need to parse them and then let them return the error?
 	b[1] = pr.Command
 
-	binary.BigEndian.PutUint32(b[2:6], length)
-	binary.BigEndian.PutUint32(b[6:10], length+HEADER_SIZE_V1)
+	binary.BigEndian.PutUint16(b[2:4], length)
+	binary.BigEndian.PutUint16(b[4:6], length+HEADER_SIZE_V1)
 	// Add CRLF at the end of the header
-	b[10] = '\r'
-	b[11] = '\n'
+	copy(b[6:8], CLRF)
 
 	return b, nil
 }
@@ -104,7 +107,9 @@ func (gp *TCPPacket) MarshallBinary() (data []byte, err error) {
 func (gp *TCPPacket) marshallBinaryV1() (data []byte, err error) {
 
 	// Calculate the length of the data (payload)
-	dataLength := uint32(len(gp.Data)) // The length of the data section
+	//dataLength := uint16(len(gp.Data)) // The length of the data section
+
+	dataLength := uint16(260)
 
 	b, err := gp.Header.headerV1Serialize(dataLength)
 	if err != nil {
@@ -137,8 +142,8 @@ func (gp *TCPPacket) UnmarshallBinaryV1(data []byte) error {
 	// Read the header fields
 	gp.Header.ProtoVersion = data[0]
 	gp.Header.Command = data[1]
-	gp.Header.MsgLength = binary.BigEndian.Uint32(data[2:6])
-	gp.Header.PayloadLength = binary.BigEndian.Uint32(data[6:10])
+	gp.Header.MsgLength = binary.BigEndian.Uint16(data[2:4])
+	gp.Header.PayloadLength = binary.BigEndian.Uint16(data[6:8])
 
 	// Verify CRLF is correct
 	if data[10] != '\r' || data[11] != '\n' {
