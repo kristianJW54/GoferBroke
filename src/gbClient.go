@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/url"
 	"sync"
 	"time"
 )
@@ -14,11 +13,6 @@ import (
 const (
 	CLIENT = iota
 	NODE
-)
-
-const (
-	INITIATED = "Initiated"
-	RECEIVED  = "Received"
 )
 
 const (
@@ -47,9 +41,13 @@ type gbClient struct {
 	cType int
 	// directionType determines if the conn was initiated (dialed by this server) or received (accepted in the accept loop)
 	directionType string
+	// Node client
+	node
 
-	//Routing info
-	nodeUrl *url.URL
+	//Parsing + State
+	stateMachine
+	//Flags --> will tell us what state the client is in (connected, awaiting_syn_ack, etc...)
+	flags int
 
 	//Syncing
 	cLock sync.RWMutex
@@ -237,3 +235,7 @@ func (c *gbClient) writeLoop() {
 	// Client writes will be fan-in > fan-out pattern to interested clients to write to
 
 }
+
+//===================================================================================
+// Handlers
+//===================================================================================

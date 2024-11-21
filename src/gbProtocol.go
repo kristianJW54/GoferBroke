@@ -22,22 +22,30 @@ const (
 	INITIAL_BUFF_SIZE = 512
 )
 
-// Commands
+// Node Commands
 const (
 	GOSS_SYN uint8 = iota
 	GOSS_SYN_ACK
 	GOSS_ACK
 	TEST
-	ENTRY_TO_CLUSTER
+	INITIAL
 	ERROR // Error message
 )
 
-// Handshake
+// Flags
 const (
-	CONNECT_REQUEST = iota
-	REJECTED
-	CONNECTED
+	CONNECTED = iota
+	TEMP
+	GOSSIPING
+	GOSS_SYN_SENT
+	GODD_SYN_REC
+	GOSS_SYN_ACK_SENT
+	GOSS_SYN_ACK_REC
+	GOSS_ACK_SENT
+	GOSS_ACK_REC
 )
+
+// Response Codes ??/
 
 //TODO Consider implementing interface with serialisation methods and sending mehtods for packets
 // which packets can implement, then we can pass an interface to handle connection methods on server...?

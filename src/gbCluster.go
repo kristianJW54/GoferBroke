@@ -33,6 +33,22 @@ type ClusterMap struct {
 }
 
 //===================================================================================
+// Node Struct which embeds in client
+//===================================================================================
+
+const (
+	INITIATED = "Initiated"
+	RECEIVED  = "Received"
+)
+
+type node struct {
+
+	// Info
+	tcpAddr   *net.TCPAddr
+	direction string
+}
+
+//===================================================================================
 // Node Connection
 //===================================================================================
 
@@ -42,7 +58,7 @@ type ClusterMap struct {
 
 // createNode is the entry point to reading and writing
 // createNode will have a read write loop
-//createNode lives inside the node accept loop
+// createNode lives inside the node accept loop
 
 // createNodeClient method belongs to the server which receives the connection from the connecting server
 func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
