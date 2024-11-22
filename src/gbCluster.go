@@ -46,6 +46,9 @@ type node struct {
 	// Info
 	tcpAddr   *net.TCPAddr
 	direction string
+
+	// Gossip state - Handlers will check against this and make sure no duplicate or conflicting work is being done
+	gossipState int
 }
 
 //===================================================================================
@@ -113,7 +116,7 @@ func (s *GBServer) connectToSeed() error {
 	////Create info message
 	data := []byte("This is a test")
 
-	header := newProtoHeader(1, 1)
+	header := newProtoHeader(1, INITIAL)
 
 	payload := &TCPPacket{
 		header,
