@@ -1,7 +1,9 @@
 package src
 
 import (
+	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"testing"
 	"time"
@@ -54,7 +56,25 @@ func TestAcceptConnection(t *testing.T) {
 	// Create and send payload
 	//payload := mockDataConn(t)
 
-	payload := []byte("INFO\r\nThis is a message for me to parse please pass this on\r\n")
+	data := "I must not fear. Fear is the mind-killer. Fear is the little-death that brings total obliteration. " +
+		"I will face my fear. I will permit it to pass over me and through me. And when it has gone past " +
+		"I will turn the inner eye to see its path. Where the fear has gone there will be nothing. Only I will remain."
+
+	length := len(data)
+
+	command := []byte{1}
+	msgLength := make([]byte, 4)                          // 4 bytes for uint32, can be adjusted based on expected size
+	binary.BigEndian.PutUint32(msgLength, uint32(length)) // Store the length in big-endian format
+
+	payload := make([]byte, 1+4+2+length)
+
+	payload[0] = command[0]
+	copy(payload[1:5], msgLength)
+	payload[5] = '\r'
+	payload[6] = '\n'
+	copy(payload[7:], data)
+
+	log.Println("test pay:", payload)
 
 	_, err = conn.Write(payload)
 	if err != nil {

@@ -2,6 +2,7 @@ package src
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -188,7 +189,7 @@ func (c *gbClient) readLoop() {
 
 		//log.Printf("raw data string: %s", string(buff[c.inbound.offset:c.inbound.offset+n]))
 
-		log.Printf("data: %v", buff)
+		//log.Printf("data: %v", buff)
 
 		// Update offset
 		c.inbound.offset += n
@@ -197,7 +198,9 @@ func (c *gbClient) readLoop() {
 		// Parsing the packet - we send the buffer to be parsed, if we hit CLRF (for either header or data)
 		// then we have complete packet and can call processing handlers
 		// TODO: Add parsing here to check for complete packet and process
-		c.parsePacket(buff)
+		if c.cType == CLIENT {
+			c.parsePacket(buff)
+		}
 
 		log.Printf("bytes read --> %d", n)
 		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
@@ -240,3 +243,25 @@ func (c *gbClient) writeLoop() {
 //===================================================================================
 // Handlers
 //===================================================================================
+
+func (c *gbClient) processINFO(arg []byte) error {
+	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
+
+	log.Println("printing arg from method")
+	log.Println(arg)
+
+	if len(arg) >= 4 {
+		// Extract the last 4 bytes
+		msgLengthBytes := arg[len(arg)-4:]
+
+		// Convert those 4 bytes to uint32 (BigEndian)
+		c.nh.msgLength = int(binary.BigEndian.Uint32(msgLengthBytes))
+
+		// Log the result to verify
+		log.Printf("Extracted msgLength: %d\n", c.nh.msgLength)
+	} else {
+		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
+	}
+
+	return nil
+}

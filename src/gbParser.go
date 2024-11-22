@@ -9,7 +9,6 @@ const (
 	INFO
 
 	MSG_PAYLOAD
-	MSG_PAYLOAD_NO_SIZE
 	MSG_R_END
 	MSG_N_END
 )
@@ -27,7 +26,7 @@ type stateMachine struct {
 
 type nodeHeader struct {
 	version      uint8
-	command      uint8
+	command      uint32
 	msgLength    int
 	headerLength int
 }
@@ -46,7 +45,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 		case START:
 
 			switch b {
-			case 'I':
+			case 1:
 				log.Println("switching to info state")
 				state = INFO
 			default:
@@ -67,27 +66,16 @@ func (c *gbClient) parsePacket(packet []byte) {
 					arg = packet[c.position : i-c.drop]
 				}
 				// TODO Make this method
-				//if err := c.processINFO(arg); err != nil {
-				//	log.Println("error processing info header:", err)
-				//}
-				log.Println("arg -->", string(arg))
-				log.Println("arg as byte --> ", arg)
+				if err := c.processINFO(arg); err != nil {
+					log.Println("error processing info header:", err)
+				}
 
 				c.drop = 0
 				c.position = i + 1
-				state = MSG_PAYLOAD_NO_SIZE
-
-				//switch c.nh.msgLength {
-				//case 0:
-				//	log.Println("no message to process")
-				//	state = START
-				//case -1:
-				//	log.Println("parsing unknown message size")
-				//	state = MSG_PAYLOAD_NO_SIZE
-				//default:
-				//	log.Printf("expecting payload of %d", c.nh.msgLength)
-				//	state = MSG_PAYLOAD
-				//}
+				log.Println("position after info : ", c.position)
+				log.Println("i after info: ", i)
+				log.Println("switching to message payload state")
+				state = MSG_PAYLOAD
 
 				//if c.msgBuf == nil {
 				//	// If no saved buffer exists, assume this packet contains the full payload.
@@ -100,32 +88,52 @@ func (c *gbClient) parsePacket(packet []byte) {
 				if c.argBuf != nil {
 					c.argBuf = append(c.argBuf, b)
 				}
-				//TODO finish from here
 			}
 
-		case MSG_PAYLOAD_NO_SIZE:
+		case MSG_PAYLOAD:
 
-			switch b {
-			case '\r':
-				c.drop = 1
-			case '\n':
-				var msg []byte
-				if c.msgBuf != nil {
-					msg = make([]byte, len(c.msgBuf)+len(packet[c.position:i-c.drop]))
-					copy(msg, c.msgBuf)
-					copy(msg[len(c.msgBuf):], packet[c.position:i-c.drop])
-					c.msgBuf = nil
+			if c.msgBuf != nil {
+				log.Println(string(c.msgBuf))
+				left := c.nh.msgLength - len(c.msgBuf)
+				avail := len(c.msgBuf) - i
+				if avail < left {
+					left = avail
+				}
+				if left > 0 {
+					start := len(c.msgBuf)
+					c.msgBuf = c.msgBuf[start : start+left]
+					copy(c.msgBuf[i:], packet[i:i+left])
+					i = (i + left) - 1
 				} else {
-					msg = packet[c.position : i-c.drop]
+					c.msgBuf = append(c.msgBuf, b)
 				}
 
-				log.Printf("completed message --> %s", string(msg))
-				c.drop = 0
-				c.position = i + 1
+				if len(c.msgBuf) >= c.nh.msgLength {
+					state = MSG_R_END
+				}
+			} else if i-c.position+1 >= c.nh.msgLength {
+				state = MSG_R_END
 			}
 
+		case MSG_R_END:
+			if b != '\r' {
+				log.Println("end of message error")
+				return
+			}
+			if c.msgBuf != nil {
+				c.msgBuf = append(c.msgBuf, b)
+			}
+			state = MSG_N_END
+		case MSG_N_END:
+			if b != '\n' {
+				log.Println("end of message error")
+				return
+			}
+			if c.msgBuf != nil {
+				c.msgBuf = append(c.msgBuf, b)
+			} else {
+				c.msgBuf = packet[c.position : i+1]
+			}
 		}
-
 	}
-
 }
