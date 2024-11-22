@@ -144,7 +144,7 @@ func (c *gbClient) readLoop() {
 	//Beginning the read loop - read into buffer and adjust size if necessary - parse and process
 	for {
 
-		c.cLock.Lock()
+		//c.cLock.Lock()
 
 		// Adjust buffer if we're close to filling it up
 		if c.inbound.offset >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
@@ -164,7 +164,7 @@ func (c *gbClient) readLoop() {
 			log.Printf("decreased buffer size to --> %d", c.inbound.buffSize)
 		}
 
-		c.cLock.Unlock()
+		//c.cLock.Unlock()
 
 		// Read data into buffer starting at the current offset
 		n, err := reader.Read(buff[c.inbound.offset:])
@@ -186,7 +186,7 @@ func (c *gbClient) readLoop() {
 			log.Printf("increasing expand count to: %d", c.inbound.expandCount)
 		}
 
-		log.Printf("raw data string: %s", string(buff[c.inbound.offset:c.inbound.offset+n]))
+		//log.Printf("raw data string: %s", string(buff[c.inbound.offset:c.inbound.offset+n]))
 
 		log.Printf("data: %v", buff)
 
@@ -197,6 +197,7 @@ func (c *gbClient) readLoop() {
 		// Parsing the packet - we send the buffer to be parsed, if we hit CLRF (for either header or data)
 		// then we have complete packet and can call processing handlers
 		// TODO: Add parsing here to check for complete packet and process
+		c.parsePacket(buff)
 
 		log.Printf("bytes read --> %d", n)
 		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))

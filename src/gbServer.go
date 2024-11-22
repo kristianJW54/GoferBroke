@@ -164,7 +164,7 @@ func (s *GBServer) StartServer() {
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
-	//s.AcceptLoop("client-test")
+	s.AcceptLoop("client-test")
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }

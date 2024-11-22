@@ -46,19 +46,15 @@ func TestAcceptConnection(t *testing.T) {
 		fmt.Printf("Failed to connect: %v\n", err)
 		return
 	}
-	// Dial the TCP server
-	conn2, err := net.Dial("tcp", "localhost:8081")
-	if err != nil {
-		fmt.Printf("Failed to connect: %v\n", err)
-		return
-	}
+
 	fmt.Printf("Conn: Connected to the server remote --> %v local --> %v\n", conn.RemoteAddr(), conn.LocalAddr())
-	fmt.Printf("Conn2: Connected to the server remote --> %v local --> %v\n", conn2.RemoteAddr(), conn2.LocalAddr())
 
 	time.Sleep(1 * time.Second)
 
 	// Create and send payload
-	payload := mockDataConn(t)
+	//payload := mockDataConn(t)
+
+	payload := []byte("INFO\r\nThis is a message for me to parse please pass this on\r\n")
 
 	_, err = conn.Write(payload)
 	if err != nil {
