@@ -153,22 +153,22 @@ func (c *gbClient) readLoop() {
 			if c.inbound.buffSize > MAX_BUFF_SIZE {
 				c.inbound.buffSize = MAX_BUFF_SIZE
 			}
-			newBuffer := make([]byte, c.inbound.buffSize)
-			copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
-			buff = newBuffer                         // Assign new buffer to the inbound buffer
+			buff = make([]byte, c.inbound.buffSize)
+			//copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
+			//buff = newBuffer                         // Assign new buffer to the inbound buffer
 			log.Printf("increased buffer size to --> %d", c.inbound.buffSize)
 		} else if c.inbound.offset < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
 			c.inbound.buffSize = int(cap(buff) / 2)
-			newBuffer := make([]byte, c.inbound.buffSize)
-			copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
-			buff = newBuffer                         // Assign new buffer to the inbound buffer
+			buff = make([]byte, c.inbound.buffSize)
+			//copy(newBuffer, buff[c.inbound.offset:]) // Copy data into the new buffer
+			//buff = newBuffer                         // Assign new buffer to the inbound buffer
 			log.Printf("decreased buffer size to --> %d", c.inbound.buffSize)
 		}
 
 		//c.cLock.Unlock()
 
 		// Read data into buffer starting at the current offset
-		n, err := reader.Read(buff[c.inbound.offset:])
+		n, err := reader.Read(buff)
 		if err != nil {
 			if err == io.EOF {
 				log.Println("connection closed")
@@ -192,15 +192,19 @@ func (c *gbClient) readLoop() {
 		//log.Printf("data: %v", buff)
 
 		// Update offset
-		c.inbound.offset += n
+		c.inbound.offset = n
+		log.Println("n", n)
+		log.Println("offset:", c.inbound.offset)
 
 		//-----------------------------
 		// Parsing the packet - we send the buffer to be parsed, if we hit CLRF (for either header or data)
 		// then we have complete packet and can call processing handlers
 		// TODO: Add parsing here to check for complete packet and process
 		if c.cType == CLIENT {
-			c.parsePacket(buff)
+			c.parsePacket(buff[:n])
 		}
+
+		log.Printf("parser round count: %d", c.rounds)
 
 		log.Printf("bytes read --> %d", n)
 		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
