@@ -3,6 +3,7 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"testing"
 	"time"
@@ -59,25 +60,50 @@ func TestAcceptConnection(t *testing.T) {
 		"I will face my fear. I will permit it to pass over me and through me. And when it has gone past " +
 		"I will turn the inner eye to see its path. Where the fear has gone there will be nothing. Only I will remain.\r\n"
 
-	length := len(data)
+	data2 := "I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers! " +
+		"I've stood on the back deck of a blinker bound for the Plutition Camps with sweat in my eyes watching stars " +
+		"fight on the shoulder of Orion... I've felt wind in my hair, riding test boats off the black galaxies and " +
+		"seen an attack fleet burn like a match and disappear. I've seen it, felt it...! I've seen things... seen things " +
+		"you little people wouldn't believe. Attack ships on fire off the shoulder of Orion bright as magnesium... " +
+		"I rode on the back decks of a blinker and watched C-beams glitter in the dark near the Tannhäuser Gate. " +
+		"All those moments... they'll be gone\r\n"
 
+	// Prepare first payload
+	length := len(data)
 	command := []byte{1}
-	msgLength := make([]byte, 4)                          // 4 bytes for uint32, can be adjusted based on expected size
-	binary.BigEndian.PutUint32(msgLength, uint32(length)) // Store the length in big-endian format
+	msgLength := make([]byte, 4)
+	binary.BigEndian.PutUint32(msgLength, uint32(length))
 
 	payload := make([]byte, 1+4+2+length)
-
 	payload[0] = command[0]
 	copy(payload[1:5], msgLength)
 	payload[5] = '\r'
 	payload[6] = '\n'
 	copy(payload[7:], data)
 
-	//log.Println("test pay:", payload)
-
+	// Send first payload
 	_, err = conn.Write(payload)
 	if err != nil {
-		t.Fatal(err)
+		log.Fatal(err)
+	}
+
+	//// Prepare second payload
+	length2 := len(data2)
+	msgLength2 := make([]byte, 4)
+	binary.BigEndian.PutUint32(msgLength2, uint32(length2))
+
+	payload2 := make([]byte, 1+4+2+length2)
+	payload2[0] = command[0]
+	copy(payload2[1:5], msgLength2)
+	payload2[5] = '\r'
+	payload2[6] = '\n'
+	copy(payload2[7:], data2)
+
+	// Send second payload
+	time.Sleep(1 * time.Second)
+	_, err = conn.Write(payload2)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	//

@@ -132,7 +132,7 @@ func (c *gbClient) readLoop() {
 	// Read and parse inbound messages
 	// Check locks and if anything is closed or shutting down
 
-	c.inbound.buffSize = MIN_BUFF_SIZE
+	c.inbound.buffSize = 512
 	c.inbound.buffer = make([]byte, c.inbound.buffSize)
 	buff := c.inbound.buffer
 
@@ -147,27 +147,6 @@ func (c *gbClient) readLoop() {
 
 		//c.cLock.Lock()
 
-		// Adjust buffer if we're close to filling it up
-		if c.inbound.offset >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
-			c.inbound.buffSize = cap(buff) * 2
-			if c.inbound.buffSize > MAX_BUFF_SIZE {
-				c.inbound.buffSize = MAX_BUFF_SIZE
-			}
-			buff = make([]byte, c.inbound.buffSize)
-			//copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
-			//buff = newBuffer                         // Assign new buffer to the inbound buffer
-			log.Printf("increased buffer size to --> %d", c.inbound.buffSize)
-		} else if c.inbound.offset < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
-			c.inbound.buffSize = int(cap(buff) / 2)
-			buff = make([]byte, c.inbound.buffSize)
-			//copy(newBuffer, buff[c.inbound.offset:]) // Copy data into the new buffer
-			//buff = newBuffer                         // Assign new buffer to the inbound buffer
-			log.Printf("decreased buffer size to --> %d", c.inbound.buffSize)
-		}
-
-		//c.cLock.Unlock()
-
-		// Read data into buffer starting at the current offset
 		n, err := reader.Read(buff)
 		if err != nil {
 			if err == io.EOF {
@@ -178,14 +157,39 @@ func (c *gbClient) readLoop() {
 			return
 		}
 
-		// Check if we need to expand or shrink the buffer - if the buffer is half empty more than twice, we shrink
-		if n > cap(buff) {
-			c.inbound.expandCount = 0
-			log.Printf("reseting expand count to: %d", c.inbound.expandCount)
-		} else if n < cap(buff)/2 {
-			c.inbound.expandCount++
-			log.Printf("increasing expand count to: %d", c.inbound.expandCount)
-		}
+		log.Println("==========================================")
+		log.Println("printing the data before going to parse it")
+		log.Println(string(buff[:n]))
+		log.Println("==========================================")
+
+		// Adjust buffer if we're close to filling it up
+		//if c.inbound.offset >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
+		//	c.inbound.buffSize = cap(buff) * 2
+		//	if c.inbound.buffSize > MAX_BUFF_SIZE {
+		//		c.inbound.buffSize = MAX_BUFF_SIZE
+		//	}
+		//	buff = make([]byte, c.inbound.buffSize)
+		//	//copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
+		//	//buff = newBuffer                         // Assign new buffer to the inbound buffer
+		//	log.Printf("increased buffer size to --> %d", c.inbound.buffSize)
+		//} else if c.inbound.offset < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
+		//	c.inbound.buffSize = int(cap(buff) / 2)
+		//	buff = make([]byte, c.inbound.buffSize)
+		//	//copy(newBuffer, buff[c.inbound.offset:]) // Copy data into the new buffer
+		//	//buff = newBuffer                         // Assign new buffer to the inbound buffer
+		//	log.Printf("decreased buffer size to --> %d", c.inbound.buffSize)
+		//}
+		//
+		////c.cLock.Unlock()
+		//
+		//// Check if we need to expand or shrink the buffer - if the buffer is half empty more than twice, we shrink
+		//if n > cap(buff) {
+		//	c.inbound.expandCount = 0
+		//	log.Printf("reseting expand count to: %d", c.inbound.expandCount)
+		//} else if n < cap(buff)/2 {
+		//	c.inbound.expandCount++
+		//	log.Printf("increasing expand count to: %d", c.inbound.expandCount)
+		//}
 
 		//log.Printf("raw data string: %s", string(buff[c.inbound.offset:c.inbound.offset+n]))
 
