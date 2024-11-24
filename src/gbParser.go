@@ -50,13 +50,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 		switch c.state {
 		case START:
 
-			log.Println("c.parsed ", c.parsed)
-			log.Println("position ", c.position)
-			log.Println("command", c.command)
-			log.Println("packet - ", len(packet))
-			log.Println("arg - ", c.argBuf)
-			log.Println("msg - ", c.msgBuf)
-
 			c.command = b
 
 			switch b {
@@ -80,7 +73,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 				} else {
 					arg = packet[c.position : i-c.drop]
 				}
-				// TODO Make this method
 				if err := c.processINFO(arg); err != nil {
 					log.Println("error processing info header:", err)
 				}
@@ -116,16 +108,11 @@ func (c *gbClient) parsePacket(packet []byte) {
 				}
 				if left > 0 {
 					start := len(c.msgBuf)
-					log.Println("start --> ", start)
 					log.Println("length of msg.buf before: ", len(c.msgBuf))
 					c.msgBuf = c.msgBuf[:start+left]
 					log.Println("length of msg.buf after: ", len(c.msgBuf))
 					copy(c.msgBuf[start:], packet[i:i+left])
-					log.Println("msg buf after copy --> ", c.msgBuf)
 					i = (i + left) - 1
-					//TODO look at i -- for some reason - 1 works but the loop is exiting because its at the end of the index
-					// need to fix in order to reach message end
-					log.Println("i -- ", i)
 				} else {
 					c.msgBuf = append(c.msgBuf, b)
 				}
@@ -133,11 +120,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 				if len(c.msgBuf) >= c.nh.msgLength {
 					log.Println("switching to r_end 1")
 					i = i - 2
-					log.Println("message --> ", c.msgBuf)
-					log.Println("position > ", c.position)
-					log.Println("i > ", i)
-					log.Println("next byte -- ", packet[i])
-					log.Println(len(packet))
 					c.state = MSG_R_END
 				}
 			} else if i-c.position+1 >= c.nh.msgLength {
@@ -178,10 +160,10 @@ func (c *gbClient) parsePacket(packet []byte) {
 			c.state = START
 			c.position = i + 1
 			c.drop = 0
+
+			c.rounds = 0
 		}
 	}
-
-	//TODO we are resetting the buffer each time here - we need to not
 
 	log.Println("end of for loop - starting again lol")
 	log.Println("state = ", c.state)
@@ -200,17 +182,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 			c.msgBuf = c.scratch[len(c.argBuf):len(c.argBuf)]
 			c.msgBuf = append(c.msgBuf, packet[c.position:]...)
 		}
-
-		log.Println("printing scratch : ", c.scratch)
-
-		// Do check if remaining is greater than expected
-
-		//Take what we have and store it
-		//newBuf := make([]byte, len(packet[c.position:]), c.nh.msgLength)
-		//copy(newBuf, packet[c.position:])
-		//c.msgBuf = newBuf
-		//log.Println("msg buf after copy: ", len(c.msgBuf))
-		//log.Println("msg buf == ", c.msgBuf)
 
 	}
 
