@@ -12,8 +12,9 @@ const (
 
 // Version + Header Sizes
 const (
-	PROTO_VERSION_1 uint8 = 1
-	HEADER_SIZE_V1        = 6
+	PROTO_VERSION_1     uint8 = 1
+	HEADER_SIZE_V1            = 6
+	NODE_HEADER_SIZE_V1       = 9
 )
 
 const (
@@ -49,6 +50,65 @@ const (
 
 //TODO Consider implementing interface with serialisation methods and sending mehtods for packets
 // which packets can implement, then we can pass an interface to handle connection methods on server...?
+
+//=====================================================================
+// Packet constructor and serialisation
+//=====================================================================
+
+// TODO --> Will we need to allocate buffers each time for serialising writes or use a pool of buffers?
+
+type nodePacketHeader struct {
+	version    uint8
+	command    uint8
+	msgSize    uint16
+	headerSize uint16
+}
+
+type nodePacket struct {
+	*nodePacketHeader
+	data []byte
+}
+
+func constructNodeHeader(version, command uint8, msgSize, headerSize uint16) *nodePacketHeader {
+	return &nodePacketHeader{version, command, msgSize, headerSize}
+}
+
+func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
+
+	if nph.version != PROTO_VERSION_1 {
+		return nil, fmt.Errorf("version not supported")
+	}
+
+	if nph.headerSize != NODE_HEADER_SIZE_V1 {
+		return nil, fmt.Errorf("header size not supported")
+	}
+
+	header := make([]byte, NODE_HEADER_SIZE_V1)
+	header[0] = nph.version
+	header[1] = nph.command
+	binary.BigEndian.PutUint16(header[2:4], nph.msgSize)
+	binary.BigEndian.PutUint16(header[4:6], nph.headerSize)
+	header[7] = '\r'
+	header[8] = '\n'
+
+	return header, nil
+
+}
+
+func (np *nodePacket) serialize() ([]byte, error) {
+
+	header, err := np.serializeHeader()
+	if err != nil {
+		return nil, err
+	}
+
+	log.Println(header)
+
+	dataBuf := make([]byte, np.msgSize+np.headerSize)
+	copy(dataBuf, header)
+	copy(dataBuf[np.headerSize:], np.data)
+	return dataBuf, nil
+}
 
 //Think about versioning, if more things get added to the header - in serialisation we need to account for different versions
 

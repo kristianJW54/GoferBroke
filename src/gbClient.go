@@ -92,10 +92,10 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
+		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
 	} else {
 		client.directionType = RECEIVED
-		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
+		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
 	}
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
@@ -138,8 +138,7 @@ func (c *gbClient) readLoop() {
 
 	reader := bufio.NewReader(c.gbc)
 
-	// TODO: Look at implementing a specific read function to handle our TCP Packets and have
-	// our own protocol-specific rules around read
+	// TODO: Look at back-pressure or flow control to prevent overwhelming the read loop
 
 	//------------------
 	//Beginning the read loop - read into buffer and adjust size if necessary - parse and process
@@ -156,11 +155,6 @@ func (c *gbClient) readLoop() {
 			log.Printf("read error: %s", err)
 			return
 		}
-
-		log.Println("==========================================")
-		log.Println("printing the data before going to parse it")
-		log.Println(string(buff[:n]))
-		log.Println("==========================================")
 
 		// Adjust buffer if we're close to filling it up
 		//if c.inbound.offset >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
@@ -197,8 +191,8 @@ func (c *gbClient) readLoop() {
 
 		// Update offset
 		c.inbound.offset = n
-		log.Println("n", n)
-		log.Println("offset:", c.inbound.offset)
+		//log.Println("n", n)
+		//log.Println("offset:", c.inbound.offset)
 
 		//-----------------------------
 		// Parsing the packet - we send the buffer to be parsed, if we hit CLRF (for either header or data)
@@ -208,10 +202,10 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		log.Printf("parser round count: %d", c.rounds)
+		//log.Printf("parser round count: %d", c.rounds)
 
-		log.Printf("bytes read --> %d", n)
-		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
+		//log.Printf("bytes read --> %d", n)
+		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
 		// TODO Think about flushing and writing and any clean up after the read
 
@@ -255,18 +249,18 @@ func (c *gbClient) writeLoop() {
 func (c *gbClient) processINFO(arg []byte) error {
 	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
 
-	log.Println("printing arg from method")
-	log.Println(arg)
+	//log.Println("printing arg from method")
+	//log.Println(arg)
 
 	if len(arg) >= 4 {
 		// Extract the last 4 bytes
-		msgLengthBytes := arg[len(arg)-4:]
+		msgLengthBytes := arg[2:4]
 
 		// Convert those 4 bytes to uint32 (BigEndian)
-		c.nh.msgLength = int(binary.BigEndian.Uint32(msgLengthBytes))
+		c.nh.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
 		// Log the result to verify
-		log.Printf("Extracted msgLength: %d\n", c.nh.msgLength)
+		//log.Printf("Extracted msgLength: %d\n", c.nh.msgLength)
 	} else {
 		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
 	}

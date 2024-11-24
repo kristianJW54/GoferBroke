@@ -1,6 +1,8 @@
 package src
 
-import "log"
+import (
+	"log"
+)
 
 // Thank the lord for NATS for being my spirit guide on this packet parsing journey - their scriptures are profound
 
@@ -11,6 +13,15 @@ const (
 	MSG_PAYLOAD
 	MSG_R_END
 	MSG_N_END
+
+	GS
+	GSA
+	ACK
+
+	// Response types
+
+	OK
+	ERR_RESP
 )
 
 type stateMachine struct {
@@ -31,7 +42,7 @@ type stateMachine struct {
 
 type nodeHeader struct {
 	version      uint8
-	command      uint32
+	command      uint8
 	msgLength    int
 	headerLength int
 }
@@ -54,7 +65,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 			switch b {
 			case 1:
-				log.Println("switching to info state")
+				// TODO Need to do a forward check for command - this is the version currently
+				//log.Println("switching to info state")
 				c.position = i // Important to reset according to i if we enter a new header to avoid slice error
 				c.state = INFO
 			default:
@@ -79,16 +91,14 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 				c.drop = 0
 				c.position = i + 1
-				log.Println("position after info : ", c.position)
-				log.Println("i after info: ", i)
-				log.Println("switching to message payload state")
+				//log.Println("switching to message payload state")
 				c.state = MSG_PAYLOAD
 
 				if c.msgBuf == nil {
 					// If no saved buffer exists, assume this packet contains the full payload.
 					// Calculate the position to jump directly to the end of the payload.
 					i = c.position + c.nh.msgLength - 2 // Subtract 2 for CRLF at the end.
-					log.Println("No saved buffer. Skipping to i:", i)
+					//log.Println("No saved buffer. Skipping to i:", i)
 				}
 
 			default:
@@ -101,16 +111,16 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 			if c.msgBuf != nil {
 				left := c.nh.msgLength - len(c.msgBuf)
-				log.Println("what is left to copy --> ", left)
+				//log.Println("what is left to copy --> ", left)
 				avail := len(c.msgBuf) - i
 				if avail < left {
 					left = avail
 				}
 				if left > 0 {
 					start := len(c.msgBuf)
-					log.Println("length of msg.buf before: ", len(c.msgBuf))
+					//log.Println("length of msg.buf before: ", len(c.msgBuf))
 					c.msgBuf = c.msgBuf[:start+left]
-					log.Println("length of msg.buf after: ", len(c.msgBuf))
+					//log.Println("length of msg.buf after: ", len(c.msgBuf))
 					copy(c.msgBuf[start:], packet[i:i+left])
 					i = (i + left) - 1
 				} else {
@@ -118,30 +128,30 @@ func (c *gbClient) parsePacket(packet []byte) {
 				}
 
 				if len(c.msgBuf) >= c.nh.msgLength {
-					log.Println("switching to r_end 1")
+					//log.Println("switching to r_end 1")
 					i = i - 2
 					c.state = MSG_R_END
 				}
 			} else if i-c.position+1 >= c.nh.msgLength {
-				log.Println("switching to r_end 2")
+				//log.Println("switching to r_end 2")
 				i = i - 2
 				c.state = MSG_R_END
 			}
 
 		case MSG_R_END:
-			log.Println("arrived at r_end")
-			log.Println(c.msgBuf)
+			//log.Println("arrived at r_end")
+			//log.Println(c.msgBuf)
 			if b != '\r' {
 				log.Println("end of message error")
-				log.Println("printing b ", b)
+				//log.Println("printing b ", b)
 				return
 			} else {
-				log.Println("printing b ", b)
+				//log.Println("printing b ", b)
 			}
 			if c.msgBuf != nil {
 				c.msgBuf = append(c.msgBuf, b)
 			}
-			log.Println("switching to n_end")
+			//log.Println("switching to n_end")
 			c.state = MSG_N_END
 		case MSG_N_END:
 			if b != '\n' {
@@ -152,8 +162,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 			} else {
 				c.msgBuf = packet[c.position : i+1]
 			}
-			log.Println("n_end")
-			log.Println(c.msgBuf)
+			//log.Println("n_end")
+			//log.Println(c.msgBuf)
 			log.Println("final message --> ", string(c.msgBuf))
 			c.argBuf, c.msgBuf = nil, nil
 			c.nh.msgLength, c.nh.headerLength, c.nh.command, c.nh.version = 0, 0, 0, 0
@@ -165,8 +175,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 		}
 	}
 
-	log.Println("end of for loop - starting again lol")
-	log.Println("state = ", c.state)
+	//log.Println("end of for loop - starting again lol")
+	//log.Println("state = ", c.state)
 	if c.state == MSG_PAYLOAD || c.state == MSG_R_END && c.msgBuf == nil {
 
 		if c.nh.msgLength > cap(c.scratch)-len(c.argBuf) {

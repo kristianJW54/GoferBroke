@@ -137,8 +137,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 func (s *GBServer) StartServer() {
 
-	fmt.Printf("Server starting: %s\n", s.ServerName)
-	fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
+	//fmt.Printf("Server starting: %s\n", s.ServerName)
+	//fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
 
 	//Checks and other start up here
 	//Resolve config seed addr
@@ -172,7 +172,7 @@ func (s *GBServer) StartServer() {
 //=======================================================
 
 func (s *GBServer) Shutdown() {
-	log.Printf("%s -- shut down initiated\n", s.ServerName)
+	//log.Printf("%s -- shut down initiated\n", s.ServerName)
 	//s.shuttingDown.Store("shutdown", true)
 
 	log.Println("context called")
@@ -219,7 +219,7 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 		s.serverLock.Lock()
 		s.seedAddr = append(s.seedAddr, s.nodeTCPAddr)
 		s.serverLock.Unlock()
-		log.Printf("seed server list --> %v\n", s.seedAddr)
+		//log.Printf("seed server list --> %v\n", s.seedAddr)
 		return nil
 	}
 
@@ -235,7 +235,7 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 				return err
 			}
 			s.seedAddr = append(s.seedAddr, tcpAddr)
-			log.Printf("seed server list --> %v\n", s.seedAddr)
+			//log.Printf("seed server list --> %v\n", s.seedAddr)
 		}
 	}
 	return nil
@@ -266,9 +266,9 @@ func (s *GBServer) AcceptLoop(name string) {
 	ctx, cancel := context.WithCancel(s.serverContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/client disconnect
 
-	log.Printf("Starting client accept loop -- %s\n", name)
+	//log.Printf("Starting client accept loop -- %s\n", name)
 
-	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
+	//log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
 
 	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
@@ -286,10 +286,10 @@ func (s *GBServer) AcceptLoop(name string) {
 		func(err error) bool {
 			select {
 			case <-ctx.Done():
-				log.Println("accept loop context canceled -- exiting loop")
+				//log.Println("accept loop context canceled -- exiting loop")
 				return true
 			default:
-				log.Printf("accept loop context error -- %s\n", err)
+				//log.Printf("accept loop context error -- %s\n", err)
 				return false
 			}
 		})
@@ -302,9 +302,9 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	ctx, cancel := context.WithCancel(s.serverContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/node disconnect
 
-	log.Printf("Starting node accept loop -- %s\n", name)
+	//log.Printf("Starting node accept loop -- %s\n", name)
 
-	log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
+	//log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
 
 	nl, err := s.listenConfig.Listen(s.serverContext, s.nodeTCPAddr.Network(), s.nodeTCPAddr.String())
 	if err != nil {
@@ -322,10 +322,10 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 			func(err error) bool {
 				select {
 				case <-ctx.Done():
-					log.Println("accept loop context canceled -- exiting loop")
+					//log.Println("accept loop context canceled -- exiting loop")
 					return true
 				default:
-					log.Printf("accept loop context error -- %s\n", err)
+					//log.Printf("accept loop context error -- %s\n", err)
 					return false
 				}
 			})
