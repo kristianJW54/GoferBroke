@@ -80,10 +80,10 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
 	} else {
 		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
+		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
 	}
 
 	log.Println(s.ServerName + ": storing " + client.Name)
@@ -114,13 +114,16 @@ func (s *GBServer) connectToSeed() error {
 	//To understand how this connection is communicating ...
 
 	////Create info message
-	data := []byte("This is a test")
+	data := []byte("This is a test\r\n")
 
-	header := newProtoHeader(1, INITIAL)
-
-	payload := &TCPPacket{
-		header,
+	header1 := constructNodeHeader(1, 1, uint16(len(data)), NODE_HEADER_SIZE_V1)
+	packet := &nodePacket{
+		header1,
 		data,
+	}
+	pay1, err := packet.serialize()
+	if err != nil {
+		fmt.Printf("Failed to serialize packet: %v\n", err)
 	}
 
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
@@ -132,14 +135,7 @@ func (s *GBServer) connectToSeed() error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	//defer conn.Close() // TODO may want to remove this and wait for successful connection has been mapped and manage elsewhere
-
-	packet, err := payload.MarshallBinary()
-	if err != nil {
-		return fmt.Errorf("error marshalling payload: %s", err)
-	}
-
-	_, err = conn.Write(packet) // Sending the packet //TODO can this be added to an outbound queue?
+	_, err = conn.Write(pay1) // Sending the packet //TODO can this be added to an outbound queue?
 	if err != nil {
 		return fmt.Errorf("error writing to connection: %s", err)
 	}

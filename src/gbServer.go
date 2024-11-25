@@ -11,7 +11,6 @@ import (
 
 //TODO -- STEPS FOR TCP ACCEPT LOOP SERVER CONTROL
 // - 2) Server Context and signals to control the server instance
-// - 5) Add comprehensive wrappers for go routine control and tracking
 
 //=================================
 
@@ -47,9 +46,6 @@ type GBServer struct {
 	// Latency ...
 	//
 
-	//TCP - May want to abstract or package this elsewhere and let the server hold that package to conduct it's networking...?
-	// Network package here?? which can hold persistent connections?
-	// We can give an interface here which we can pass in mocks or different methods with controls and configs?
 	listener           net.Listener
 	listenConfig       net.ListenConfig
 	nodeListener       net.Listener
@@ -98,6 +94,9 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		log.Fatal(err)
 	}
 
+	// Creation steps
+	// Gather server metrics
+
 	createdAt := time.Now()
 
 	broadCastName := fmt.Sprintf("%s_%s", serverName, createdAt.Format("20060102150405"))
@@ -137,8 +136,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 func (s *GBServer) StartServer() {
 
-	//fmt.Printf("Server starting: %s\n", s.ServerName)
-	//fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
+	fmt.Printf("Server starting: %s\n", s.ServerName)
+	fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
 
 	//Checks and other start up here
 	//Resolve config seed addr
@@ -164,7 +163,7 @@ func (s *GBServer) StartServer() {
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
-	s.AcceptLoop("client-test")
+	//s.AcceptLoop("client-test")
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }
@@ -172,8 +171,8 @@ func (s *GBServer) StartServer() {
 //=======================================================
 
 func (s *GBServer) Shutdown() {
-	//log.Printf("%s -- shut down initiated\n", s.ServerName)
-	//s.shuttingDown.Store("shutdown", true)
+	log.Printf("%s -- shut down initiated\n", s.ServerName)
+	s.shuttingDown.Store("shutdown", true)
 
 	log.Println("context called")
 	s.serverContextCancel()
@@ -266,9 +265,9 @@ func (s *GBServer) AcceptLoop(name string) {
 	ctx, cancel := context.WithCancel(s.serverContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/client disconnect
 
-	//log.Printf("Starting client accept loop -- %s\n", name)
+	log.Printf("Starting client accept loop -- %s\n", name)
 
-	//log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
+	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
 
 	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
@@ -302,9 +301,9 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	ctx, cancel := context.WithCancel(s.serverContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/node disconnect
 
-	//log.Printf("Starting node accept loop -- %s\n", name)
+	log.Printf("Starting node accept loop -- %s\n", name)
 
-	//log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
+	log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
 
 	nl, err := s.listenConfig.Listen(s.serverContext, s.nodeTCPAddr.Network(), s.nodeTCPAddr.String())
 	if err != nil {
@@ -322,10 +321,10 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 			func(err error) bool {
 				select {
 				case <-ctx.Done():
-					//log.Println("accept loop context canceled -- exiting loop")
+					log.Println("accept loop context canceled -- exiting loop")
 					return true
 				default:
-					//log.Printf("accept loop context error -- %s\n", err)
+					log.Printf("accept loop context error -- %s\n", err)
 					return false
 				}
 			})

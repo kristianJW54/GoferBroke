@@ -1,8 +1,10 @@
 package src
 
 import (
+	"fmt"
 	"log"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -52,6 +54,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//go gbs2.Shutdown()
 
 	time.Sleep(2 * time.Second)
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	fmt.Printf("Total allocated memory: %d bytes\n", mem.TotalAlloc)
+	fmt.Printf("Number of memory allocations: %d\n", mem.Mallocs)
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()

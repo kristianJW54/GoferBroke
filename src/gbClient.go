@@ -92,10 +92,10 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
+		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
 	} else {
 		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
+		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
 	}
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
@@ -156,15 +156,35 @@ func (c *gbClient) readLoop() {
 			return
 		}
 
-		// Adjust buffer if we're close to filling it up
-		//if c.inbound.offset >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
-		//	c.inbound.buffSize = cap(buff) * 2
-		//	if c.inbound.buffSize > MAX_BUFF_SIZE {
-		//		c.inbound.buffSize = MAX_BUFF_SIZE
-		//	}
-		//	buff = make([]byte, c.inbound.buffSize)
-		//	//copy(newBuffer, buff[:c.inbound.offset]) // Copy data into the new buffer
-		//	//buff = newBuffer                         // Assign new buffer to the inbound buffer
+		// Check if we are utilizing more than half the buffer capacity - if not we may need to shrink
+		if n <= cap(buff)/2 {
+			log.Println("low buff utilization - increasing shrink count")
+			c.inbound.expandCount++
+		} else if n > cap(buff) {
+			c.inbound.expandCount = 0
+		}
+
+		// Double buffer size if we reach capacity
+		// TODO Look at a more efficient way of dynamically resizing
+
+		if n >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
+			c.inbound.buffSize = cap(buff) * 2
+			if c.inbound.buffSize > MAX_BUFF_SIZE {
+				c.inbound.buffSize = MAX_BUFF_SIZE
+			}
+
+			newBuff := make([]byte, c.inbound.buffSize)
+			copy(newBuff, buff[:n])
+			buff = newBuff
+			log.Printf("increased buffer size to --> %d", len(buff))
+
+		} else if n < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
+			c.inbound.buffSize = int(cap(buff) / 2)
+			newBuff := make([]byte, c.inbound.buffSize)
+			copy(newBuff, buff[:n])
+			buff = newBuff
+		}
+
 		//	log.Printf("increased buffer size to --> %d", c.inbound.buffSize)
 		//} else if c.inbound.offset < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
 		//	c.inbound.buffSize = int(cap(buff) / 2)
@@ -176,18 +196,6 @@ func (c *gbClient) readLoop() {
 		//
 		////c.cLock.Unlock()
 		//
-		//// Check if we need to expand or shrink the buffer - if the buffer is half empty more than twice, we shrink
-		//if n > cap(buff) {
-		//	c.inbound.expandCount = 0
-		//	log.Printf("reseting expand count to: %d", c.inbound.expandCount)
-		//} else if n < cap(buff)/2 {
-		//	c.inbound.expandCount++
-		//	log.Printf("increasing expand count to: %d", c.inbound.expandCount)
-		//}
-
-		//log.Printf("raw data string: %s", string(buff[c.inbound.offset:c.inbound.offset+n]))
-
-		//log.Printf("data: %v", buff)
 
 		// Update offset
 		c.inbound.offset = n
@@ -195,38 +203,19 @@ func (c *gbClient) readLoop() {
 		//log.Println("offset:", c.inbound.offset)
 
 		//-----------------------------
-		// Parsing the packet - we send the buffer to be parsed, if we hit CLRF (for either header or data)
-		// then we have complete packet and can call processing handlers
-		// TODO: Add parsing here to check for complete packet and process
+		// Parsing the packet
+
 		if c.cType == CLIENT {
+			c.parsePacket(buff[:n])
+		} else if c.cType == NODE {
 			c.parsePacket(buff[:n])
 		}
 
-		//log.Printf("parser round count: %d", c.rounds)
-
-		//log.Printf("bytes read --> %d", n)
-		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
+		log.Printf("bytes read --> %d", n)
+		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
 		// TODO Think about flushing and writing and any clean up after the read
 
-		//// Create a GossipPayload to unmarshal the received data into
-		//dataPayload := &TCPPacket{&PacketHeader{}, buf} //TODO This needs to a function to create a buffered payload
-		//
-		//err = dataPayload.UnmarshallBinaryV1(buf[:n]) // Read the exact number of bytes
-		//if err != nil {
-		//	log.Println("unmarshall error", err)
-		//	return
-		//}
-		//
-		//// Log the decoded data (as a string)
-		//log.Printf(
-		//	"%v %v %v %v %s",
-		//	dataPayload.Header.ProtoVersion,
-		//	dataPayload.Header.Command,
-		//	dataPayload.Header.MsgLength,
-		//	dataPayload.Header.PayloadLength,
-		//	string(dataPayload.Data),
-		//)
 	}
 
 }

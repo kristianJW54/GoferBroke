@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -103,6 +104,12 @@ func TestHighParseLoad(t *testing.T) {
 		}
 
 	}
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	fmt.Printf("Total allocated memory: %d bytes\n", mem.TotalAlloc)
+	fmt.Printf("Number of memory allocations: %d\n", mem.Mallocs)
 
 }
 
