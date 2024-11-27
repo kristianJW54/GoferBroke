@@ -55,8 +55,6 @@ const (
 // Packet constructor and serialisation
 //=====================================================================
 
-// TODO --> Will we need to allocate buffers each time for serialising writes or use a pool of buffers?
-
 type nodePacketHeader struct {
 	version    uint8
 	command    uint8

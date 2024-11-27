@@ -113,6 +113,54 @@ func TestHighParseLoad(t *testing.T) {
 
 }
 
+func TestSeqRequestPool(t *testing.T) {
+
+	gbs := serverSetup()
+
+	go gbs.StartServer()
+
+	seq1, err := gbs.acquireReqID()
+	if err != nil {
+		log.Fatal(err)
+	}
+	seq2, err := gbs.acquireReqID()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	t.Logf("sequence number 0 --> %d\n", seq1)
+	t.Logf("sequence number 1 --> %d\n", seq2)
+
+	time.Sleep(1 * time.Second)
+	gbs.releaseReqID(seq2)
+	time.Sleep(1 * time.Second)
+	gbs.releaseReqID(seq1)
+	time.Sleep(1 * time.Second)
+
+	t.Log(seq1)
+	t.Log(seq2)
+
+	// Acquire again to verify reuse
+	seq3, err := gbs.acquireReqID()
+	if err != nil {
+		log.Fatal(err)
+	}
+	t.Logf("Reacquired sequence number: %d", seq3)
+
+	if seq3 != seq1 && seq3 != seq2 {
+		t.Fatalf("Expected to reacquire released sequence number, got: %d", seq3)
+	}
+
+	time.Sleep(5 * time.Second)
+
+	go gbs.Shutdown()
+
+}
+
+//================================================================
+//----------------
+// Helpers
+
 func serverSetup() *GBServer {
 	lc := net.ListenConfig{}
 

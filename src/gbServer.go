@@ -65,9 +65,16 @@ type GBServer struct {
 
 	//Connection Handling
 	tmpClientStore map[string]*gbClient
+
 	//phoneBook      map[string]*gbClient
+
 	//connMutex      sync.RWMutex
+
 	//pool           sync.Pool // Maybe to use with varying buffer sizes
+
+	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
+	//it must maintain a pool of active sequence numbers for open requests awaiting response
+	nodeReqPool seqReqPool
 
 	serverLock sync.RWMutex
 
@@ -101,6 +108,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 	broadCastName := fmt.Sprintf("%s_%s", serverName, createdAt.Format("20060102150405"))
 
+	seq := newSeqReqPool(10)
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
@@ -119,6 +128,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		tmpClientStore: make(map[string]*gbClient),
 
 		isOriginal: false,
+
+		nodeReqPool: *seq,
 
 		// TODO Create init method and point to it here on server initialisation
 		grTracking: grTracking{
@@ -385,3 +396,54 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 //=======================================================
 // Creating a node server
 //=======================================================
+
+//==
+
+//=======================================================
+// Sync Pool for Server-Server Request cycles
+//=======================================================
+
+type seqReqPool struct {
+	reqPool *sync.Pool
+}
+
+func newSeqReqPool(poolSize uint8) *seqReqPool {
+	if poolSize > 255 {
+		poolSize = 255
+	} else if poolSize == 0 {
+		poolSize = 10
+	}
+
+	sequence := make(chan uint8, poolSize)
+	for i := 0; i < int(poolSize); i++ {
+		sequence <- uint8(i)
+		log.Printf("Adding sequence ID %d to the pool", i) // Log sequence IDs
+	}
+
+	return &seqReqPool{
+		reqPool: &sync.Pool{
+			New: func() any {
+				select {
+				case id := <-sequence:
+					log.Printf("Allocating sequence ID %d from the pool", id) // Log allocations
+					return id
+				default:
+					log.Println("Pool exhausted: no sequence IDs available")
+					return nil
+				}
+			},
+		},
+	}
+}
+
+func (s *GBServer) acquireReqID() (uint8, error) {
+	id := s.nodeReqPool.reqPool.Get()
+	if id == nil {
+		return 0, fmt.Errorf("no id available")
+	}
+	return id.(uint8), nil
+}
+
+func (s *GBServer) releaseReqID(id uint8) {
+	s.nodeReqPool.reqPool.Put(id)
+}
