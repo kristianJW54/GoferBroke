@@ -238,18 +238,18 @@ func (c *gbClient) writeLoop() {
 func (c *gbClient) processINFO(arg []byte) error {
 	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
 
-	//log.Println("printing arg from method")
-	//log.Println(arg)
+	log.Println("printing arg from method")
+	log.Println(arg)
 
 	if len(arg) >= 4 {
 		// Extract the last 4 bytes
-		msgLengthBytes := arg[2:4]
+		msgLengthBytes := arg[3:5]
 
 		// Convert those 4 bytes to uint32 (BigEndian)
 		c.nh.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
 		// Log the result to verify
-		//log.Printf("Extracted msgLength: %d\n", c.nh.msgLength)
+		log.Printf("Extracted msgLength: %d\n", c.nh.msgLength)
 	} else {
 		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
 	}

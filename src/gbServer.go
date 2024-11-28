@@ -174,7 +174,7 @@ func (s *GBServer) StartServer() {
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
-	//s.AcceptLoop("client-test")
+	s.AcceptLoop("client-test")
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }
@@ -415,9 +415,8 @@ func newSeqReqPool(poolSize uint8) *seqReqPool {
 	}
 
 	sequence := make(chan uint8, poolSize)
-	for i := 0; i < int(poolSize); i++ {
+	for i := 1; i < int(poolSize)+1; i++ {
 		sequence <- uint8(i)
-		log.Printf("Adding sequence ID %d to the pool", i) // Log sequence IDs
 	}
 
 	return &seqReqPool{
@@ -445,5 +444,6 @@ func (s *GBServer) acquireReqID() (uint8, error) {
 }
 
 func (s *GBServer) releaseReqID(id uint8) {
+	log.Printf("Releasing sequence ID %d back to the pool", id)
 	s.nodeReqPool.reqPool.Put(id)
 }

@@ -1,6 +1,7 @@
 package src
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -108,15 +109,25 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // Connecting to seed server
 //-------------------------------
 
+// TODO This is where we will wait for a response in a non blocking way and use the req ID - upon response, we will release the ID back to the pool
+// will need a ID map for active request awaiting responses and handlers for when is done or timeout reached then auto release
 func (s *GBServer) connectToSeed() error {
 
 	//With this function - we reach out to seed - so in our connection handling we would need to check protocol version
 	//To understand how this connection is communicating ...
 
+	ctx, cancel := context.WithTimeout(s.serverContext, 10*time.Second)
+	defer cancel()
+
 	////Create info message
 	data := []byte("This is a test\r\n")
 
-	header1 := constructNodeHeader(1, 1, uint16(len(data)), NODE_HEADER_SIZE_V1)
+	seq, err := s.acquireReqID()
+	if err != nil {
+		return err
+	}
+
+	header1 := constructNodeHeader(1, 1, seq, uint16(len(data)), NODE_HEADER_SIZE_V1)
 	packet := &nodePacket{
 		header1,
 		data,
@@ -144,6 +155,12 @@ func (s *GBServer) connectToSeed() error {
 	// + wait for info exchange + dial back
 
 	s.createNodeClient(conn, "whaaaat", true, NODE)
+
+	select {
+	case <-ctx.Done():
+		log.Println("connect to seed cancelled because of context")
+		s.releaseReqID(seq)
+	}
 
 	return nil
 

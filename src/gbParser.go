@@ -8,6 +8,7 @@ import (
 
 const (
 	START = iota
+	COMM
 	INFO
 
 	MSG_PAYLOAD
@@ -40,9 +41,11 @@ type stateMachine struct {
 	rounds int
 }
 
+// nodeHeader is used by parsing handlers when parsing argBuf to populate and hold the node header
 type nodeHeader struct {
 	version      uint8
 	command      uint8
+	id           uint8
 	msgLength    int
 	headerLength int
 }
@@ -61,13 +64,22 @@ func (c *gbClient) parsePacket(packet []byte) {
 		switch c.state {
 		case START:
 
+			switch b {
+			case 1:
+				log.Println(b)
+				c.position = i
+				c.state = COMM
+			}
+
+		case COMM:
+
 			c.command = b
 
 			switch b {
 			case 1:
 				// TODO Need to do a forward check for command - this is the version currently
 				//log.Println("switching to info state")
-				c.position = i // Important to reset according to i if we enter a new header to avoid slice error
+				//c.position = i // Important to reset according to i if we enter a new header to avoid slice error
 				c.state = INFO
 			default:
 				log.Println("something wrong with yo state fam")

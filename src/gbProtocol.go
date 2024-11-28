@@ -58,6 +58,7 @@ const (
 type nodePacketHeader struct {
 	version    uint8
 	command    uint8
+	id         uint8
 	msgSize    uint16
 	headerSize uint16
 }
@@ -67,8 +68,8 @@ type nodePacket struct {
 	data []byte
 }
 
-func constructNodeHeader(version, command uint8, msgSize, headerSize uint16) *nodePacketHeader {
-	return &nodePacketHeader{version, command, msgSize, headerSize}
+func constructNodeHeader(version, command, id uint8, msgSize, headerSize uint16) *nodePacketHeader {
+	return &nodePacketHeader{version, command, id, msgSize, headerSize}
 }
 
 func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
@@ -84,8 +85,9 @@ func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
 	header := make([]byte, NODE_HEADER_SIZE_V1)
 	header[0] = nph.version
 	header[1] = nph.command
-	binary.BigEndian.PutUint16(header[2:4], nph.msgSize)
-	binary.BigEndian.PutUint16(header[4:6], nph.headerSize)
+	header[2] = nph.id
+	binary.BigEndian.PutUint16(header[3:5], nph.msgSize)
+	binary.BigEndian.PutUint16(header[5:7], nph.headerSize)
 	header[7] = '\r'
 	header[8] = '\n'
 
