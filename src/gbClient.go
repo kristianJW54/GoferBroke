@@ -16,13 +16,6 @@ const (
 	NODE
 )
 
-const (
-	SMALL_OUT_BUFFER    = 512
-	STANDARD_OUT_BUFFER = 1024
-	MEDIUM_OUT_BUFFER   = 2048
-	LARGE_OUT_BUFFER    = 4096
-)
-
 //===================================================================================
 // Client | Node
 //===================================================================================
@@ -37,6 +30,8 @@ type gbClient struct {
 	gbc net.Conn
 	// Inbound is a read cache for wire reads
 	inbound readCache
+	// Outbound is an outbound struct for queueing to write loop and flushing
+	outbound outboundNodeQueue
 
 	// cType determines if the conn is a node or client
 	cType int
@@ -74,6 +69,45 @@ type outboundNodeQueue struct {
 	writeBuffer net.Buffers
 	flushSignal *sync.Cond
 	outLock     *sync.RWMutex
+	sw          *bufio.Writer
+}
+
+const (
+	NodeWritePoolSmall  = 512
+	NodeWritePoolMedium = 2048
+	NodeWritePoolLarge  = 4096
+)
+
+var nodePoolSmall = &sync.Pool{
+	New: func() any {
+		b := [NodeWritePoolSmall]byte{}
+		return &b
+	},
+}
+
+var nodePoolMedium = &sync.Pool{
+	New: func() any {
+		b := [NodeWritePoolMedium]byte{}
+		return &b
+	},
+}
+
+var nodePoolLarge = &sync.Pool{
+	New: func() any {
+		b := [NodeWritePoolLarge]byte{}
+		return &b
+	},
+}
+
+func nodePoolGet(size int) []byte {
+	switch {
+	case size <= NodeWritePoolSmall:
+		return nodePoolSmall.Get().(*[NodeWritePoolSmall]byte)[:0]
+	case size <= NodeWritePoolMedium:
+		return nodePoolMedium.Get().(*[NodeWritePoolMedium]byte)[:0]
+	default:
+		return nodePoolLarge.Get().(*[NodeWritePoolLarge]byte)[:0]
+	}
 }
 
 //===================================================================================
@@ -185,18 +219,6 @@ func (c *gbClient) readLoop() {
 			buff = newBuff
 		}
 
-		//	log.Printf("increased buffer size to --> %d", c.inbound.buffSize)
-		//} else if c.inbound.offset < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
-		//	c.inbound.buffSize = int(cap(buff) / 2)
-		//	buff = make([]byte, c.inbound.buffSize)
-		//	//copy(newBuffer, buff[c.inbound.offset:]) // Copy data into the new buffer
-		//	//buff = newBuffer                         // Assign new buffer to the inbound buffer
-		//	log.Printf("decreased buffer size to --> %d", c.inbound.buffSize)
-		//}
-		//
-		////c.cLock.Unlock()
-		//
-
 		// Update offset
 		c.inbound.offset = n
 		//log.Println("n", n)
@@ -220,16 +242,46 @@ func (c *gbClient) readLoop() {
 
 }
 
+//===================================================================================
+// Write Loop, Queueing and Flushing
+//===================================================================================
+
+//---------------------------
+//Queueing
+
+// Lock should be held coming in to this
+func (c *gbClient) queueOutbound(data []byte) {
+
+	c.outbound.bytesInQ += uint64(len(data))
+	log.Printf("number of bytes added to queue: %d", c.outbound.bytesInQ)
+
+	// TODO Continue working on this ---
+
+}
+
 //---------------------------
 //Write Loop
 
 func (c *gbClient) writeLoop() {
 
-	// Will have node writes and client writes
-	// Node writes will have a single output queue outputting during gossip exchange
-	// Client writes will be fan-in > fan-out pattern to interested clients to write to
+	// Need to check if conn is closed and return
+	// Need to check if flushed from last wake up
+
+	for {
+		c.outbound.outLock.Lock()
+
+		c.flushWriteOutbound()
+		c.outbound.outLock.Unlock()
+
+	}
+}
+
+func (c *gbClient) flushWriteOutbound() {
 
 }
+
+//---------------------------
+//Queueing
 
 //===================================================================================
 // Handlers
