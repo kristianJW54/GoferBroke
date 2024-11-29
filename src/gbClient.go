@@ -60,6 +60,7 @@ type readCache struct {
 	buffSize    int
 }
 
+// TODO Should the outbound be a general all purpose connection outbound?
 //===================================================================================
 // Outbound Node Write - For Per connection [Node] During Gossip Exchange
 //===================================================================================
@@ -133,12 +134,9 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	}
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
-	//go func() {
-	//	client.readLoop()
-	//}()
 	// Track the goroutine for the read loop using startGoRoutine
 	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
-		defer conn.Close()
+		defer conn.Close() // Should this be here if closure is managed elsewhere?
 		client.readLoop()
 	})
 
@@ -149,7 +147,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 }
 
 //===================================================================================
-// Client Connection + Wire Handling
+// Read Loop
 //===================================================================================
 
 //---------------------------
@@ -166,7 +164,7 @@ func (c *gbClient) readLoop() {
 	// Read and parse inbound messages
 	// Check locks and if anything is closed or shutting down
 
-	c.inbound.buffSize = 512
+	c.inbound.buffSize = INITIAL_BUFF_SIZE
 	c.inbound.buffer = make([]byte, c.inbound.buffSize)
 	buff := c.inbound.buffer
 
@@ -221,8 +219,6 @@ func (c *gbClient) readLoop() {
 
 		// Update offset
 		c.inbound.offset = n
-		//log.Println("n", n)
-		//log.Println("offset:", c.inbound.offset)
 
 		//-----------------------------
 		// Parsing the packet
@@ -253,7 +249,7 @@ func (c *gbClient) readLoop() {
 func (c *gbClient) queueOutbound(data []byte) {
 
 	c.outbound.bytesInQ += uint64(len(data))
-	log.Printf("number of bytes added to queue: %d", c.outbound.bytesInQ)
+	log.Printf("number of bytes added to queue: %d for client %s", c.outbound.bytesInQ, c.gbc.RemoteAddr())
 
 	// TODO Continue working on this ---
 
@@ -276,12 +272,11 @@ func (c *gbClient) writeLoop() {
 	}
 }
 
+// ---------------------------
+// Flushing
 func (c *gbClient) flushWriteOutbound() {
 
 }
-
-//---------------------------
-//Queueing
 
 //===================================================================================
 // Handlers

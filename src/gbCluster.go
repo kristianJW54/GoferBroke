@@ -82,6 +82,10 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	if initiated {
 		client.directionType = INITIATED
 		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
+
+		client.queueOutbound([]byte("hello"))
+
 	} else {
 		client.directionType = RECEIVED
 		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
@@ -146,7 +150,8 @@ func (s *GBServer) connectToSeed() error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	_, err = conn.Write(pay1) // Sending the packet //TODO can this be added to an outbound queue?
+	// TODO Add this to outbound queue instead and let flush outbound handle the write
+	_, err = conn.Write(pay1)
 	if err != nil {
 		return fmt.Errorf("error writing to connection: %s", err)
 	}
