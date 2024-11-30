@@ -115,6 +115,7 @@ func nodePoolGet(size int) []byte {
 // Client creation
 //===================================================================================
 
+// TODO Think about the locks we may need in this method
 func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
 	client := &gbClient{
@@ -124,7 +125,9 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 		cType: clientType,
 	}
 
-	// Only log if the connection was initiated by this server (to avoid duplicate logs)
+	// Server lock here?
+	s.numClientConnections++
+
 	if initiated {
 		client.directionType = INITIATED
 		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
