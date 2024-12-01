@@ -42,6 +42,7 @@ type gbClient struct {
 
 	//Parsing + State
 	stateMachine
+
 	//Flags --> will tell us what state the client is in (connected, awaiting_syn_ack, etc...)
 	flags int
 
