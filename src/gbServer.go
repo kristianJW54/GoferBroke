@@ -166,6 +166,7 @@ func (s *GBServer) StartServer() {
 	}
 
 	// This needs to be a method with locks
+	s.initSelfParticipant()
 
 	// Move this seed logic elsewhere
 	// TODO if we are not seed then we need to reach out - set a flag for this (initiator)
@@ -183,6 +184,10 @@ func (s *GBServer) StartServer() {
 
 	//---------------- Client Accept Loop ----------------//
 	s.AcceptLoop("client-test")
+
+	//TODO add monitoring routines to keep internal state up to date
+	// CPU Metrics using an aggregate or significant change metric - how to signal?
+	// can have a ticker monitoring which will signal a waiting loop for updating internal state
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }

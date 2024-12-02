@@ -12,13 +12,14 @@ const (
 // how does this all come together in the request-response cycle with the handlers
 
 type tmpDigest struct {
-	name      string
-	keyValues map[int]int64
+	name       string
+	maxVersion int64
 }
 
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
-func (c *gbClient) deSerialiseDigest(msg []byte) error {
+func deSerialiseDigest(header, msg []byte) error {
 
+	return nil
 }

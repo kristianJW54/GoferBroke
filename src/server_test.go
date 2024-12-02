@@ -67,3 +67,49 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 }
+
+func TestServerRunningOneNodes(t *testing.T) {
+
+	lc := net.ListenConfig{}
+
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
+			},
+		},
+	}
+
+	log.Println(config)
+
+	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+
+	go gbs.StartServer()
+
+	time.Sleep(1 * time.Second)
+	t.Logf("self name: %s", gbs.selfInfo.name)
+	for k, value := range gbs.selfInfo.keyValues {
+		t.Logf("key: %d value: %d", k, value)
+	}
+
+	time.Sleep(3 * time.Second)
+
+	go gbs.Shutdown()
+	time.Sleep(2 * time.Second)
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	fmt.Printf("Total allocated memory: %d bytes\n", mem.TotalAlloc)
+	fmt.Printf("Number of memory allocations: %d\n", mem.Mallocs)
+
+	gbs.logActiveGoRoutines()
+
+	time.Sleep(1 * time.Second)
+
+}
