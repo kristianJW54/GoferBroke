@@ -106,4 +106,18 @@ func TestSerialiseDigest(t *testing.T) {
 	// Serialise will create wrapper array specifying type, length, size of digest
 	// And also serialise elements within the digest
 
+	// Create digest slice
+	digest := []*tmpDigest{nodeA, nodeB}
+
+	client := &gbClient{}
+
+	// Call the serialiseDigest method
+	serialized, err := client.serialiseDigest(digest)
+	if err != nil {
+		t.Fatalf("Failed to serialize digest: %v", err)
+	}
+
+	// Log the serialized data for inspection
+	t.Logf("Serialized Digest: %v", serialized)
+
 }

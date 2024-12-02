@@ -104,6 +104,7 @@ var nodePoolLarge = &sync.Pool{
 func nodePoolGet(size int) []byte {
 	switch {
 	case size <= NodeWritePoolSmall:
+		log.Printf("acquiring small node pool")
 		return nodePoolSmall.Get().(*[NodeWritePoolSmall]byte)[:0]
 	case size <= NodeWritePoolMedium:
 		return nodePoolMedium.Get().(*[NodeWritePoolMedium]byte)[:0]
@@ -252,10 +253,38 @@ func (c *gbClient) readLoop() {
 // Lock should be held coming in to this
 func (c *gbClient) queueOutbound(data []byte) {
 
+	if c.gbc == nil {
+		return
+	}
+
 	c.outbound.bytesInQ += uint64(len(data))
 	log.Printf("number of bytes added to queue: %d for client %s", c.outbound.bytesInQ, c.gbc.RemoteAddr())
 
 	// TODO Continue working on this ---
+	toBuffer := data
+
+	// Topping up the queued buffer if it isn't full yet
+	if len(c.outbound.writeBuffer) > 0 {
+		last := &c.outbound.writeBuffer[len(c.outbound.writeBuffer)-1]
+		log.Printf("last = %d", last)
+		if free := cap(*last) - len(*last); free > 0 {
+			if l := len(toBuffer); l < free {
+				free = l
+			}
+			*last = append(*last, toBuffer[:free]...)
+			toBuffer = toBuffer[free:]
+		}
+	}
+
+	for len(toBuffer) > 0 {
+		newPool := nodePoolGet(len(toBuffer))
+		n := copy(newPool[:cap(newPool)], toBuffer)
+		c.outbound.writeBuffer = append(c.outbound.writeBuffer, newPool[:n])
+		toBuffer = toBuffer[n:]
+		log.Printf("outbound buffer => %d", c.outbound.writeBuffer)
+	}
+
+	// Buffer pool will be returned when we flush outbound
 
 }
 
