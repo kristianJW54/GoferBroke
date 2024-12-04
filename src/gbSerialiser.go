@@ -3,6 +3,8 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
+	"time"
 )
 
 const (
@@ -72,7 +74,48 @@ func (c *gbClient) serialiseDigest(digest []*tmpDigest) ([]byte, error) {
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
-func deSerialiseDigest(header, msg []byte) error {
+func (c *gbClient) deSerialiseDigest(digest []byte) ([]*tmpDigest, error) {
 
-	return nil
+	length := len(digest)
+	lengthMeta := binary.BigEndian.Uint32(digest[1:5])
+	log.Println("lengthMeta = ", lengthMeta)
+	if length != int(lengthMeta) {
+		return nil, fmt.Errorf("length does not match")
+	}
+
+	sizeMeta := binary.BigEndian.Uint16(digest[5:7])
+	log.Println("sizeMeta = ", sizeMeta)
+
+	digestMap := make([]*tmpDigest, sizeMeta)
+
+	offset := 7
+
+	for i := 0; i < int(sizeMeta); i++ {
+		td := &tmpDigest{}
+
+		nameLen := int(digest[offset])
+
+		start := offset + 1
+		end := start + nameLen
+		name := string(digest[start:end])
+		td.name = name
+
+		offset += 1
+		offset += nameLen
+
+		// Extract maxVersion
+		maxVersion := binary.BigEndian.Uint64(digest[offset : offset+8])
+
+		// Convert maxVersion to time
+		maxVersionTime := time.Unix(int64(maxVersion), 0)
+
+		td.maxVersion = maxVersionTime.Unix()
+
+		digestMap[i] = td
+
+		offset += 8
+
+	}
+
+	return digestMap, nil
 }

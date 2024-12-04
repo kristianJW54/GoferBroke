@@ -260,7 +260,6 @@ func (c *gbClient) queueOutbound(data []byte) {
 	c.outbound.bytesInQ += uint64(len(data))
 	log.Printf("number of bytes added to queue: %d for client %s", c.outbound.bytesInQ, c.gbc.RemoteAddr())
 
-	// TODO Continue working on this ---
 	toBuffer := data
 
 	// Topping up the queued buffer if it isn't full yet
@@ -288,6 +287,12 @@ func (c *gbClient) queueOutbound(data []byte) {
 
 }
 
+// ---------------------------
+// Flushing
+func (c *gbClient) flushWriteOutbound() {
+
+}
+
 //---------------------------
 //Write Loop
 
@@ -303,12 +308,6 @@ func (c *gbClient) writeLoop() {
 		c.outbound.outLock.Unlock()
 
 	}
-}
-
-// ---------------------------
-// Flushing
-func (c *gbClient) flushWriteOutbound() {
-
 }
 
 //===================================================================================
@@ -336,3 +335,11 @@ func (c *gbClient) processINFO(arg []byte) error {
 
 	return nil
 }
+
+//===================================================================================
+// Dispatcher
+//===================================================================================
+
+//TODO Need a process message + command dispatcher
+// use switch case for client type
+// if node - use switch case for command type

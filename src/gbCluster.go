@@ -103,6 +103,8 @@ type node struct {
 // createNodeClient method belongs to the server which receives the connection from the connecting server
 func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
+	// TODO Think about locks
+
 	now := time.Now()
 	clientName := fmt.Sprintf("%s_%d", name, now.Unix())
 
@@ -123,7 +125,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
 		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
 
-		client.queueOutbound([]byte("hello"))
+		//client.queueOutbound([]byte("hello"))
 
 	} else {
 		client.directionType = RECEIVED
@@ -198,8 +200,10 @@ func (s *GBServer) connectToSeed() error {
 	//Once it has successfully dialled we want to create a node client and store the connection
 	// + wait for info exchange
 
-	s.createNodeClient(conn, "whaaaat", true, NODE)
+	client := s.createNodeClient(conn, "whaaaat", true, NODE)
+	client.queueOutbound([]byte("hello"))
 
+	// TODO should move to createNodeClient?
 	select {
 	case <-ctx.Done():
 		log.Println("connect to seed cancelled because of context")
@@ -221,7 +225,7 @@ func (s *GBServer) initSelfParticipant() {
 	p := &Participant{
 		name:       s.ServerName,
 		keyValues:  make(map[int]*Delta),
-		maxVersion: -1,
+		maxVersion: t,
 	}
 
 	p.keyValues[ADDR_V] = &Delta{
@@ -238,7 +242,7 @@ func (s *GBServer) initSelfParticipant() {
 		value:     numNodeConnBytes,
 	}
 
-	// TODO need to figure how to update maxVersion
+	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
 
 	s.serverLock.Lock()
 	s.selfInfo = p
@@ -247,5 +251,3 @@ func (s *GBServer) initSelfParticipant() {
 }
 
 // TODO Think about how to keep the internal state up to date for gossiping
-
-// TODO Will need data lengths prefixed to messages which are not part of header in order to parse the message payload
