@@ -39,17 +39,25 @@ func TestAcceptConnection(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	packetWrite, packet2Write := sendTwoDataPackets()
-
-	// Send first payload
-	_, err = conn.Write(packetWrite)
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = conn.Write(packet2Write)
-	if err != nil {
-		log.Fatal(err)
-	}
+	//packetWrite, packet2Write := sendTwoDataPackets()
+	//
+	//// Send first payload
+	//_, err = conn.Write(packetWrite)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//_, err = conn.Write(packet2Write)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//
+	//var testData net.Buffers = [][]byte{
+	//	[]byte{1, 1, 1, 0, 16, 0, 9, 13, 10, 84, 104, 105, 115, 32, 105, 115, 32, 97, 32, 116, 101, 115, 116, 13, 10},
+	//}
+	//_, err = testData.WriteTo(conn)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
 
 	time.Sleep(5 * time.Second)
 

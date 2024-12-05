@@ -29,7 +29,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 		},
 	}
 
-	log.Println(config)
+	//log.Println(config)
 
 	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
 	gbs2 := NewServer("test-server-2", config, "localhost", "8082", "8083", lc)
@@ -47,7 +47,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	log.Printf("%s --> temp client is %s --> direction %s", gbs.ServerName, client.Name, client.directionType)
 	log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.Name, client2.directionType)
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(4 * time.Second)
 
 	go gbs.Shutdown()
 	time.Sleep(2 * time.Second)
@@ -55,16 +55,10 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
-
-	fmt.Printf("Total allocated memory: %d bytes\n", mem.TotalAlloc)
-	fmt.Printf("Number of memory allocations: %d\n", mem.Mallocs)
-
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(5 * time.Second)
 
 }
 

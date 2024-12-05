@@ -119,18 +119,22 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	//Server Lock?
 	s.numNodeConnections++
 
+	client.cLock.Lock()
+
+	client.initClient()
+
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
 		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
 
 	} else {
 		client.directionType = RECEIVED
-		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
+		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
 	}
 
-	log.Println(s.ServerName + ": storing " + client.Name)
+	//log.Println(s.ServerName + ": storing " + client.Name)
 	s.tmpClientStore["1"] = client
 
 	//May want to update some node connection  metrics which will probably need a write lock from here
@@ -146,6 +150,8 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	s.startGoRoutine(s.ServerName, fmt.Sprintf("write loop for %s", name), func() {
 		client.writeLoop()
 	})
+
+	client.cLock.Unlock()
 
 	return client
 
@@ -183,9 +189,11 @@ func (s *GBServer) connectToSeed() error {
 		fmt.Printf("Failed to serialize packet: %v\n", err)
 	}
 
+	log.Printf("%v", len(pay1))
+
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
 
-	fmt.Printf("%s Attempting to connect to seed server: %s\n", s.ServerName, addr)
+	//fmt.Printf("%s Attempting to connect to seed server: %s\n", s.ServerName, addr)
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -193,10 +201,10 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	// TODO Add this to outbound queue instead and let flush outbound handle the write
-	_, err = conn.Write(pay1)
-	if err != nil {
-		return fmt.Errorf("error writing to connection: %s", err)
-	}
+	//_, err = conn.Write(pay1)
+	//if err != nil {
+	//	return fmt.Errorf("error writing to connection: %s", err)
+	//}
 
 	//Once it has successfully dialled we want to create a node client and store the connection
 	// + wait for info exchange
@@ -204,13 +212,14 @@ func (s *GBServer) connectToSeed() error {
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 	//client.queueOutbound(pay1)
 	//client.flushWriteOutbound()
+	//client.qProto(pay1, true)
 
-	client.qProto(pay1, true)
+	client.outbound.flushSignal.Signal()
 
 	// TODO should move to createNodeClient?
 	select {
 	case <-ctx.Done():
-		log.Println("connect to seed cancelled because of context")
+		//log.Println("connect to seed cancelled because of context")
 		s.releaseReqID(seq)
 	}
 

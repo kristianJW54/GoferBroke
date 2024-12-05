@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -78,13 +77,13 @@ func (c *gbClient) deSerialiseDigest(digest []byte) ([]*tmpDigest, error) {
 
 	length := len(digest)
 	lengthMeta := binary.BigEndian.Uint32(digest[1:5])
-	log.Println("lengthMeta = ", lengthMeta)
+	//log.Println("lengthMeta = ", lengthMeta)
 	if length != int(lengthMeta) {
 		return nil, fmt.Errorf("length does not match")
 	}
 
 	sizeMeta := binary.BigEndian.Uint16(digest[5:7])
-	log.Println("sizeMeta = ", sizeMeta)
+	//log.Println("sizeMeta = ", sizeMeta)
 
 	digestMap := make([]*tmpDigest, sizeMeta)
 

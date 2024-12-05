@@ -156,7 +156,7 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 func (s *GBServer) StartServer() {
 
 	fmt.Printf("Server starting: %s\n", s.ServerName)
-	fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
+	//fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
 
 	//Checks and other start up here
 	//Resolve config seed addr
@@ -189,7 +189,7 @@ func (s *GBServer) StartServer() {
 	// CPU Metrics using an aggregate or significant change metric - how to signal?
 	// can have a ticker monitoring which will signal a waiting loop for updating internal state
 
-	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
+	//fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }
 
 //=======================================================
@@ -198,23 +198,23 @@ func (s *GBServer) Shutdown() {
 	log.Printf("%s -- shut down initiated\n", s.ServerName)
 	s.shuttingDown.Store("shutdown", true)
 
-	log.Println("context called")
+	//log.Println("context called")
 	s.serverContextCancel()
 
 	if s.listener != nil {
-		log.Println("closing client listener")
+		//log.Println("closing client listener")
 		s.listener.Close()
 		s.listener = nil
 	}
 	if s.nodeListener != nil {
-		log.Println("closing node listener")
+		//log.Println("closing node listener")
 		s.nodeListener.Close()
 		s.nodeListener = nil
 	}
 
 	//Close connections
 	for name, client := range s.tmpClientStore {
-		log.Printf("closing client %s\n", name)
+		//log.Printf("closing client %s\n", name)
 		client.gbc.Close()
 		delete(s.tmpClientStore, name)
 	}
@@ -286,12 +286,14 @@ func (s *GBServer) seedCheck() int {
 
 func (s *GBServer) AcceptLoop(name string) {
 
+	s.serverLock.Lock()
+
 	ctx, cancel := context.WithCancel(s.serverContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/client disconnect
 
-	log.Printf("Starting client accept loop -- %s\n", name)
+	//log.Printf("Starting client accept loop -- %s\n", name)
 
-	log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
+	//log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
 
 	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
@@ -316,18 +318,22 @@ func (s *GBServer) AcceptLoop(name string) {
 				return false
 			}
 		})
+
+	s.serverLock.Unlock()
 }
 
 //TODO Figure out how to manage routines and shutdown signals
 
 func (s *GBServer) AcceptNodeLoop(name string) {
 
+	s.serverLock.Lock()
+
 	ctx, cancel := context.WithCancel(s.serverContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/node disconnect
 
-	log.Printf("Starting node accept loop -- %s\n", name)
+	//log.Printf("Starting node accept loop -- %s\n", name)
 
-	log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
+	//log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
 
 	nl, err := s.listenConfig.Listen(s.serverContext, s.nodeTCPAddr.Network(), s.nodeTCPAddr.String())
 	if err != nil {
@@ -345,10 +351,10 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 			func(err error) bool {
 				select {
 				case <-ctx.Done():
-					log.Println("accept loop context canceled -- exiting loop")
+					//log.Println("accept loop context canceled -- exiting loop")
 					return true
 				default:
-					log.Printf("accept loop context error -- %s\n", err)
+					//log.Printf("accept loop context error -- %s\n", err)
 					return false
 				}
 			})
@@ -363,6 +369,8 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 			s.connectToSeed()
 		})
 	}
+
+	s.serverLock.Unlock()
 
 }
 
@@ -382,7 +390,7 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 		conn, err := l.Accept()
 		if err != nil {
 			if customErr != nil && customErr(err) {
-				log.Println("custom error called")
+				//log.Println("custom error called")
 				return // we break here to come out of the loop - if we can't reconnect during a reconnect strategy then we break
 			}
 			if tmpDelay < delayCount {
@@ -402,7 +410,7 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 		})
 	}
 
-	log.Println("accept loop exited")
+	//log.Println("accept loop exited")
 
 }
 
@@ -437,10 +445,10 @@ func newSeqReqPool(poolSize uint8) *seqReqPool {
 			New: func() any {
 				select {
 				case id := <-sequence:
-					log.Printf("Allocating sequence ID %d from the pool", id) // Log allocations
+					//log.Printf("Allocating sequence ID %d from the pool", id) // Log allocations
 					return id
 				default:
-					log.Println("Pool exhausted: no sequence IDs available")
+					//log.Println("Pool exhausted: no sequence IDs available")
 					return nil
 				}
 			},
@@ -457,6 +465,6 @@ func (s *GBServer) acquireReqID() (uint8, error) {
 }
 
 func (s *GBServer) releaseReqID(id uint8) {
-	log.Printf("Releasing sequence ID %d back to the pool", id)
+	//log.Printf("Releasing sequence ID %d back to the pool", id)
 	s.nodeReqPool.reqPool.Put(id)
 }

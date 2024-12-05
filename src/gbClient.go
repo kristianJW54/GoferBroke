@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"runtime"
 	"sync"
 	"time"
 )
@@ -89,7 +88,7 @@ type gbClient struct {
 	flags clientFlags
 
 	//Syncing
-	cLock sync.RWMutex
+	cLock sync.Mutex
 }
 
 //===================================================================================
@@ -178,6 +177,13 @@ func nodePoolPut(b []byte) {
 
 // TODO need init client with outbound data setup
 
+func (c *gbClient) initClient() {
+
+	//Outbound setup
+	c.outbound.flushSignal = sync.NewCond(&(c.cLock))
+
+}
+
 // TODO Think about the locks we may need in this method
 func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
@@ -191,12 +197,16 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// Server lock here?
 	s.numClientConnections++
 
+	client.cLock.Lock()
+
+	client.initClient()
+
 	if initiated {
 		client.directionType = INITIATED
-		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
+		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
 	} else {
 		client.directionType = RECEIVED
-		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
+		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
 	}
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
@@ -210,6 +220,8 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	s.startGoRoutine(s.ServerName, fmt.Sprintf("write loop for %s", name), func() {
 		client.writeLoop()
 	})
+
+	client.cLock.Unlock()
 
 	return client
 
@@ -259,7 +271,7 @@ func (c *gbClient) readLoop() {
 
 		// Check if we are utilizing more than half the buffer capacity - if not we may need to shrink
 		if n <= cap(buff)/2 {
-			log.Println("low buff utilization - increasing shrink count")
+			//log.Println("low buff utilization - increasing shrink count")
 			c.inbound.expandCount++
 		} else if n > cap(buff) {
 			c.inbound.expandCount = 0
@@ -277,7 +289,7 @@ func (c *gbClient) readLoop() {
 			newBuff := make([]byte, c.inbound.buffSize)
 			copy(newBuff, buff[:n])
 			buff = newBuff
-			log.Printf("increased buffer size to --> %d", len(buff))
+			//log.Printf("increased buffer size to --> %d", len(buff))
 
 		} else if n < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
 			c.inbound.buffSize = int(cap(buff) / 2)
@@ -298,8 +310,8 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		log.Printf("bytes read --> %d", n)
-		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
+		//log.Printf("bytes read --> %d", n)
+		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
 		// TODO Think about flushing and writing and any clean up after the read
 
@@ -356,6 +368,7 @@ func (c *gbClient) queueOutbound(data []byte) {
 // ---------------------------
 // Flushing
 
+// Lock must be held
 func (c *gbClient) flushSignal() {
 	if c.outbound.flushSignal != nil {
 		c.outbound.flushSignal.Signal()
@@ -364,97 +377,7 @@ func (c *gbClient) flushSignal() {
 
 // Lock must be held coming in
 func (c *gbClient) flushWriteOutbound() bool {
-	if c.flags.isSet(FLUSH_OUTBOUND) {
-
-		c.cLock.Unlock()
-		runtime.Gosched()
-		c.cLock.Lock()
-		return false
-
-	}
-	c.flags.set(FLUSH_OUTBOUND)
-	defer func() {
-		c.flags.clear(FLUSH_OUTBOUND)
-	}()
-
-	if c.gbc == nil || c.srv == nil || c.outbound.bytesInQ == 0 {
-		return true
-	}
-
-	toCopy := c.outbound.writeBuffer
-	log.Printf("toCopy --> %d", toCopy)
-	c.outbound.writeBuffer = nil
-
-	nc := c.gbc
-	wd := c.outbound.writeDuration
-
-	c.cLock.Unlock()
-
-	c.outbound.copyWriteBuffer = append(c.outbound.copyWriteBuffer, toCopy...)
-	log.Printf("outbound copy buffer --> %d", len(c.outbound.writeBuffer))
-
-	//store original size
-	var _orig [1024][]byte
-	orig := append(_orig[:0], c.outbound.copyWriteBuffer...)
-	log.Printf("orig = %d", orig)
-
-	startOfCopy := c.outbound.copyWriteBuffer[0:]
-
-	start := time.Now()
-
-	var n int64
-	var wn int64
-	var err error
-
-	for len(c.outbound.copyWriteBuffer) > 0 {
-
-		writeCopy := c.outbound.copyWriteBuffer
-		if len(writeCopy) > 1024 {
-			writeCopy = writeCopy[:1024]
-		}
-		consumed := len(writeCopy)
-
-		log.Printf("writeCopy --> %d", writeCopy)
-
-		nc.SetWriteDeadline(start.Add(wd))
-		wn, err = writeCopy.WriteTo(nc)
-		log.Printf("logging bytes written --> %d / %d", wn, consumed)
-		nc.SetWriteDeadline(time.Time{})
-
-		n += wn
-		log.Printf("n = %d", n)
-		c.outbound.copyWriteBuffer = c.outbound.copyWriteBuffer[consumed-len(writeCopy):]
-		if err != nil && err != io.ErrShortWrite {
-			break
-		}
-
-	}
-
-	since := time.Since(start)
-
-	c.cLock.Lock()
-
-	for i := 0; i < len(orig)-len(c.outbound.copyWriteBuffer); i++ {
-		nodePoolPut(orig[i])
-	}
-
-	c.outbound.copyWriteBuffer = append(startOfCopy[:0], c.outbound.copyWriteBuffer...)
-	log.Printf("copy outbound after flush --> %d", c.outbound.copyWriteBuffer)
-
-	if len(c.outbound.writeBuffer) == 0 && cap(c.outbound.writeBuffer) > NodeWritePoolLarge*8 {
-		c.outbound.copyWriteBuffer = nil
-	}
-
-	c.outbound.flushTime = since
-	log.Printf("flush time --> %d", since)
-
-	c.outbound.bytesInQ -= n
-
-	if c.outbound.bytesInQ > 0 {
-		c.flushSignal()
-		log.Println("triggering flush signal...")
-	}
-
+	log.Println("flush called")
 	return true
 
 }
@@ -462,34 +385,33 @@ func (c *gbClient) flushWriteOutbound() bool {
 //---------------------------
 //Write Loop
 
+//TODO sync.Cond requires that the associated lock be held when calling Wait and Signal.
+// releases the lock temporarily while waiting and reacquires it before returning.
+
 func (c *gbClient) writeLoop() {
 
-	c.cLock.Lock()
-
-	// Need to check if conn is closed and return
-	// Need to check if flushed from last wake up
-	c.flags.set(WRITE_LOOP_STARTED)
-	c.cLock.Unlock()
-
 	waitOk := true
+	log.Printf("write loop running -- %s", c.srv.ServerName)
 
 	for {
 		c.cLock.Lock()
 
 		if waitOk {
+			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
 			c.outbound.flushSignal.Wait()
+			log.Println("Flush signal awakened.")
 		}
 		waitOk = c.flushWriteOutbound()
+		log.Printf("flushWriteOutbound result: %v", waitOk)
 		c.cLock.Unlock()
 
 	}
 }
 
+// Lock should be held
 func (c *gbClient) qProto(proto []byte, flush bool) {
 	c.queueOutbound(proto)
-	if !(flush && c.flushWriteOutbound()) {
-		c.flushSignal()
-	}
+	c.flushSignal()
 }
 
 //===================================================================================
@@ -499,8 +421,8 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 func (c *gbClient) processINFO(arg []byte) error {
 	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
 
-	log.Println("printing arg from method")
-	log.Println(arg)
+	//log.Println("printing arg from method")
+	//log.Println(arg)
 
 	if len(arg) >= 4 {
 		// Extract the last 4 bytes
@@ -510,7 +432,7 @@ func (c *gbClient) processINFO(arg []byte) error {
 		c.nh.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
 		// Log the result to verify
-		log.Printf("Extracted msgLength: %d\n", c.nh.msgLength)
+		//log.Printf("Extracted msgLength: %d\n", c.nh.msgLength)
 	} else {
 		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
 	}
