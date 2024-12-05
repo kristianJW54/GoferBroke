@@ -33,19 +33,6 @@ const (
 	ERROR // Error message
 )
 
-// Flags
-const (
-	CONNECTED = iota
-	TEMP
-	GOSSIPING
-	GOSS_SYN_SENT
-	GODD_SYN_REC
-	GOSS_SYN_ACK_SENT
-	GOSS_SYN_ACK_REC
-	GOSS_ACK_SENT
-	GOSS_ACK_REC
-)
-
 // Response Codes ??/
 
 //TODO Consider implementing interface with serialisation methods and sending mehtods for packets

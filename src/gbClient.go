@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -15,6 +16,47 @@ const (
 	CLIENT = iota
 	NODE
 )
+
+type clientFlags uint16 // Inspired by NATS bit mask for flags
+
+// Flags
+const (
+	CONNECTED = 1 << iota
+	GOSSIPING
+	FLUSH_OUTBOUND
+	CLOSED
+	WRITE_LOOP_STARTED
+	GOSS_SYN_SENT
+	GODD_SYN_REC
+	GOSS_SYN_ACK_SENT
+	GOSS_SYN_ACK_REC
+	GOSS_ACK_SENT
+	GOSS_ACK_REC
+)
+
+//goland:noinspection GoMixedReceiverTypes
+func (cf *clientFlags) set(c clientFlags) {
+	*cf |= c
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (cf *clientFlags) clear(c clientFlags) {
+	*cf &= ^c
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (cf clientFlags) isSet(c clientFlags) bool {
+	return cf&c != 0
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (cf *clientFlags) setIfNotSet(c clientFlags) bool {
+	if *cf&c == 0 {
+		*cf |= c
+		return true
+	}
+	return false
+}
 
 //===================================================================================
 // Client | Node
@@ -44,7 +86,7 @@ type gbClient struct {
 	stateMachine
 
 	//Flags --> will tell us what state the client is in (connected, awaiting_syn_ack, etc...)
-	flags int
+	flags clientFlags
 
 	//Syncing
 	cLock sync.RWMutex
@@ -67,11 +109,12 @@ type readCache struct {
 //===================================================================================
 
 type outboundNodeQueue struct {
-	bytesInQ    uint64
-	writeBuffer net.Buffers
-	flushSignal *sync.Cond
-	outLock     *sync.RWMutex
-	sw          *bufio.Writer
+	bytesInQ        int64
+	writeBuffer     net.Buffers
+	copyWriteBuffer net.Buffers
+	flushSignal     *sync.Cond
+	writeDuration   time.Duration
+	flushTime       time.Duration
 }
 
 const (
@@ -113,9 +156,27 @@ func nodePoolGet(size int) []byte {
 	}
 }
 
+func nodePoolPut(b []byte) {
+	switch cap(b) {
+	case NodeWritePoolSmall:
+		b := (*[NodeWritePoolSmall]byte)(b[0:NodeWritePoolSmall])
+		nodePoolSmall.Put(b)
+	case NodeWritePoolMedium:
+		b := (*[NodeWritePoolMedium]byte)(b[0:NodeWritePoolMedium])
+		nodePoolMedium.Put(b)
+	case NodeWritePoolLarge:
+		b := (*[NodeWritePoolLarge]byte)(b[0:NodeWritePoolLarge])
+		nodePoolLarge.Put(b)
+	default:
+
+	}
+}
+
 //===================================================================================
 // Client creation
 //===================================================================================
+
+// TODO need init client with outbound data setup
 
 // TODO Think about the locks we may need in this method
 func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
@@ -146,6 +207,9 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	})
 
 	//Write loop -
+	s.startGoRoutine(s.ServerName, fmt.Sprintf("write loop for %s", name), func() {
+		client.writeLoop()
+	})
 
 	return client
 
@@ -257,7 +321,7 @@ func (c *gbClient) queueOutbound(data []byte) {
 		return
 	}
 
-	c.outbound.bytesInQ += uint64(len(data))
+	c.outbound.bytesInQ += int64(len(data))
 	log.Printf("number of bytes added to queue: %d for client %s", c.outbound.bytesInQ, c.gbc.RemoteAddr())
 
 	toBuffer := data
@@ -277,7 +341,9 @@ func (c *gbClient) queueOutbound(data []byte) {
 
 	for len(toBuffer) > 0 {
 		newPool := nodePoolGet(len(toBuffer))
+		log.Printf("newPool = %d", newPool)
 		n := copy(newPool[:cap(newPool)], toBuffer)
+		log.Printf("n = %d", n)
 		c.outbound.writeBuffer = append(c.outbound.writeBuffer, newPool[:n])
 		toBuffer = toBuffer[n:]
 		log.Printf("outbound buffer => %d", c.outbound.writeBuffer)
@@ -289,7 +355,107 @@ func (c *gbClient) queueOutbound(data []byte) {
 
 // ---------------------------
 // Flushing
-func (c *gbClient) flushWriteOutbound() {
+
+func (c *gbClient) flushSignal() {
+	if c.outbound.flushSignal != nil {
+		c.outbound.flushSignal.Signal()
+	}
+}
+
+// Lock must be held coming in
+func (c *gbClient) flushWriteOutbound() bool {
+	if c.flags.isSet(FLUSH_OUTBOUND) {
+
+		c.cLock.Unlock()
+		runtime.Gosched()
+		c.cLock.Lock()
+		return false
+
+	}
+	c.flags.set(FLUSH_OUTBOUND)
+	defer func() {
+		c.flags.clear(FLUSH_OUTBOUND)
+	}()
+
+	if c.gbc == nil || c.srv == nil || c.outbound.bytesInQ == 0 {
+		return true
+	}
+
+	toCopy := c.outbound.writeBuffer
+	log.Printf("toCopy --> %d", toCopy)
+	c.outbound.writeBuffer = nil
+
+	nc := c.gbc
+	wd := c.outbound.writeDuration
+
+	c.cLock.Unlock()
+
+	c.outbound.copyWriteBuffer = append(c.outbound.copyWriteBuffer, toCopy...)
+	log.Printf("outbound copy buffer --> %d", len(c.outbound.writeBuffer))
+
+	//store original size
+	var _orig [1024][]byte
+	orig := append(_orig[:0], c.outbound.copyWriteBuffer...)
+	log.Printf("orig = %d", orig)
+
+	startOfCopy := c.outbound.copyWriteBuffer[0:]
+
+	start := time.Now()
+
+	var n int64
+	var wn int64
+	var err error
+
+	for len(c.outbound.copyWriteBuffer) > 0 {
+
+		writeCopy := c.outbound.copyWriteBuffer
+		if len(writeCopy) > 1024 {
+			writeCopy = writeCopy[:1024]
+		}
+		consumed := len(writeCopy)
+
+		log.Printf("writeCopy --> %d", writeCopy)
+
+		nc.SetWriteDeadline(start.Add(wd))
+		wn, err = writeCopy.WriteTo(nc)
+		log.Printf("logging bytes written --> %d / %d", wn, consumed)
+		nc.SetWriteDeadline(time.Time{})
+
+		n += wn
+		log.Printf("n = %d", n)
+		c.outbound.copyWriteBuffer = c.outbound.copyWriteBuffer[consumed-len(writeCopy):]
+		if err != nil && err != io.ErrShortWrite {
+			break
+		}
+
+	}
+
+	since := time.Since(start)
+
+	c.cLock.Lock()
+
+	for i := 0; i < len(orig)-len(c.outbound.copyWriteBuffer); i++ {
+		nodePoolPut(orig[i])
+	}
+
+	c.outbound.copyWriteBuffer = append(startOfCopy[:0], c.outbound.copyWriteBuffer...)
+	log.Printf("copy outbound after flush --> %d", c.outbound.copyWriteBuffer)
+
+	if len(c.outbound.writeBuffer) == 0 && cap(c.outbound.writeBuffer) > NodeWritePoolLarge*8 {
+		c.outbound.copyWriteBuffer = nil
+	}
+
+	c.outbound.flushTime = since
+	log.Printf("flush time --> %d", since)
+
+	c.outbound.bytesInQ -= n
+
+	if c.outbound.bytesInQ > 0 {
+		c.flushSignal()
+		log.Println("triggering flush signal...")
+	}
+
+	return true
 
 }
 
@@ -298,15 +464,31 @@ func (c *gbClient) flushWriteOutbound() {
 
 func (c *gbClient) writeLoop() {
 
+	c.cLock.Lock()
+
 	// Need to check if conn is closed and return
 	// Need to check if flushed from last wake up
+	c.flags.set(WRITE_LOOP_STARTED)
+	c.cLock.Unlock()
+
+	waitOk := true
 
 	for {
-		c.outbound.outLock.Lock()
+		c.cLock.Lock()
 
-		c.flushWriteOutbound()
-		c.outbound.outLock.Unlock()
+		if waitOk {
+			c.outbound.flushSignal.Wait()
+		}
+		waitOk = c.flushWriteOutbound()
+		c.cLock.Unlock()
 
+	}
+}
+
+func (c *gbClient) qProto(proto []byte, flush bool) {
+	c.queueOutbound(proto)
+	if !(flush && c.flushWriteOutbound()) {
+		c.flushSignal()
 	}
 }
 

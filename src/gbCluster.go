@@ -125,8 +125,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
 		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
 
-		//client.queueOutbound([]byte("hello"))
-
 	} else {
 		client.directionType = RECEIVED
 		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
@@ -144,7 +142,10 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		client.readLoop()
 	})
 
-	// Also a write loop
+	//Write loop -
+	s.startGoRoutine(s.ServerName, fmt.Sprintf("write loop for %s", name), func() {
+		client.writeLoop()
+	})
 
 	return client
 
@@ -201,7 +202,10 @@ func (s *GBServer) connectToSeed() error {
 	// + wait for info exchange
 
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
-	client.queueOutbound([]byte("hello"))
+	//client.queueOutbound(pay1)
+	//client.flushWriteOutbound()
+
+	client.qProto(pay1, true)
 
 	// TODO should move to createNodeClient?
 	select {
