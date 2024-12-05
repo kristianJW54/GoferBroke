@@ -26,7 +26,7 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 		atomic.AddInt64(&g.numRoutines, 1)
 
 		// Log the start of the goroutine
-		log.Printf("%s Starting go-routine %v - %v", serverName, name, id)
+		//log.Printf("%s Starting go-routine %v - %v", serverName, name, id)
 
 		// Store the routine's information in the map
 		g.routineMap.Store(id, name)
@@ -43,7 +43,7 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 				// If tracking is enabled, decrement the number of routines and remove from the map
 				atomic.AddInt64(&g.numRoutines, -1)
 				g.routineMap.Delete(id)
-				log.Printf("%s Ending go-routine %v - %v", serverName, name, id)
+				//log.Printf("%s Ending go-routine %v - %v", serverName, name, id)
 
 			}()
 

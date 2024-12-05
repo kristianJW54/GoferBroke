@@ -32,6 +32,40 @@ import (
 // Main Server
 //===================================================================================
 
+type serverFlags uint16
+
+const (
+	STARTED = 1 << iota
+	SHUTTING_DOWN
+	ACCEPT_LOOP_STARTED
+	ACCEPT_NODE_LOOP_STARTED
+	CONNECTED_TO_SEED
+)
+
+//goland:noinspection GoMixedReceiverTypes
+func (sf *serverFlags) set(s serverFlags) {
+	*sf |= s
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (sf *serverFlags) clear(s serverFlags) {
+	*sf &= ^s
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (sf serverFlags) isSet(s serverFlags) bool {
+	return sf&s != 0
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (sf *serverFlags) setIfNotSet(s serverFlags) bool {
+	if *sf&s == 0 {
+		*sf |= s
+		return true
+	}
+	return false
+}
+
 type GBServer struct {
 	//Server Info - can add separate info struct later
 	ServerName    string //Set by config or flags
@@ -40,6 +74,8 @@ type GBServer struct {
 	addr          string
 	nodeTCPAddr   *net.TCPAddr
 	clientTCPAddr *net.TCPAddr
+
+	flags serverFlags
 
 	// Metrics or values for gossip
 	// CPU Load
@@ -166,7 +202,9 @@ func (s *GBServer) StartServer() {
 	}
 
 	// This needs to be a method with locks
+	//s.serverLock.Lock()
 	s.initSelfParticipant()
+	//s.serverLock.Unlock()
 
 	// Move this seed logic elsewhere
 	// TODO if we are not seed then we need to reach out - set a flag for this (initiator)
@@ -189,7 +227,7 @@ func (s *GBServer) StartServer() {
 	// CPU Metrics using an aggregate or significant change metric - how to signal?
 	// can have a ticker monitoring which will signal a waiting loop for updating internal state
 
-	//fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
+	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }
 
 //=======================================================
@@ -360,6 +398,8 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 			})
 	})
 
+	//time.Sleep(1 * time.Second)
+
 	//---------------- Seed Dial ----------------//
 	//This is essentially a solicit
 	if !s.isOriginal {
@@ -382,6 +422,8 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 // TODO consider adding client connection scoped context...?
 
 func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn), customErr func(err error) bool) {
+
+	s.flags.set(ACCEPT_NODE_LOOP_STARTED)
 
 	delayCount := int(3)
 	tmpDelay := int(0)

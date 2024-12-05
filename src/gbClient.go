@@ -88,7 +88,8 @@ type gbClient struct {
 	flags clientFlags
 
 	//Syncing
-	cLock sync.Mutex
+	//cLock sync.Mutex
+	mu sync.Mutex
 }
 
 //===================================================================================
@@ -180,7 +181,7 @@ func nodePoolPut(b []byte) {
 func (c *gbClient) initClient() {
 
 	//Outbound setup
-	c.outbound.flushSignal = sync.NewCond(&(c.cLock))
+	c.outbound.flushSignal = sync.NewCond(&(c.mu))
 
 }
 
@@ -197,17 +198,9 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// Server lock here?
 	s.numClientConnections++
 
-	client.cLock.Lock()
+	log.Printf("lock acquired - create client")
 
 	client.initClient()
-
-	if initiated {
-		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
-	} else {
-		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
-	}
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
 	// Track the goroutine for the read loop using startGoRoutine
@@ -221,7 +214,15 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 		client.writeLoop()
 	})
 
-	client.cLock.Unlock()
+	if initiated {
+		client.directionType = INITIATED
+		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
+	} else {
+		client.directionType = RECEIVED
+		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
+	}
+
+	log.Printf("lock released - create client")
 
 	return client
 
@@ -236,9 +237,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 func (c *gbClient) readLoop() {
 
-	c.cLock.Lock()
 	if c.gbc == nil {
-		c.cLock.Unlock()
 		return
 	}
 
@@ -377,6 +376,12 @@ func (c *gbClient) flushSignal() {
 
 // Lock must be held coming in
 func (c *gbClient) flushWriteOutbound() bool {
+
+	c.flags.set(FLUSH_OUTBOUND)
+	defer func() {
+		c.flags.clear(FLUSH_OUTBOUND)
+	}()
+
 	log.Println("flush called")
 	return true
 
@@ -394,16 +399,17 @@ func (c *gbClient) writeLoop() {
 	log.Printf("write loop running -- %s", c.srv.ServerName)
 
 	for {
-		c.cLock.Lock()
+		c.mu.Lock()
 
-		if waitOk {
+		if waitOk && c.outbound.bytesInQ == 0 {
 			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
 			c.outbound.flushSignal.Wait()
 			log.Println("Flush signal awakened.")
 		}
 		waitOk = c.flushWriteOutbound()
 		log.Printf("flushWriteOutbound result: %v", waitOk)
-		c.cLock.Unlock()
+
+		c.mu.Unlock()
 
 	}
 }

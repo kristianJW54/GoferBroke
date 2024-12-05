@@ -119,20 +119,9 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	//Server Lock?
 	s.numNodeConnections++
 
-	client.cLock.Lock()
+	log.Printf("lock acquired - create node client")
 
 	client.initClient()
-
-	// Only log if the connection was initiated by this server (to avoid duplicate logs)
-	if initiated {
-		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
-		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
-
-	} else {
-		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
-	}
 
 	//log.Println(s.ServerName + ": storing " + client.Name)
 	s.tmpClientStore["1"] = client
@@ -151,7 +140,22 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		client.writeLoop()
 	})
 
-	client.cLock.Unlock()
+	// Only log if the connection was initiated by this server (to avoid duplicate logs)
+	if initiated {
+		client.directionType = INITIATED
+		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
+		//var testData = []byte{1, 1, 1, 0, 16, 0, 9, 13, 10, 84, 104, 105, 115, 32, 105, 115, 32, 97, 32, 116, 101, 115, 116, 13, 10}
+		//
+		//client.qProto(testData, true)
+
+	} else {
+		client.directionType = RECEIVED
+		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
+
+	}
+
+	log.Printf("lock released - create node client")
 
 	return client
 
@@ -172,33 +176,35 @@ func (s *GBServer) connectToSeed() error {
 	defer cancel()
 
 	////Create info message
-	data := []byte("This is a test\r\n")
-
-	seq, err := s.acquireReqID()
-	if err != nil {
-		return err
-	}
-
-	header1 := constructNodeHeader(1, 1, seq, uint16(len(data)), NODE_HEADER_SIZE_V1)
-	packet := &nodePacket{
-		header1,
-		data,
-	}
-	pay1, err := packet.serialize()
-	if err != nil {
-		fmt.Printf("Failed to serialize packet: %v\n", err)
-	}
-
-	log.Printf("%v", len(pay1))
+	//data := []byte("This is a test\r\n")
+	//
+	//seq, err := s.acquireReqID()
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//header1 := constructNodeHeader(1, 1, seq, uint16(len(data)), NODE_HEADER_SIZE_V1)
+	//packet := &nodePacket{
+	//	header1,
+	//	data,
+	//}
+	//pay1, err := packet.serialize()
+	//if err != nil {
+	//	fmt.Printf("Failed to serialize packet: %v\n", err)
+	//}
+	//
+	//log.Printf("%v", len(pay1))
 
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
 
-	//fmt.Printf("%s Attempting to connect to seed server: %s\n", s.ServerName, addr)
+	fmt.Printf("%s Attempting to connect to seed server: %s\n", s.ServerName, addr)
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
+
+	log.Println("connection to seed successful - ", conn.RemoteAddr())
 
 	// TODO Add this to outbound queue instead and let flush outbound handle the write
 	//_, err = conn.Write(pay1)
@@ -209,18 +215,16 @@ func (s *GBServer) connectToSeed() error {
 	//Once it has successfully dialled we want to create a node client and store the connection
 	// + wait for info exchange
 
-	client := s.createNodeClient(conn, "whaaaat", true, NODE)
+	s.createNodeClient(conn, "whaaaat", true, NODE)
 	//client.queueOutbound(pay1)
 	//client.flushWriteOutbound()
 	//client.qProto(pay1, true)
 
-	client.outbound.flushSignal.Signal()
-
 	// TODO should move to createNodeClient?
 	select {
 	case <-ctx.Done():
-		//log.Println("connect to seed cancelled because of context")
-		s.releaseReqID(seq)
+		log.Println("connect to seed cancelled because of context")
+		//s.releaseReqID(seq)
 	}
 
 	return nil
