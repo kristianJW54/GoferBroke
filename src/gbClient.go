@@ -198,7 +198,8 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// Server lock here?
 	s.numClientConnections++
 
-	log.Printf("lock acquired - create client")
+	client.mu.Lock()
+	defer client.mu.Unlock()
 
 	client.initClient()
 
@@ -221,8 +222,6 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 		client.directionType = RECEIVED
 		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
 	}
-
-	log.Printf("lock released - create client")
 
 	return client
 
@@ -309,7 +308,7 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		//log.Printf("bytes read --> %d", n)
+		log.Printf("bytes read --> %d", n)
 		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
 		// TODO Think about flushing and writing and any clean up after the read
@@ -382,6 +381,56 @@ func (c *gbClient) flushWriteOutbound() bool {
 		c.flags.clear(FLUSH_OUTBOUND)
 	}()
 
+	toWrite := c.outbound.writeBuffer
+	c.outbound.writeBuffer = nil
+
+	nc := c.gbc
+
+	c.mu.Unlock()
+
+	c.outbound.copyWriteBuffer = append(c.outbound.copyWriteBuffer, toWrite...)
+	log.Printf("copy outbound --> %v", c.outbound.copyWriteBuffer)
+	var _orig [1024][]byte
+	orig := append(_orig[:0], c.outbound.copyWriteBuffer...)
+
+	start := c.outbound.copyWriteBuffer[0:]
+
+	var n int64
+	var wn int64
+	var err error
+
+	for len(c.outbound.copyWriteBuffer) > 0 {
+
+		wb := c.outbound.copyWriteBuffer
+		if len(wb) > 1024 {
+			wb = wb[:1024]
+		}
+		consumed := len(wb)
+
+		wn, err = wb.WriteTo(nc)
+		log.Printf("wb = %d", wn)
+
+		n += wn
+		c.outbound.copyWriteBuffer = c.outbound.copyWriteBuffer[consumed-len(wb):]
+		if err != nil && err != io.ErrShortWrite {
+			break
+		}
+	}
+
+	c.mu.Lock()
+
+	for i := 0; i < len(orig)-len(c.outbound.copyWriteBuffer); i++ {
+		nodePoolPut(orig[i])
+	}
+
+	c.outbound.copyWriteBuffer = append(start[:0], c.outbound.copyWriteBuffer...)
+
+	c.outbound.bytesInQ -= n
+
+	if c.outbound.bytesInQ > 0 {
+		c.flushSignal()
+	}
+
 	log.Println("flush called")
 	return true
 
@@ -401,7 +450,7 @@ func (c *gbClient) writeLoop() {
 	for {
 		c.mu.Lock()
 
-		if waitOk && c.outbound.bytesInQ == 0 {
+		if waitOk {
 			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
 			c.outbound.flushSignal.Wait()
 			log.Println("Flush signal awakened.")
@@ -417,7 +466,9 @@ func (c *gbClient) writeLoop() {
 // Lock should be held
 func (c *gbClient) qProto(proto []byte, flush bool) {
 	c.queueOutbound(proto)
-	c.flushSignal()
+	if c.outbound.flushSignal != nil {
+		c.outbound.flushSignal.Signal()
+	}
 }
 
 //===================================================================================

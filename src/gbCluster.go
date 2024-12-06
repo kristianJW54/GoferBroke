@@ -119,7 +119,8 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	//Server Lock?
 	s.numNodeConnections++
 
-	log.Printf("lock acquired - create node client")
+	client.mu.Lock()
+	defer client.mu.Unlock()
 
 	client.initClient()
 
@@ -155,8 +156,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 
 	}
 
-	log.Printf("lock released - create node client")
-
 	return client
 
 }
@@ -176,24 +175,24 @@ func (s *GBServer) connectToSeed() error {
 	defer cancel()
 
 	////Create info message
-	//data := []byte("This is a test\r\n")
+	data := []byte("This is a test\r\n")
+
+	seq, err := s.acquireReqID()
+	if err != nil {
+		return err
+	}
+
+	header1 := constructNodeHeader(1, 1, seq, uint16(len(data)), NODE_HEADER_SIZE_V1)
+	packet := &nodePacket{
+		header1,
+		data,
+	}
+	pay1, err := packet.serialize()
+	if err != nil {
+		fmt.Printf("Failed to serialize packet: %v\n", err)
+	}
 	//
-	//seq, err := s.acquireReqID()
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//header1 := constructNodeHeader(1, 1, seq, uint16(len(data)), NODE_HEADER_SIZE_V1)
-	//packet := &nodePacket{
-	//	header1,
-	//	data,
-	//}
-	//pay1, err := packet.serialize()
-	//if err != nil {
-	//	fmt.Printf("Failed to serialize packet: %v\n", err)
-	//}
-	//
-	//log.Printf("%v", len(pay1))
+	log.Printf("%v", len(pay1))
 
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
 
@@ -215,10 +214,11 @@ func (s *GBServer) connectToSeed() error {
 	//Once it has successfully dialled we want to create a node client and store the connection
 	// + wait for info exchange
 
-	s.createNodeClient(conn, "whaaaat", true, NODE)
+	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 	//client.queueOutbound(pay1)
 	//client.flushWriteOutbound()
-	//client.qProto(pay1, true)
+	time.Sleep(1 * time.Second) // We need to wait for the seed servers read loop to be up
+	client.qProto(pay1, true)
 
 	// TODO should move to createNodeClient?
 	select {
