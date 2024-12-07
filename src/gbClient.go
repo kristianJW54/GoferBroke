@@ -25,6 +25,7 @@ const (
 	FLUSH_OUTBOUND
 	CLOSED
 	WRITE_LOOP_STARTED
+	READ_LOOP_STARTED
 	GOSS_SYN_SENT
 	GODD_SYN_REC
 	GOSS_SYN_ACK_SENT
@@ -88,8 +89,8 @@ type gbClient struct {
 	flags clientFlags
 
 	//Syncing
-	//cLock sync.Mutex
-	mu sync.Mutex
+	mu         sync.Mutex
+	wLoopReady *sync.Cond
 }
 
 //===================================================================================
@@ -183,6 +184,8 @@ func (c *gbClient) initClient() {
 	//Outbound setup
 	c.outbound.flushSignal = sync.NewCond(&(c.mu))
 
+	c.wLoopReady = sync.NewCond(&(c.mu))
+
 }
 
 // TODO Think about the locks we may need in this method
@@ -236,7 +239,11 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 func (c *gbClient) readLoop() {
 
+	c.mu.Lock()
+
 	if c.gbc == nil {
+		defer c.mu.Unlock()
+		c.flags.clear(READ_LOOP_STARTED)
 		return
 	}
 
@@ -253,6 +260,12 @@ func (c *gbClient) readLoop() {
 
 	//------------------
 	//Beginning the read loop - read into buffer and adjust size if necessary - parse and process
+
+	log.Printf("beginning read...")
+	c.flags.set(READ_LOOP_STARTED)
+
+	c.mu.Unlock()
+
 	for {
 
 		//c.cLock.Lock()
@@ -314,6 +327,7 @@ func (c *gbClient) readLoop() {
 		// TODO Think about flushing and writing and any clean up after the read
 
 	}
+	log.Printf("end of loop")
 
 }
 
@@ -376,6 +390,8 @@ func (c *gbClient) flushSignal() {
 // Lock must be held coming in
 func (c *gbClient) flushWriteOutbound() bool {
 
+	log.Printf("FLUSHING!!")
+
 	c.flags.set(FLUSH_OUTBOUND)
 	defer func() {
 		c.flags.clear(FLUSH_OUTBOUND)
@@ -431,6 +447,9 @@ func (c *gbClient) flushWriteOutbound() bool {
 		c.flushSignal()
 	}
 
+	log.Printf("write error %v", err)
+	log.Printf("end out --> %v", c.outbound.copyWriteBuffer)
+
 	log.Println("flush called")
 	return true
 
@@ -444,6 +463,12 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 func (c *gbClient) writeLoop() {
 
+	c.mu.Lock()
+
+	c.flags.set(WRITE_LOOP_STARTED)
+
+	c.mu.Unlock()
+
 	waitOk := true
 	log.Printf("write loop running -- %s", c.srv.ServerName)
 
@@ -452,6 +477,8 @@ func (c *gbClient) writeLoop() {
 
 		if waitOk {
 			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
+			c.wLoopReady.Signal()
+			// Can i add a broadcast here instead
 			c.outbound.flushSignal.Wait()
 			log.Println("Flush signal awakened.")
 		}
@@ -463,10 +490,21 @@ func (c *gbClient) writeLoop() {
 	}
 }
 
+func (c *gbClient) waitForWrite() {
+	log.Printf("waiting for write")
+	c.mu.Lock()
+	if !c.flags.isSet(WRITE_LOOP_STARTED) {
+		log.Printf("write ready")
+		c.wLoopReady.Wait()
+	}
+	c.mu.Unlock()
+}
+
 // Lock should be held
 func (c *gbClient) qProto(proto []byte, flush bool) {
+	log.Println("queueing...")
 	c.queueOutbound(proto)
-	if c.outbound.flushSignal != nil {
+	if c.outbound.flushSignal != nil && flush {
 		c.outbound.flushSignal.Signal()
 	}
 }

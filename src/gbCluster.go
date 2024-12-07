@@ -103,8 +103,6 @@ type node struct {
 // createNodeClient method belongs to the server which receives the connection from the connecting server
 func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
-	// TODO Think about locks
-
 	now := time.Now()
 	clientName := fmt.Sprintf("%s_%d", name, now.Unix())
 
@@ -146,14 +144,15 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		client.directionType = INITIATED
 		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
 		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
-		//var testData = []byte{1, 1, 1, 0, 16, 0, 9, 13, 10, 84, 104, 105, 115, 32, 105, 115, 32, 97, 32, 116, 101, 115, 116, 13, 10}
-		//
-		//client.qProto(testData, true)
 
 	} else {
 		client.directionType = RECEIVED
 		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
 
+		//var testData = []byte{1, 1, 1, 0, 16, 0, 9, 13, 10, 84, 104, 105, 115, 32, 105, 115, 32, 97, 32, 116, 101, 115, 116, 13, 10}
+		//
+		////time.Sleep(1 * time.Second)
+		//client.qProto(testData, false)
 	}
 
 	return client
@@ -205,20 +204,17 @@ func (s *GBServer) connectToSeed() error {
 
 	log.Println("connection to seed successful - ", conn.RemoteAddr())
 
-	// TODO Add this to outbound queue instead and let flush outbound handle the write
-	//_, err = conn.Write(pay1)
-	//if err != nil {
-	//	return fmt.Errorf("error writing to connection: %s", err)
-	//}
-
-	//Once it has successfully dialled we want to create a node client and store the connection
-	// + wait for info exchange
-
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
-	//client.queueOutbound(pay1)
-	//client.flushWriteOutbound()
-	time.Sleep(1 * time.Second) // We need to wait for the seed servers read loop to be up
+
+	client.waitForWrite()
 	client.qProto(pay1, true)
+
+	// Flushing here as we may be racing with the sync.Cond creation
+	//client.mu.Lock()
+	//client.flushWriteOutbound()
+	//client.mu.Unlock()
+
+	//conn.Write(pay1)
 
 	// TODO should move to createNodeClient?
 	select {
