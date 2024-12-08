@@ -89,8 +89,7 @@ type gbClient struct {
 	flags clientFlags
 
 	//Syncing
-	mu         sync.Mutex
-	wLoopReady *sync.Cond
+	mu sync.Mutex
 }
 
 //===================================================================================
@@ -160,6 +159,7 @@ func nodePoolGet(size int) []byte {
 func nodePoolPut(b []byte) {
 	switch cap(b) {
 	case NodeWritePoolSmall:
+		log.Printf("returning small buffer to pool - %v", len(b))
 		b := (*[NodeWritePoolSmall]byte)(b[0:NodeWritePoolSmall])
 		nodePoolSmall.Put(b)
 	case NodeWritePoolMedium:
@@ -183,8 +183,6 @@ func (c *gbClient) initClient() {
 
 	//Outbound setup
 	c.outbound.flushSignal = sync.NewCond(&(c.mu))
-
-	c.wLoopReady = sync.NewCond(&(c.mu))
 
 }
 
@@ -477,7 +475,6 @@ func (c *gbClient) writeLoop() {
 
 		if waitOk {
 			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
-			c.wLoopReady.Signal()
 			// Can i add a broadcast here instead
 			c.outbound.flushSignal.Wait()
 			log.Println("Flush signal awakened.")
@@ -488,16 +485,6 @@ func (c *gbClient) writeLoop() {
 		c.mu.Unlock()
 
 	}
-}
-
-func (c *gbClient) waitForWrite() {
-	log.Printf("waiting for write")
-	c.mu.Lock()
-	if !c.flags.isSet(WRITE_LOOP_STARTED) {
-		log.Printf("write ready")
-		c.wLoopReady.Wait()
-	}
-	c.mu.Unlock()
 }
 
 // Lock should be held

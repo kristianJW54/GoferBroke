@@ -97,7 +97,7 @@ type GBServer struct {
 
 	//Server Info for gossip
 	selfInfo   *Participant
-	clusterMap ClusterMap
+	clusterMap ClusterMap //Need pointer?
 
 	//Distributed Info
 	isOriginal  bool
@@ -169,6 +169,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		seedAddr:       make([]*net.TCPAddr, 0),
 		tmpClientStore: make(map[string]*gbClient),
 
+		selfInfo: initSelfParticipant(serverName, addr),
+
 		isOriginal:           false,
 		numNodeConnections:   0,
 		numClientConnections: 0,
@@ -191,6 +193,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 func (s *GBServer) StartServer() {
 
+	//s.serverLock.Lock()
+
 	fmt.Printf("Server starting: %s\n", s.ServerName)
 	//fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
 
@@ -200,11 +204,6 @@ func (s *GBServer) StartServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// This needs to be a method with locks
-	//s.serverLock.Lock()
-	s.initSelfParticipant()
-	//s.serverLock.Unlock()
 
 	// Move this seed logic elsewhere
 	// TODO if we are not seed then we need to reach out - set a flag for this (initiator)
@@ -217,6 +216,8 @@ func (s *GBServer) StartServer() {
 	// Setting go routine tracking flag to true - mainly used in testing
 	s.grTracking.trackingFlag.Store(true)
 
+	//s.serverLock.Unlock()
+
 	//---------------- Node Accept Loop ----------------//
 	s.AcceptNodeLoop("node-test")
 
@@ -226,6 +227,12 @@ func (s *GBServer) StartServer() {
 	//TODO add monitoring routines to keep internal state up to date
 	// CPU Metrics using an aggregate or significant change metric - how to signal?
 	// can have a ticker monitoring which will signal a waiting loop for updating internal state
+
+	// Will need to start a monitoring internal state method which will spawn waiting go routines to monitor changes
+	// internally and when signalled, update the changes by grabbing the server locks and unlocking after done
+
+	// Also will need a start gossiping method call once this setup is done - this will start the gossiping routines
+	// Which will use the cluster map etc...
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }

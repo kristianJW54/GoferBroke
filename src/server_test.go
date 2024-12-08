@@ -36,7 +36,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	go gbs.StartServer()
 	go gbs2.StartServer()
-
+	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[1])
 	time.Sleep(1 * time.Second)
 
 	// Current break is here

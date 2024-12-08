@@ -206,13 +206,12 @@ func (s *GBServer) connectToSeed() error {
 
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 
-	client.waitForWrite()
-	client.qProto(pay1, true)
+	client.qProto(pay1, false)
 
-	// Flushing here as we may be racing with the sync.Cond creation
-	//client.mu.Lock()
-	//client.flushWriteOutbound()
-	//client.mu.Unlock()
+	// Flushing here as we may be earlier than signal setup
+	client.mu.Lock()
+	client.flushWriteOutbound()
+	client.mu.Unlock()
 
 	//conn.Write(pay1)
 
@@ -231,12 +230,12 @@ func (s *GBServer) connectToSeed() error {
 // Node Info + Initial Connect Packet Creation
 //=======================================================
 
-func (s *GBServer) initSelfParticipant() {
+func initSelfParticipant(name, addr string) *Participant {
 
 	t := time.Now().Unix()
 
 	p := &Participant{
-		name:       s.ServerName,
+		name:       name,
 		keyValues:  make(map[int]*Delta),
 		maxVersion: t,
 	}
@@ -244,11 +243,11 @@ func (s *GBServer) initSelfParticipant() {
 	p.keyValues[ADDR_V] = &Delta{
 		valueType: STRING_DV,
 		version:   t,
-		value:     []byte(s.addr),
+		value:     []byte(addr),
 	}
 	// Set the numNodeConnections delta
 	numNodeConnBytes := make([]byte, 1)
-	numNodeConnBytes[0] = s.numNodeConnections
+	numNodeConnBytes[0] = 0
 	p.keyValues[NUM_NODE_CONN_V] = &Delta{
 		valueType: INT_DV,
 		version:   t,
@@ -257,9 +256,7 @@ func (s *GBServer) initSelfParticipant() {
 
 	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
 
-	s.serverLock.Lock()
-	s.selfInfo = p
-	s.serverLock.Unlock()
+	return p
 
 }
 
