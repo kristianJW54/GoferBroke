@@ -11,23 +11,12 @@ const (
 	DELTA_TYPE
 )
 
-//TODO Think about the step by step flow -- need to understand the command or state of the gossip
-// if it's syn-ack it will have both a digest and delta in the payload
-// where is this being called and how is the serializer informed of how to handle this
-// may need go-routines for processing digest whilst also processing delta
-// how does this all come together in the request-response cycle with the handlers
-
-type tmpDigest struct {
-	name       string
-	maxVersion int64
-}
-
-// These functions will be methods on the client and will use parsed packets stored in the state machines struct which is
+// These functions will be methods on the client and will be use parsed packets stored in the state machines struct which is
 // embedded in the client struct
 
 // Need to trust that we are being given a digest slice from the packet and message length checks have happened before
 // being handed to this method
-func (c *gbClient) serialiseDigest(digest []*tmpDigest) ([]byte, error) {
+func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 
 	// TODO Need to understand how we are dealing with CLRF
 	// TODO Think about locks and where they are being held -- if they are needed etc
@@ -73,7 +62,7 @@ func (c *gbClient) serialiseDigest(digest []*tmpDigest) ([]byte, error) {
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
-func (c *gbClient) deSerialiseDigest(digest []byte) ([]*tmpDigest, error) {
+func deSerialiseDigest(digest []byte) ([]*clusterDigest, error) {
 
 	length := len(digest)
 	lengthMeta := binary.BigEndian.Uint32(digest[1:5])
@@ -85,12 +74,12 @@ func (c *gbClient) deSerialiseDigest(digest []byte) ([]*tmpDigest, error) {
 	sizeMeta := binary.BigEndian.Uint16(digest[5:7])
 	//log.Println("sizeMeta = ", sizeMeta)
 
-	digestMap := make([]*tmpDigest, sizeMeta)
+	digestMap := make([]*clusterDigest, sizeMeta)
 
 	offset := 7
 
 	for i := 0; i < int(sizeMeta); i++ {
-		td := &tmpDigest{}
+		td := &clusterDigest{}
 
 		nameLen := int(digest[offset])
 

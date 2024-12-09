@@ -37,7 +37,8 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[0])
+	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[1])
+	log.Printf("p name = %v | values %v", gbs2.selfInfo.name, gbs.selfInfo.keyValues[1])
 
 	// Current break is here
 
@@ -48,9 +49,9 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.Name, client2.directionType)
 
 	time.Sleep(1 * time.Second)
-	go gbs.Shutdown()
-	time.Sleep(1 * time.Second)
 	go gbs2.Shutdown()
+	time.Sleep(1 * time.Second)
+	go gbs.Shutdown()
 	time.Sleep(1 * time.Second)
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
@@ -99,6 +100,40 @@ func TestServerRunningOneNodes(t *testing.T) {
 
 	gbs.logActiveGoRoutines()
 
+	time.Sleep(1 * time.Second)
+
+}
+
+func TestDigest(t *testing.T) {
+
+	lc := net.ListenConfig{}
+
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
+			},
+		},
+	}
+
+	//log.Println(config)
+
+	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	digest, err := gbs.generateDigest()
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, value := range digest {
+		t.Logf("name %s", value.name)
+		t.Logf("value %d", value.maxVersion)
+	}
 	time.Sleep(1 * time.Second)
 
 }

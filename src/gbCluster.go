@@ -41,6 +41,17 @@ type Seed struct {
 	seedAddr *net.TCPAddr
 }
 
+//-------------------
+//Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
+
+type clusterDigest struct {
+	name       string
+	maxVersion int64
+}
+
+//-------------------
+// Main cluster map for gossiping
+
 type Delta struct {
 	valueType int
 	version   int64
@@ -52,13 +63,15 @@ type Participant struct {
 	keyValues  map[int]*Delta
 	maxVersion int64
 	paValue    float64 // Not to be gossiped
-	pm         sync.Mutex
+	pm         sync.RWMutex
 }
 
 type ClusterMap struct {
 	seedServer   *Seed
 	participants map[string]*Participant
 	phiAccMap    map[string]*phiAccrual
+	pCount       int
+	cachedDigest map[string]*clusterDigest
 }
 
 //-------------------
@@ -101,7 +114,7 @@ type node struct {
 	direction string
 
 	//Serialisation + Gossip
-	tmpDigest
+	clusterDigest //TODO May not need
 	gossipingWith string
 	// Gossip state - Handlers will check against this and make sure no duplicate or conflicting work is being done
 	gossipState int
@@ -293,12 +306,51 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
 		make(map[string]*phiAccrual),
+		0,
+		make(map[string]*clusterDigest),
 	}
 
+	// We don't add the phiAccrual here as we don't track our own internal failure detection
+
 	cm.participants[name] = participant
+	cm.pCount++
 
 	return cm
 
 }
 
-// TODO Think about how to keep the internal state up to date for gossiping
+// TODO Consider a digest pool to use to ease pressure on the Garbage Collector
+
+// Thread safe and to be used when cached digest is nil or invalidated
+func (s *GBServer) generateDigest() (map[string]*clusterDigest, error) {
+
+	s.clusterLock.RLock()
+	defer s.clusterLock.RUnlock()
+
+	if s.clusterMap.participants == nil {
+		return nil, fmt.Errorf("cluster map is empty")
+	}
+
+	if len(s.clusterMap.cachedDigest) > 0 {
+		return s.clusterMap.cachedDigest, nil
+	}
+
+	td := make(map[string]*clusterDigest, s.clusterMap.pCount)
+
+	cm := s.clusterMap.participants
+
+	for _, value := range cm {
+		// Lock the participant to safely read the data
+		value.pm.RLock()
+		// Initialize the map entry for each participant
+		td[value.name] = &clusterDigest{
+			name:       value.name,
+			maxVersion: value.maxVersion,
+		}
+		value.pm.RUnlock() // Release the participant lock
+	}
+
+	s.clusterMap.cachedDigest = td
+
+	return td, nil
+}

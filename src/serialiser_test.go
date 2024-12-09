@@ -13,11 +13,11 @@ func TestSerialiseDigest(t *testing.T) {
 	nodeAName := fmt.Sprintf("node-a%d", timeCode)
 	nodeBName := fmt.Sprintf("node-b%d", timeCode)
 
-	nodeA := &tmpDigest{
+	nodeA := &clusterDigest{
 		name:       nodeAName,
 		maxVersion: 1733134288,
 	}
-	nodeB := &tmpDigest{
+	nodeB := &clusterDigest{
 		name:       nodeBName,
 		maxVersion: 1733134288,
 	}
@@ -29,12 +29,10 @@ func TestSerialiseDigest(t *testing.T) {
 	// And also serialise elements within the digest
 
 	// Create digest slice
-	digest := []*tmpDigest{nodeA, nodeB}
-
-	client := &gbClient{}
+	digest := []*clusterDigest{nodeA, nodeB}
 
 	// Call the serialiseDigest method
-	serialized, err := client.serialiseDigest(digest)
+	serialized, err := serialiseDigest(digest)
 	if err != nil {
 		t.Fatalf("Failed to serialize digest: %v", err)
 	}
@@ -43,7 +41,7 @@ func TestSerialiseDigest(t *testing.T) {
 	t.Logf("Serialized Digest: %v", serialized)
 	t.Logf("lenght of serialized digest: %d", len(serialized))
 
-	deserialized, err := client.deSerialiseDigest(serialized)
+	deserialized, err := deSerialiseDigest(serialized)
 	if err != nil {
 		t.Fatalf("Failed to deserialize digest: %v", err)
 	}
