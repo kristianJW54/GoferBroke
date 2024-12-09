@@ -40,6 +40,8 @@ const (
 	ACCEPT_LOOP_STARTED
 	ACCEPT_NODE_LOOP_STARTED
 	CONNECTED_TO_SEED
+	IS_GOSSIPING
+	UPDATING_INTERNAL_STATE
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -110,15 +112,13 @@ type GBServer struct {
 
 	//phoneBook      map[string]*gbClient
 
-	//connMutex      sync.RWMutex
-
-	//pool           sync.Pool // Maybe to use with varying buffer sizes
-
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response
 	nodeReqPool seqReqPool
 
-	serverLock sync.RWMutex
+	// Locks
+	serverLock  sync.RWMutex
+	clusterLock sync.RWMutex
 
 	//serverWg *sync.WaitGroup
 
@@ -152,6 +152,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 	seq := newSeqReqPool(10)
 
+	selfInfo := initSelfParticipant(serverName, addr)
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
@@ -169,7 +171,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		seedAddr:       make([]*net.TCPAddr, 0),
 		tmpClientStore: make(map[string]*gbClient),
 
-		selfInfo: initSelfParticipant(serverName, addr),
+		selfInfo:   selfInfo,
+		clusterMap: *initClusterMap(serverName, nodeTCPAddr, selfInfo),
 
 		isOriginal:           false,
 		numNodeConnections:   0,
@@ -464,12 +467,6 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 }
 
 //=======================================================
-// Creating a node server
-//=======================================================
-
-//==
-
-//=======================================================
 // Sync Pool for Server-Server Request cycles
 //=======================================================
 
@@ -517,3 +514,9 @@ func (s *GBServer) releaseReqID(id uint8) {
 	//log.Printf("Releasing sequence ID %d back to the pool", id)
 	s.nodeReqPool.reqPool.Put(id)
 }
+
+//=======================================================
+// Internal Monitoring
+//=======================================================
+
+//----------------

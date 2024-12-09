@@ -35,9 +35,9 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	gbs2 := NewServer("test-server-2", config, "localhost", "8082", "8083", lc)
 
 	go gbs.StartServer()
-	go gbs2.StartServer()
-	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[1])
 	time.Sleep(1 * time.Second)
+	go gbs2.StartServer()
+	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[0])
 
 	// Current break is here
 
@@ -48,11 +48,10 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.Name, client2.directionType)
 
 	time.Sleep(1 * time.Second)
-
 	go gbs.Shutdown()
 	time.Sleep(1 * time.Second)
 	go gbs2.Shutdown()
-
+	time.Sleep(1 * time.Second)
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
 

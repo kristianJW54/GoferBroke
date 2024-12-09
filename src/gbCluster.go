@@ -2,9 +2,11 @@ package src
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -49,12 +51,29 @@ type Participant struct {
 	name       string
 	keyValues  map[int]*Delta
 	maxVersion int64
+	paValue    float64 // Not to be gossiped
+	pm         sync.Mutex
 }
 
 type ClusterMap struct {
-	seedServer   Seed
+	seedServer   *Seed
 	participants map[string]*Participant
+	phiAccMap    map[string]*phiAccrual
 }
+
+//-------------------
+//Heartbeat Monitoring
+
+type phiAccrual struct {
+	threshold   int
+	windowSize  int
+	lastBeat    int64
+	currentBeat int64
+	window      map[int]int64
+	pa          sync.Mutex
+}
+
+// -- Maybe a PhiAcc map with node-name as key and phiAccrual as value?
 
 // TODO Think about functions or methods which will take new participant data and serialise/de-serialise it for adding to map
 // TODO Think about where these functions need to live and how to handle
@@ -254,9 +273,31 @@ func initSelfParticipant(name, addr string) *Participant {
 		value:     numNodeConnBytes,
 	}
 
+	heart := make([]byte, 8)
+	binary.BigEndian.PutUint64(heart, uint64(t))
+	p.keyValues[HEARTBEAT_V] = &Delta{
+		valueType: HEARTBEAT_V,
+		version:   t,
+		value:     heart,
+	}
+
 	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
 
 	return p
+
+}
+
+func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
+
+	cm := &ClusterMap{
+		&Seed{seedAddr: seed},
+		make(map[string]*Participant),
+		make(map[string]*phiAccrual),
+	}
+
+	cm.participants[name] = participant
+
+	return cm
 
 }
 
