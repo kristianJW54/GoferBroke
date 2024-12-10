@@ -50,6 +50,8 @@ type nodeHeader struct {
 	headerLength int
 }
 
+//TODO Need to handle parsing errors and get rid of packets which cannot not be parsed to not block read
+
 func (c *gbClient) parsePacket(packet []byte) {
 
 	c.rounds++

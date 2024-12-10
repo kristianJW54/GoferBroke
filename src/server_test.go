@@ -124,16 +124,50 @@ func TestDigest(t *testing.T) {
 	//log.Println(config)
 
 	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+	gbs2 := NewServer("test-server", config, "localhost", "8082", "8083", lc)
 	go gbs.StartServer()
+	//time.Sleep(1 * time.Second)
+	go gbs2.StartServer()
 	time.Sleep(1 * time.Second)
 	digest, err := gbs.generateDigest()
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	sd, err := serialiseDigest(digest)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	header := constructNodeHeader(1, 1, 1, uint16(len(sd)), NODE_HEADER_SIZE_V1)
+
+	packet := &nodePacket{
+		header,
+		sd,
+	}
+
+	p, err := packet.serialize()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	conn := gbs.tmpClientStore["1"]
+	conn.qProto(p, true)
+
 	for _, value := range digest {
 		t.Logf("name %s", value.name)
 		t.Logf("value %d", value.maxVersion)
 	}
 	time.Sleep(1 * time.Second)
+
+	deserialized, err := deSerialiseDigest(sd)
+	if err != nil {
+		t.Fatalf("Failed to deserialize digest: %v", err)
+	}
+
+	for _, value := range deserialized {
+		t.Logf("name %s", value.name)
+		t.Logf("value %d", value.maxVersion)
+	}
 
 }

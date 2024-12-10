@@ -31,8 +31,10 @@ func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 	for _, value := range digest {
 		size += 1
 		size += len(value.name)
-		size += 8
+		size += 8 // Time unix which is int64 --> 8 Bytes
 	}
+
+	size += 2 // Adding CLRF at the end
 
 	digestBuf := make([]byte, size)
 
@@ -55,6 +57,8 @@ func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(value.maxVersion))
 		offset += 8
 	}
+	copy(digestBuf[offset:], CLRF)
+	offset += len(CLRF)
 
 	return digestBuf, nil
 }
@@ -63,6 +67,11 @@ func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
 func deSerialiseDigest(digest []byte) ([]*clusterDigest, error) {
+
+	//CLRF Check
+	//if bytes.HasSuffix(digest, []byte(CLRF)) {
+	//	bytes.Trim(digest, CLRF)
+	//}
 
 	length := len(digest)
 	lengthMeta := binary.BigEndian.Uint32(digest[1:5])
@@ -107,3 +116,7 @@ func deSerialiseDigest(digest []byte) ([]*clusterDigest, error) {
 
 	return digestMap, nil
 }
+
+//=======================================================
+// Serialisation for Deltas/Cluster Map
+//=======================================================

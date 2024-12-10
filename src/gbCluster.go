@@ -71,7 +71,6 @@ type ClusterMap struct {
 	participants map[string]*Participant
 	phiAccMap    map[string]*phiAccrual
 	pCount       int
-	cachedDigest map[string]*clusterDigest
 }
 
 //-------------------
@@ -245,8 +244,6 @@ func (s *GBServer) connectToSeed() error {
 	client.flushWriteOutbound()
 	client.mu.Unlock()
 
-	//conn.Write(pay1)
-
 	// TODO should move to createNodeClient?
 	select {
 	case <-ctx.Done():
@@ -300,6 +297,10 @@ func initSelfParticipant(name, addr string) *Participant {
 
 }
 
+//=======================================================
+// Cluster Map Handling
+//=======================================================
+
 func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
 
 	cm := &ClusterMap{
@@ -307,7 +308,6 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 		make(map[string]*Participant),
 		make(map[string]*phiAccrual),
 		0,
-		make(map[string]*clusterDigest),
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
@@ -319,10 +319,19 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 }
 
+//--------
+//Update cluster
+
+//--
+
+//Add/Remove Participant
+
+//--
+
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
 
 // Thread safe and to be used when cached digest is nil or invalidated
-func (s *GBServer) generateDigest() (map[string]*clusterDigest, error) {
+func (s *GBServer) generateDigest() ([]*clusterDigest, error) {
 
 	s.clusterLock.RLock()
 	defer s.clusterLock.RUnlock()
@@ -331,26 +340,25 @@ func (s *GBServer) generateDigest() (map[string]*clusterDigest, error) {
 		return nil, fmt.Errorf("cluster map is empty")
 	}
 
-	if len(s.clusterMap.cachedDigest) > 0 {
-		return s.clusterMap.cachedDigest, nil
-	}
-
-	td := make(map[string]*clusterDigest, s.clusterMap.pCount)
+	td := make([]*clusterDigest, s.clusterMap.pCount)
 
 	cm := s.clusterMap.participants
 
+	idx := 0
 	for _, value := range cm {
 		// Lock the participant to safely read the data
 		value.pm.RLock()
 		// Initialize the map entry for each participant
-		td[value.name] = &clusterDigest{
+		td[idx] = &clusterDigest{
 			name:       value.name,
 			maxVersion: value.maxVersion,
 		}
+		idx++
 		value.pm.RUnlock() // Release the participant lock
 	}
 
-	s.clusterMap.cachedDigest = td
-
 	return td, nil
 }
+
+//--------
+//Compare Digest
