@@ -3,12 +3,25 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"time"
 )
 
 const (
 	DIGEST_TYPE = iota
 	DELTA_TYPE
+)
+
+const (
+	STRING_DV = iota
+	UINT8_DV
+	UINT16_DV
+	UINT32_DV
+	UINT64_DV
+	INT_DV
+	BYTE_DV
+	FLOAT_DV
+	TIME_DV
 )
 
 //-------------------
@@ -39,79 +52,187 @@ type clusterDelta struct {
 // TODO Look at efficiency - can we do this in once pass with byte.Buffer?
 // TODO Look at sync.Pool for buffer use
 
+// TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
+
 func serialiseClusterDelta(cd *clusterDelta) ([]byte, error) {
+	// Metadata size
+	const metadataSize = 7
+	length := metadataSize
 
-	//Need type = Delta - 1 byte Uint8
-	//Need length of payload - 4 byte Uint32
-	//Need size of delta - 2 byte Uint16
-	// Total metadata for digest byte array = 7
-
-	length := 7
-
+	// Calculate the required buffer size
 	for name, delta := range cd.delta {
-		length += len(name) // Need the name length
+		length += 1 + len(name) // 1 byte for name length + name bytes
+		length += 2             // For size of delta key values
 
-		// Loop through the delta
 		for _, value := range delta.keyValues {
-			length += 1 // Adding the key which is an iota 1 byte
-			length += 8 // For unix version int64 - 8 byte
-			length += 1 // For value type
-			length += len(value.value)
+			length += 1                // 1 byte for key
+			length += 8                // 8 bytes for version (int64)
+			length += 1                // 1 byte for valueType
+			length += 4                // 4 bytes for value length (uint32)
+			length += len(value.value) // Value size
 		}
-
 	}
-	length += 2 // Adding CLRF at the end
 
+	length += 2 // Adding CRLF at the end
+
+	// Allocate buffer
 	deltaBuf := make([]byte, length)
 
 	offset := 0
 
-	// Construct meta header
-	deltaBuf[0] = byte(DELTA_TYPE)
+	// Write metadata header
+	deltaBuf[0] = byte(DELTA_TYPE) // Assuming DELTA_TYPE is defined
 	offset++
 	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(length))
 	offset += 4
 	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(cd.delta)))
 	offset += 2
 
-	//Construct payload + meta payload details
+	// Serialize participants
 	for name, delta := range cd.delta {
 		if len(name) > 255 {
 			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", name)
 		}
 
+		// Write name length and name
 		deltaBuf[offset] = uint8(len(name))
-		offset += 1
+		offset++
 		copy(deltaBuf[offset:], name)
 		offset += len(name)
 
-		for key, value := range delta.keyValues {
+		// Put in size of delta for the participant
+		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(cd.delta)))
+		offset += 2
 
+		for key, value := range delta.keyValues {
+			// Write key
 			deltaBuf[offset] = uint8(key)
 			offset++
+
+			// Write version
 			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(value.version))
 			offset += 8
+
+			// Write valueType
 			deltaBuf[offset] = uint8(value.valueType)
 			offset++
+
+			// Write value length and value
 			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(value.value)))
 			offset += 4
 			copy(deltaBuf[offset:], value.value)
 			offset += len(value.value)
-
 		}
 	}
 
-	copy(deltaBuf[offset:], CLRF)
-	offset += len(CLRF)
+	// Append CRLF
+	copy(deltaBuf[offset:], CLRF) // Assuming CLRF is defined as []byte{13, 10}
+	offset += 2
 
-	return []byte{}, nil
+	// Validate buffer usage
+	if offset != length {
+		return nil, fmt.Errorf("buffer mismatch: calculated length %d, written offset %d", length, offset)
+	}
 
+	return deltaBuf, nil
 }
 
-// TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
+func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
-// These functions will be methods on the client and will be use parsed packets stored in the state machines struct which is
-// embedded in the client struct
+	if delta[0] != byte(DELTA_TYPE) {
+		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x", delta[0], byte(DELTA_TYPE))
+	}
+
+	length := len(delta)
+	metaLength := binary.BigEndian.Uint32(delta[1:5])
+	log.Printf("meta length %v - actual length - %v", metaLength, length)
+
+	if length != int(metaLength) {
+		return nil, fmt.Errorf("meta length does not match desired length - %x", length)
+	}
+
+	// Use header to allocate cluster map capacity
+	size := binary.BigEndian.Uint16(delta[5:7])
+	log.Println("size = ", size)
+
+	cDelta := &clusterDelta{
+		make(map[string]*tmpParticipant, size),
+	}
+
+	log.Println("cluster map = ", cDelta)
+
+	offset := 7
+
+	// Looping through each participant
+	for i := 0; i < int(size); i++ {
+
+		nameLen := int(delta[offset])
+		log.Printf("name length = %v", nameLen)
+
+		start := offset + 1
+		end := start + nameLen
+
+		name := string(delta[start:end])
+
+		offset += 1
+		offset += nameLen
+
+		// Need to get delta size - Uint16 - 2 bytes
+		deltaSize := binary.BigEndian.Uint16(delta[offset : offset+2])
+
+		cDelta.delta[name] = &tmpParticipant{
+			make(map[int]*tmpDelta, deltaSize),
+		}
+
+		offset += 2
+
+		for j := 0; j < int(deltaSize); j++ {
+
+			key := int(delta[offset])
+			log.Printf("key = %v", key)
+
+			offset += 1
+
+			d := cDelta.delta[name]
+			log.Printf("delta name = %v", d.keyValues)
+			d.keyValues[key] = &tmpDelta{}
+
+			// Version
+			v := binary.BigEndian.Uint64(delta[offset : offset+8])
+			VersionTime := time.Unix(int64(v), 0)
+
+			offset += 8
+
+			// Type
+			vType := int(delta[offset])
+			offset += 1
+
+			// Length
+			vLength := int(binary.BigEndian.Uint32(delta[offset : offset+4]))
+			offset += 4
+
+			log.Printf("vLength = %v", vLength)
+
+			// Value
+			value := delta[offset : offset+vLength]
+
+			log.Printf("value length = %v", len(value))
+
+			d.keyValues[key] = &tmpDelta{
+				valueType: vType,
+				version:   VersionTime.Unix(),
+				value:     value,
+			}
+
+			offset += vLength
+
+		}
+
+	}
+
+	return cDelta, nil
+
+}
 
 // Need to trust that we are being given a digest slice from the packet and message length checks have happened before
 // being handed to this method

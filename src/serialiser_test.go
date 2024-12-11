@@ -51,3 +51,103 @@ func TestSerialiseDigest(t *testing.T) {
 	}
 
 }
+
+// Helper function to create a Delta
+func createDelta(valueType int, version int64, value string) *tmpDelta {
+	return &tmpDelta{
+		valueType: valueType,
+		version:   version,
+		value:     []byte(value),
+	}
+}
+
+func TestSerialiseDelta(t *testing.T) {
+
+	// Creating node names
+	timeCode := time.Now().Unix()
+	nodeAName := fmt.Sprintf("node-a%d", timeCode)
+	nodeBName := fmt.Sprintf("node-b%d", timeCode)
+
+	// Create test clusterDelta
+	testClusterDelta := &clusterDelta{
+		delta: map[string]*tmpParticipant{
+			nodeAName: {
+				keyValues: map[int]*tmpDelta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.1"),
+					CPU_USAGE_V: createDelta(0, timeCode, "45.3%"),
+				},
+			},
+			nodeBName: {
+				keyValues: map[int]*tmpDelta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.2"),
+					CPU_USAGE_V: createDelta(0, timeCode, "55.7%"),
+				},
+			},
+		},
+	}
+
+	// Print the test structure for verification
+	for key, value := range testClusterDelta.delta {
+		t.Logf("name = %v", []byte(key))
+		for k, value := range value.keyValues {
+			t.Logf("(key-%d)(type-%d)(value-%d)", k, value.valueType, value.value)
+		}
+	}
+
+	cereal, err := serialiseClusterDelta(testClusterDelta)
+	if err != nil {
+		t.Fatalf("Failed to serialise cluster delta: %v", err)
+	}
+
+	t.Logf("cereal: %v", cereal)
+
+	// De-serialise
+
+	cd, err := deserialiseDelta(cereal)
+	if err != nil {
+		t.Fatalf("Failed to deserialise cluster delta: %v", err)
+	}
+
+	for key, value := range cd.delta {
+		t.Logf("name = %s", key)
+		for k, value := range value.keyValues {
+			t.Logf("key-%d(%d)(%s)", k, value.valueType, value.value)
+		}
+	}
+
+}
+
+func BenchmarkSerialiseDelta(b *testing.B) {
+	// Creating node names
+	timeCode := time.Now().Unix()
+	nodeAName := fmt.Sprintf("node-a%d", timeCode)
+	nodeBName := fmt.Sprintf("node-b%d", timeCode)
+
+	// Create test clusterDelta
+	testClusterDelta := &clusterDelta{
+		delta: map[string]*tmpParticipant{
+			nodeAName: {
+				keyValues: map[int]*tmpDelta{
+					1: createDelta(1, timeCode, "192.168.0.1"),
+					2: createDelta(2, timeCode, "45.3%"),
+				},
+			},
+			nodeBName: {
+				keyValues: map[int]*tmpDelta{
+					1: createDelta(1, timeCode, "192.168.0.2"),
+					2: createDelta(2, timeCode, "55.7%"),
+				},
+			},
+		},
+	}
+
+	// Reset the timer to exclude setup time
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, err := serialiseClusterDelta(testClusterDelta)
+		if err != nil {
+			b.Fatalf("Failed to serialise cluster delta: %v", err)
+		}
+	}
+}

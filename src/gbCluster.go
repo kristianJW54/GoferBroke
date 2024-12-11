@@ -15,18 +15,6 @@ import (
 //===================================================================================
 
 const (
-	STRING_DV = iota
-	UINT8_DV
-	UINT16_DV
-	UINT32_DV
-	UINT64_DV
-	INT_DV
-	BYTE_DV
-	FLOAT_DV
-	TIME_DV
-)
-
-const (
 	HEARTBEAT_V = iota
 	ADDR_V
 	CPU_USAGE_V
