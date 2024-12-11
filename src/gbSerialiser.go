@@ -11,6 +11,105 @@ const (
 	DELTA_TYPE
 )
 
+//-------------------
+//Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
+
+type clusterDigest struct {
+	name       string
+	maxVersion int64
+}
+
+//-------------------
+//Temp delta for use over the network separating from the internal cluster map
+
+type tmpDelta struct {
+	valueType int
+	version   int64
+	value     []byte // Value should go last for easier de-serialisation
+}
+
+type tmpParticipant struct {
+	keyValues map[int]*tmpDelta
+}
+
+type clusterDelta struct {
+	delta map[string]*tmpParticipant
+}
+
+// TODO Look at efficiency - can we do this in once pass with byte.Buffer?
+// TODO Look at sync.Pool for buffer use
+
+func serialiseClusterDelta(cd *clusterDelta) ([]byte, error) {
+
+	//Need type = Delta - 1 byte Uint8
+	//Need length of payload - 4 byte Uint32
+	//Need size of delta - 2 byte Uint16
+	// Total metadata for digest byte array = 7
+
+	length := 7
+
+	for name, delta := range cd.delta {
+		length += len(name) // Need the name length
+
+		// Loop through the delta
+		for _, value := range delta.keyValues {
+			length += 1 // Adding the key which is an iota 1 byte
+			length += 8 // For unix version int64 - 8 byte
+			length += 1 // For value type
+			length += len(value.value)
+		}
+
+	}
+	length += 2 // Adding CLRF at the end
+
+	deltaBuf := make([]byte, length)
+
+	offset := 0
+
+	// Construct meta header
+	deltaBuf[0] = byte(DELTA_TYPE)
+	offset++
+	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(length))
+	offset += 4
+	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(cd.delta)))
+	offset += 2
+
+	//Construct payload + meta payload details
+	for name, delta := range cd.delta {
+		if len(name) > 255 {
+			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", name)
+		}
+
+		deltaBuf[offset] = uint8(len(name))
+		offset += 1
+		copy(deltaBuf[offset:], name)
+		offset += len(name)
+
+		for key, value := range delta.keyValues {
+
+			deltaBuf[offset] = uint8(key)
+			offset++
+			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(value.version))
+			offset += 8
+			deltaBuf[offset] = uint8(value.valueType)
+			offset++
+			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(value.value)))
+			offset += 4
+			copy(deltaBuf[offset:], value.value)
+			offset += len(value.value)
+
+		}
+	}
+
+	copy(deltaBuf[offset:], CLRF)
+	offset += len(CLRF)
+
+	return []byte{}, nil
+
+}
+
+// TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
+
 // These functions will be methods on the client and will be use parsed packets stored in the state machines struct which is
 // embedded in the client struct
 
@@ -18,31 +117,28 @@ const (
 // being handed to this method
 func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 
-	// TODO Need to understand how we are dealing with CLRF
-	// TODO Think about locks and where they are being held -- if they are needed etc
-
 	// Need type = Digest - 1 byte Uint8
 	// Need length of payload - 4 byte uint32
 	// Need size of digest - 2 byte uint16
 	// Total metadata for digest byte array = 7
 
-	size := 7
+	length := 7
 
 	for _, value := range digest {
-		size += 1
-		size += len(value.name)
-		size += 8 // Time unix which is int64 --> 8 Bytes
+		length += 1
+		length += len(value.name)
+		length += 8 // Time unix which is int64 --> 8 Bytes
 	}
 
-	size += 2 // Adding CLRF at the end
+	length += 2 // Adding CLRF at the end
 
-	digestBuf := make([]byte, size)
+	digestBuf := make([]byte, length)
 
 	offset := 0
 
 	digestBuf[0] = DIGEST_TYPE
 	offset++
-	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(size))
+	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
 	offset += 4
 	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(digest)))
 	offset += 2

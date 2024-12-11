@@ -42,14 +42,6 @@ type Seed struct {
 }
 
 //-------------------
-//Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
-
-type clusterDigest struct {
-	name       string
-	maxVersion int64
-}
-
-//-------------------
 // Main cluster map for gossiping
 
 type Delta struct {
@@ -59,7 +51,7 @@ type Delta struct {
 }
 
 type Participant struct {
-	name       string
+	name       string // Possibly can remove
 	keyValues  map[int]*Delta
 	maxVersion int64
 	paValue    float64 // Not to be gossiped
@@ -70,7 +62,6 @@ type ClusterMap struct {
 	seedServer   *Seed
 	participants map[string]*Participant
 	phiAccMap    map[string]*phiAccrual
-	pCount       int
 }
 
 //-------------------
@@ -307,13 +298,11 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
 		make(map[string]*phiAccrual),
-		0,
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
 	cm.participants[name] = participant
-	cm.pCount++
 
 	return cm
 
@@ -340,7 +329,7 @@ func (s *GBServer) generateDigest() ([]*clusterDigest, error) {
 		return nil, fmt.Errorf("cluster map is empty")
 	}
 
-	td := make([]*clusterDigest, s.clusterMap.pCount)
+	td := make([]*clusterDigest, len(s.clusterMap.participants))
 
 	cm := s.clusterMap.participants
 
