@@ -507,8 +507,12 @@ func (c *gbClient) processINFO(arg []byte) error {
 	//log.Println(arg)
 
 	if len(arg) >= 4 {
+		c.nh.version = arg[0]
+		c.nh.id = arg[1]
+		c.nh.command = arg[2]
 		// Extract the last 4 bytes
 		msgLengthBytes := arg[3:5]
+		log.Printf("message length = %v", msgLengthBytes)
 
 		// Convert those 4 bytes to uint32 (BigEndian)
 		c.nh.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
@@ -529,3 +533,18 @@ func (c *gbClient) processINFO(arg []byte) error {
 //TODO Need a process message + command dispatcher
 // use switch case for client type
 // if node - use switch case for command type
+
+func (c *gbClient) processMessage(message []byte) {
+
+	tmpC, err := deserialiseDelta(message)
+	if err != nil {
+		log.Printf("deserialiseDelta failed: %v", err)
+	}
+	for key, value := range tmpC.delta {
+		log.Printf("length of key value = %v", len(value.keyValues))
+		log.Printf("key = %s", key)
+		for k, v := range value.keyValues {
+			log.Printf("value[%v]: %v", k, v)
+		}
+	}
+}

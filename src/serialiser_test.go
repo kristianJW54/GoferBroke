@@ -88,9 +88,9 @@ func TestSerialiseDelta(t *testing.T) {
 
 	// Print the test structure for verification
 	for key, value := range testClusterDelta.delta {
-		t.Logf("name = %v", []byte(key))
+		t.Logf("name = %s", key)
 		for k, value := range value.keyValues {
-			t.Logf("(key-%d)(type-%d)(value-%d)", k, value.valueType, value.value)
+			t.Logf("(key-%d)(%d)(%s)", k, value.valueType, value.value)
 		}
 	}
 
@@ -98,8 +98,6 @@ func TestSerialiseDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to serialise cluster delta: %v", err)
 	}
-
-	t.Logf("cereal: %v", cereal)
 
 	// De-serialise
 

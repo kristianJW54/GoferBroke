@@ -85,6 +85,7 @@ func serialiseClusterDelta(cd *clusterDelta) ([]byte, error) {
 	offset++
 	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(length))
 	offset += 4
+	// Put in size of delta for the participant
 	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(cd.delta)))
 	offset += 2
 
@@ -100,8 +101,7 @@ func serialiseClusterDelta(cd *clusterDelta) ([]byte, error) {
 		copy(deltaBuf[offset:], name)
 		offset += len(name)
 
-		// Put in size of delta for the participant
-		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(cd.delta)))
+		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(delta.keyValues)))
 		offset += 2
 
 		for key, value := range delta.keyValues {
@@ -144,8 +144,8 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 	}
 
 	length := len(delta)
+	log.Println("length internal = ", length)
 	metaLength := binary.BigEndian.Uint32(delta[1:5])
-	log.Printf("meta length %v - actual length - %v", metaLength, length)
 
 	if length != int(metaLength) {
 		return nil, fmt.Errorf("meta length does not match desired length - %x", length)
@@ -153,13 +153,10 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 	// Use header to allocate cluster map capacity
 	size := binary.BigEndian.Uint16(delta[5:7])
-	log.Println("size = ", size)
 
 	cDelta := &clusterDelta{
 		make(map[string]*tmpParticipant, size),
 	}
-
-	log.Println("cluster map = ", cDelta)
 
 	offset := 7
 
@@ -167,7 +164,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 	for i := 0; i < int(size); i++ {
 
 		nameLen := int(delta[offset])
-		log.Printf("name length = %v", nameLen)
 
 		start := offset + 1
 		end := start + nameLen
@@ -189,12 +185,10 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 		for j := 0; j < int(deltaSize); j++ {
 
 			key := int(delta[offset])
-			log.Printf("key = %v", key)
 
 			offset += 1
 
 			d := cDelta.delta[name]
-			log.Printf("delta name = %v", d.keyValues)
 			d.keyValues[key] = &tmpDelta{}
 
 			// Version
@@ -211,12 +205,8 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			vLength := int(binary.BigEndian.Uint32(delta[offset : offset+4]))
 			offset += 4
 
-			log.Printf("vLength = %v", vLength)
-
 			// Value
 			value := delta[offset : offset+vLength]
-
-			log.Printf("value length = %v", len(value))
 
 			d.keyValues[key] = &tmpDelta{
 				valueType: vType,

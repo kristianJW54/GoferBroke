@@ -1,47 +1,11 @@
 
 
-Server needs to maintain its own state information
-    - Identity
-        - Name, Address, TCPAddr
-    - Broadcast Info
-        - Identity, Last Gossiped, Member List,
-
-Server needs to maintain a member list
-
-A persistent connection map
-
-MTU And Gossip Messages
-    - Header for message size
-    - Partition if over the size = Use Scuttlebutt depth to decide on what is included
 
 
+//===================
 
-STEP BY STEP
-
-Initialise server with configs
-    -
-
-Server starts and needs to get the lay of the land
-    -
+Prepare Info to send which should be a delta of only the seed node
+Using the cluster map - it prepare a tmpCluster with only it's participant in
 
 
-
-Checks for seed IPs
-If it is a seed then it establishes its identity and listens for connections
-
-If it is not seed, then it establishes a connection to the seed to get the download and updates its cluster map
-then listens for connections
-
-Server picks a peer from the cluster map to gossip with - reaches out through the connection map
-send PING - expect ACK
-sends deltas with key = (value, version) list
-receives same from peer of participant list of key = (value, version)
-reconcile the cluster map based on update rate and newest version
-
-the gossip is complete and the PING - ACK has acted as a heartbeat to keep the connection alive
-
-if no ACK is received, the status is suspicious
-server reaches out to random peer to perform indirect gossip
-random peer then reaches out to suspicious peer and tries to gossip
-
-if still no ack then the peer is suspected down
+cereal =  [1 0 0 0 90 0 1 13 116 101 115 116 45 115 101 114 118 101 114 45 50 0 1 4 0 0 0 0 103 92 123 130 5 0 0 0 1 0 0 0 0 0 0 103 92 123 130 0 0 0 0 8 0 0 0 0 103 92 123 130 1 0 0 0 0 103 92 123 130 0 0 0 0 14 108 111 99 97 108 104 111 115 116 58 56 48 56 50 13 10]

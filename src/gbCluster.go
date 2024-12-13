@@ -183,26 +183,6 @@ func (s *GBServer) connectToSeed() error {
 	ctx, cancel := context.WithTimeout(s.serverContext, 10*time.Second)
 	defer cancel()
 
-	////Create info message
-	data := []byte("This is a test\r\n")
-
-	seq, err := s.acquireReqID()
-	if err != nil {
-		return err
-	}
-
-	header1 := constructNodeHeader(1, 1, seq, uint16(len(data)), NODE_HEADER_SIZE_V1)
-	packet := &nodePacket{
-		header1,
-		data,
-	}
-	pay1, err := packet.serialize()
-	if err != nil {
-		fmt.Printf("Failed to serialize packet: %v\n", err)
-	}
-	//
-	log.Printf("%v", len(pay1))
-
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
 
 	fmt.Printf("%s Attempting to connect to seed server: %s\n", s.ServerName, addr)
@@ -213,6 +193,11 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	log.Println("connection to seed successful - ", conn.RemoteAddr())
+
+	pay1, err := s.prepareInfoSend()
+	if err != nil {
+		return err
+	}
 
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 
@@ -293,6 +278,90 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 	cm.participants[name] = participant
 
 	return cm
+
+}
+
+func (s *GBServer) prepareInfoSend() ([]byte, error) {
+
+	s.clusterLock.Lock()
+	defer s.clusterLock.Unlock()
+
+	// Check if the server name exists in participants
+	participant, ok := s.clusterMap.participants[s.ServerName]
+	if !ok {
+		return nil, fmt.Errorf("no participant found for server %s", s.ServerName)
+	}
+
+	log.Println("STARTED PREPARING")
+
+	// Setup tmpCluster
+	tmpC := &clusterDelta{make(map[string]*tmpParticipant, 1)}
+
+	// Lock the participant for reading
+	//participant.pm.RLock()
+	//defer participant.pm.RUnlock() // Ensure the read lock is released even on errors
+
+	tmpP := &tmpParticipant{keyValues: make(map[int]*tmpDelta, len(participant.keyValues))}
+
+	tmpC.delta[s.ServerName] = tmpP
+
+	for k, v := range participant.keyValues {
+		// Copy keyValues into tmpParticipant
+		tmpP.keyValues[k] = &tmpDelta{
+			valueType: v.valueType,
+			version:   v.version,
+			value:     v.value,
+		}
+	}
+
+	for key, value := range tmpC.delta {
+		log.Printf("DECEREAL --> length of key value = %v", len(value.keyValues))
+		log.Printf("key = %s", key)
+		for k, v := range value.keyValues {
+			log.Printf("value[%v]: %v", k, v)
+		}
+	}
+
+	// Need to serialise the tmpCluster
+	cereal, err := serialiseClusterDelta(tmpC)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Println("cereal = ", cereal)
+
+	//deCereal, err := deserialiseDelta(cereal)
+	//if err != nil {
+	//	return nil, err
+	//}
+
+	//for key, value := range deCereal.delta {
+	//	log.Printf("DECEREAL --> length of key value = %v", len(value.keyValues))
+	//	log.Printf("key = %s", key)
+	//	for k, v := range value.keyValues {
+	//		log.Printf("value[%v]: %v", k, v)
+	//	}
+	//}
+
+	// Acquire sequence ID
+	seq, err := s.acquireReqID()
+	if err != nil {
+		return nil, err
+	}
+
+	// Construct header
+	header := constructNodeHeader(1, 1, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+	// Create packet
+	packet := &nodePacket{
+		header,
+		cereal,
+	}
+	pay1, err := packet.serialize()
+	if err != nil {
+		return nil, err
+	}
+
+	return pay1, nil
 
 }
 

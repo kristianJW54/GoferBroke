@@ -179,6 +179,10 @@ func (c *gbClient) parsePacket(packet []byte) {
 			//log.Println("n_end")
 			//log.Println(c.msgBuf)
 			log.Println("final message --> ", string(c.msgBuf))
+
+			// TODO Create process message dispatcher
+			c.processMessage(c.msgBuf)
+
 			c.argBuf, c.msgBuf = nil, nil
 			c.nh.msgLength, c.nh.headerLength, c.nh.command, c.nh.version = 0, 0, 0, 0
 			c.state = START
