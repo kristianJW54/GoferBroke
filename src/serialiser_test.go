@@ -53,8 +53,8 @@ func TestSerialiseDigest(t *testing.T) {
 }
 
 // Helper function to create a Delta
-func createDelta(valueType int, version int64, value string) *tmpDelta {
-	return &tmpDelta{
+func createDelta(valueType int, version int64, value string) *Delta {
+	return &Delta{
 		valueType: valueType,
 		version:   version,
 		value:     []byte(value),
@@ -72,19 +72,24 @@ func TestSerialiseDelta(t *testing.T) {
 	testClusterDelta := &clusterDelta{
 		delta: map[string]*tmpParticipant{
 			nodeAName: {
-				keyValues: map[int]*tmpDelta{
+				keyValues: map[int]*Delta{
 					ADDR_V:      createDelta(0, timeCode, "192.168.0.1"),
 					CPU_USAGE_V: createDelta(0, timeCode, "45.3%"),
 				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
 			},
 			nodeBName: {
-				keyValues: map[int]*tmpDelta{
+				keyValues: map[int]*Delta{
 					ADDR_V:      createDelta(0, timeCode, "192.168.0.2"),
 					CPU_USAGE_V: createDelta(0, timeCode, "55.7%"),
 				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
 			},
 		},
 	}
+
+	// Define value index and participant index for serialization
+	pi := []string{nodeAName, nodeBName} // Participant index, referencing the node names
 
 	// Print the test structure for verification
 	for key, value := range testClusterDelta.delta {
@@ -94,18 +99,20 @@ func TestSerialiseDelta(t *testing.T) {
 		}
 	}
 
-	cereal, err := serialiseClusterDelta(testClusterDelta)
+	// Serialise the testClusterDelta with the participant index and value index
+	cereal, err := serialiseClusterDelta(testClusterDelta, pi)
 	if err != nil {
 		t.Fatalf("Failed to serialise cluster delta: %v", err)
 	}
 
-	// De-serialise
-
+	// De-serialise the serialized data back into a new clusterDelta
 	cd, err := deserialiseDelta(cereal)
 	if err != nil {
 		t.Fatalf("Failed to deserialise cluster delta: %v", err)
 	}
 
+	// Print the deserialized structure for verification
+	t.Log("Deserialized Cluster Delta:")
 	for key, value := range cd.delta {
 		t.Logf("name = %s", key)
 		for k, value := range value.keyValues {
@@ -120,32 +127,141 @@ func BenchmarkSerialiseDelta(b *testing.B) {
 	timeCode := time.Now().Unix()
 	nodeAName := fmt.Sprintf("node-a%d", timeCode)
 	nodeBName := fmt.Sprintf("node-b%d", timeCode)
+	nodeCName := fmt.Sprintf("node-c%d", timeCode)
+	nodeDName := fmt.Sprintf("node-d%d", timeCode)
+	nodeEName := fmt.Sprintf("node-e%d", timeCode)
+	nodeFName := fmt.Sprintf("node-f%d", timeCode)
+	nodeGName := fmt.Sprintf("node-g%d", timeCode)
+	nodeHName := fmt.Sprintf("node-h%d", timeCode)
+	nodeIName := fmt.Sprintf("node-i%d", timeCode)
+	nodeJName := fmt.Sprintf("node-j%d", timeCode)
 
-	// Create test clusterDelta
+	// Create test clusterDelta with 10 participants
 	testClusterDelta := &clusterDelta{
 		delta: map[string]*tmpParticipant{
+			// Participant 1
 			nodeAName: {
-				keyValues: map[int]*tmpDelta{
-					1: createDelta(1, timeCode, "192.168.0.1"),
-					2: createDelta(2, timeCode, "45.3%"),
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.1"),
+					CPU_USAGE_V: createDelta(0, timeCode, "45.3%"),
 				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
 			},
+			// Participant 2
 			nodeBName: {
-				keyValues: map[int]*tmpDelta{
-					1: createDelta(1, timeCode, "192.168.0.2"),
-					2: createDelta(2, timeCode, "55.7%"),
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.2"),
+					CPU_USAGE_V: createDelta(0, timeCode, "55.7%"),
 				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 3
+			nodeCName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.3"),
+					CPU_USAGE_V: createDelta(0, timeCode, "65.2%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 4
+			nodeDName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.4"),
+					CPU_USAGE_V: createDelta(0, timeCode, "72.8%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 5
+			nodeEName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.5"),
+					CPU_USAGE_V: createDelta(0, timeCode, "30.9%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 6
+			nodeFName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.6"),
+					CPU_USAGE_V: createDelta(0, timeCode, "62.4%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 7
+			nodeGName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.7"),
+					CPU_USAGE_V: createDelta(0, timeCode, "80.5%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 8
+			nodeHName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.8"),
+					CPU_USAGE_V: createDelta(0, timeCode, "90.6%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 9
+			nodeIName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.9"),
+					CPU_USAGE_V: createDelta(0, timeCode, "50.7%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+			},
+			// Participant 10
+			nodeJName: {
+				keyValues: map[int]*Delta{
+					ADDR_V:      createDelta(0, timeCode, "192.168.0.10"),
+					CPU_USAGE_V: createDelta(0, timeCode, "33.3%"),
+				},
+				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
 			},
 		},
 	}
+
+	// Define value index and participant index for serialization
+	pi := []string{
+		nodeAName, nodeBName, nodeCName, nodeDName, nodeEName,
+		nodeFName, nodeGName, nodeHName, nodeIName, nodeJName,
+	} // Participant index, referencing the node names
 
 	// Reset the timer to exclude setup time
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := serialiseClusterDelta(testClusterDelta)
+		_, err := serialiseClusterDelta(testClusterDelta, pi)
 		if err != nil {
 			b.Fatalf("Failed to serialise cluster delta: %v", err)
+		}
+	}
+}
+
+func BenchmarkMapIteration(b *testing.B) {
+	m := make(map[string]int)
+	for i := 0; i < 100; i++ {
+		m[fmt.Sprintf("participant%d", i)] = i
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for k, v := range m {
+			_ = k
+			_ = v
+		}
+	}
+}
+
+func BenchmarkSliceIteration(b *testing.B) {
+	s := make([]string, 100)
+	for i := 0; i < 100; i++ {
+		s[i] = fmt.Sprintf("participant%d", i)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, v := range s {
+			_ = v
 		}
 	}
 }

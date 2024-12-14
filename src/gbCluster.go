@@ -41,6 +41,7 @@ type Delta struct {
 type Participant struct {
 	name       string // Possibly can remove
 	keyValues  map[int]*Delta
+	valueIndex []int
 	maxVersion int64
 	paValue    float64 // Not to be gossiped
 	pm         sync.RWMutex
@@ -49,6 +50,7 @@ type Participant struct {
 type ClusterMap struct {
 	seedServer   *Seed
 	participants map[string]*Participant
+	partIndex    []string
 	phiAccMap    map[string]*phiAccrual
 }
 
@@ -230,6 +232,7 @@ func initSelfParticipant(name, addr string) *Participant {
 	p := &Participant{
 		name:       name,
 		keyValues:  make(map[int]*Delta),
+		valueIndex: make([]int, 3),
 		maxVersion: t,
 	}
 
@@ -238,6 +241,8 @@ func initSelfParticipant(name, addr string) *Participant {
 		version:   t,
 		value:     []byte(addr),
 	}
+	p.valueIndex[0] = ADDR_V
+
 	// Set the numNodeConnections delta
 	numNodeConnBytes := make([]byte, 1)
 	numNodeConnBytes[0] = 0
@@ -246,6 +251,7 @@ func initSelfParticipant(name, addr string) *Participant {
 		version:   t,
 		value:     numNodeConnBytes,
 	}
+	p.valueIndex[1] = NUM_NODE_CONN_V
 
 	heart := make([]byte, 8)
 	binary.BigEndian.PutUint64(heart, uint64(t))
@@ -254,6 +260,7 @@ func initSelfParticipant(name, addr string) *Participant {
 		version:   t,
 		value:     heart,
 	}
+	p.valueIndex[2] = HEARTBEAT_V
 
 	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
 
@@ -270,12 +277,14 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
+		make([]string, 0),
 		make(map[string]*phiAccrual),
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
 	cm.participants[name] = participant
+	cm.partIndex = append(cm.partIndex, name)
 
 	return cm
 
@@ -298,50 +307,28 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	tmpC := &clusterDelta{make(map[string]*tmpParticipant, 1)}
 
 	// Lock the participant for reading
-	//participant.pm.RLock()
-	//defer participant.pm.RUnlock() // Ensure the read lock is released even on errors
+	participant.pm.RLock()
+	defer participant.pm.RUnlock() // Ensure the read lock is released even on errors
 
-	tmpP := &tmpParticipant{keyValues: make(map[int]*tmpDelta, len(participant.keyValues))}
+	// Capture the indexes
+	pi := s.clusterMap.partIndex
+
+	tmpP := &tmpParticipant{keyValues: make(map[int]*Delta, len(participant.keyValues)), vi: participant.valueIndex}
 
 	tmpC.delta[s.ServerName] = tmpP
 
-	for k, v := range participant.keyValues {
+	for _, v := range participant.valueIndex {
 		// Copy keyValues into tmpParticipant
-		tmpP.keyValues[k] = &tmpDelta{
-			valueType: v.valueType,
-			version:   v.version,
-			value:     v.value,
-		}
-	}
-
-	for key, value := range tmpC.delta {
-		log.Printf("DECEREAL --> length of key value = %v", len(value.keyValues))
-		log.Printf("key = %s", key)
-		for k, v := range value.keyValues {
-			log.Printf("value[%v]: %v", k, v)
-		}
+		tmpP.keyValues[v] = participant.keyValues[v]
 	}
 
 	// Need to serialise the tmpCluster
-	cereal, err := serialiseClusterDelta(tmpC)
+	cereal, err := serialiseClusterDelta(tmpC, pi)
 	if err != nil {
 		return nil, err
 	}
 
 	log.Println("cereal = ", cereal)
-
-	//deCereal, err := deserialiseDelta(cereal)
-	//if err != nil {
-	//	return nil, err
-	//}
-
-	//for key, value := range deCereal.delta {
-	//	log.Printf("DECEREAL --> length of key value = %v", len(value.keyValues))
-	//	log.Printf("key = %s", key)
-	//	for k, v := range value.keyValues {
-	//		log.Printf("value[%v]: %v", k, v)
-	//	}
-	//}
 
 	// Acquire sequence ID
 	seq, err := s.acquireReqID()

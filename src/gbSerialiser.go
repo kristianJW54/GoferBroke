@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,66 @@ const (
 	TIME_DV
 )
 
+const (
+	CerealPoolSmall  = 512
+	CerealPoolMedium = 1024
+	CerealPoolLarge  = 2048
+)
+
+var cerealPoolSmall = &sync.Pool{
+	New: func() any {
+		b := [CerealPoolSmall]byte{}
+		return &b
+	},
+}
+
+var cerealPoolMedium = &sync.Pool{
+	New: func() any {
+		b := [CerealPoolMedium]byte{}
+		return &b
+	},
+}
+
+var cerealPoolLarge = &sync.Pool{
+	New: func() any {
+		b := [CerealPoolLarge]byte{}
+		return &b
+	},
+}
+
+func cerealPoolGet(size int) []byte {
+	var buf []byte
+	switch {
+	case size <= CerealPoolSmall:
+		//log.Printf("Acquiring small node pool")
+		buf = cerealPoolSmall.Get().(*[CerealPoolSmall]byte)[:size] // Slice to the correct size
+	case size <= CerealPoolMedium:
+		//log.Printf("Acquiring medium node pool")
+		buf = cerealPoolMedium.Get().(*[CerealPoolMedium]byte)[:size] // Slice to the correct size
+	default:
+		//log.Printf("Acquiring large node pool")
+		buf = cerealPoolLarge.Get().(*[CerealPoolLarge]byte)[:size] // Slice to the correct size
+	}
+	return buf
+}
+
+func cerealPoolPut(b []byte) {
+	switch cap(b) {
+	case CerealPoolSmall:
+		//log.Printf("returning small buffer to pool - %v", len(b))
+		b := (*[CerealPoolSmall]byte)(b[0:CerealPoolSmall])
+		nodePoolSmall.Put(b)
+	case CerealPoolMedium:
+		b := (*[CerealPoolMedium]byte)(b[0:CerealPoolMedium])
+		nodePoolMedium.Put(b)
+	case CerealPoolLarge:
+		b := (*[CerealPoolLarge]byte)(b[0:CerealPoolLarge])
+		nodePoolLarge.Put(b)
+	default:
+
+	}
+}
+
 //-------------------
 //Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
 
@@ -33,95 +94,88 @@ type clusterDigest struct {
 }
 
 //-------------------
-//Temp delta for use over the network separating from the internal cluster map
-
-type tmpDelta struct {
-	valueType int
-	version   int64
-	value     []byte // Value should go last for easier de-serialisation
-}
 
 type tmpParticipant struct {
-	keyValues map[int]*tmpDelta
+	keyValues map[int]*Delta
+	vi        []int
 }
 
 type clusterDelta struct {
 	delta map[string]*tmpParticipant
 }
 
+// TODO Look at flattening or refining the data structure passed to the serialiser for faster performance
+
 // TODO Look at efficiency - can we do this in once pass with byte.Buffer?
 // TODO Look at sync.Pool for buffer use
 
 // TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
 
-func serialiseClusterDelta(cd *clusterDelta) ([]byte, error) {
-	// Metadata size
-	const metadataSize = 7
-	length := metadataSize
+func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
 
-	// Calculate the required buffer size
-	for name, delta := range cd.delta {
-		length += 1 + len(name) // 1 byte for name length + name bytes
-		length += 2             // For size of delta key values
+	length := 7 + 2 // Including CLRF
 
-		for _, value := range delta.keyValues {
-			length += 1                // 1 byte for key
-			length += 8                // 8 bytes for version (int64)
-			length += 1                // 1 byte for valueType
-			length += 4                // 4 bytes for value length (uint32)
-			length += len(value.value) // Value size
+	// Pre-calculate buffer size (with minimal overhead)
+	for _, idx := range pi {
+		participant := cd.delta[idx]
+		length += 1 + len(idx) + 2 // 1 byte for name length + name length + size of delta key-values
+
+		for _, value := range participant.vi {
+			valueData := participant.keyValues[value]
+			length += 14 + len(valueData.value) // 1 byte for key + 8 bytes for version + 1 byte for valueType + 4 bytes for value length
 		}
 	}
 
-	length += 2 // Adding CRLF at the end
-
 	// Allocate buffer
 	deltaBuf := make([]byte, length)
+	//deltaBuf := cerealPoolGet(length)
 
-	offset := 0
+	// Write metadata header directly
+	deltaBuf[0] = byte(DELTA_TYPE)
+	binary.BigEndian.PutUint32(deltaBuf[1:5], uint32(length))
+	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(cd.delta)))
 
-	// Write metadata header
-	deltaBuf[0] = byte(DELTA_TYPE) // Assuming DELTA_TYPE is defined
-	offset++
-	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(length))
-	offset += 4
-	// Put in size of delta for the participant
-	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(cd.delta)))
-	offset += 2
+	offset := 7
 
-	// Serialize participants
-	for name, delta := range cd.delta {
-		if len(name) > 255 {
-			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", name)
-		}
+	//// Serialize participants
 
-		// Write name length and name
-		deltaBuf[offset] = uint8(len(name))
+	// Efficient serialization of clusterDelta participants
+	for _, idx := range pi {
+		// Get the participant's data (avoiding repeated map lookups)
+		participant := cd.delta[idx]
+
+		// Write participant name length and name
+		deltaBuf[offset] = uint8(len(idx))
 		offset++
-		copy(deltaBuf[offset:], name)
-		offset += len(name)
+		copy(deltaBuf[offset:], idx)
+		offset += len(idx)
 
-		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(delta.keyValues)))
+		// Write the number of key-value pairs for the participant
+		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(participant.keyValues)))
 		offset += 2
 
-		for key, value := range delta.keyValues {
-			// Write key
-			deltaBuf[offset] = uint8(key)
+		// Serialize each key-value pair for the participant
+		for _, value := range participant.vi {
+			// Retrieve the key-value pair from the participant's keyValues map
+			valueData := participant.keyValues[value]
+
+			// Write key (in this case, it's an int, so it's safe to use uint8)
+			deltaBuf[offset] = uint8(value)
 			offset++
 
-			// Write version
-			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(value.version))
+			// Write version (8 bytes, uint64)
+			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(valueData.version))
 			offset += 8
 
-			// Write valueType
-			deltaBuf[offset] = uint8(value.valueType)
+			// Write valueType (1 byte, uint8)
+			deltaBuf[offset] = uint8(valueData.valueType)
 			offset++
 
-			// Write value length and value
-			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(value.value)))
+			// Write value length (4 bytes, uint32) and the value itself
+			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(valueData.value)))
 			offset += 4
-			copy(deltaBuf[offset:], value.value)
-			offset += len(value.value)
+			copy(deltaBuf[offset:], valueData.value)
+			offset += len(valueData.value)
 		}
 	}
 
@@ -133,6 +187,8 @@ func serialiseClusterDelta(cd *clusterDelta) ([]byte, error) {
 	if offset != length {
 		return nil, fmt.Errorf("buffer mismatch: calculated length %d, written offset %d", length, offset)
 	}
+
+	//defer cerealPoolPut(deltaBuf)
 
 	return deltaBuf, nil
 }
@@ -177,7 +233,8 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 		deltaSize := binary.BigEndian.Uint16(delta[offset : offset+2])
 
 		cDelta.delta[name] = &tmpParticipant{
-			make(map[int]*tmpDelta, deltaSize),
+			make(map[int]*Delta, deltaSize),
+			nil,
 		}
 
 		offset += 2
@@ -189,7 +246,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			offset += 1
 
 			d := cDelta.delta[name]
-			d.keyValues[key] = &tmpDelta{}
+			d.keyValues[key] = &Delta{}
 
 			// Version
 			v := binary.BigEndian.Uint64(delta[offset : offset+8])
@@ -208,7 +265,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			// Value
 			value := delta[offset : offset+vLength]
 
-			d.keyValues[key] = &tmpDelta{
+			d.keyValues[key] = &Delta{
 				valueType: vType,
 				version:   VersionTime.Unix(),
 				value:     value,
