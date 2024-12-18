@@ -2,6 +2,7 @@ package src
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -27,7 +28,7 @@ const (
 	WRITE_LOOP_STARTED
 	READ_LOOP_STARTED
 	GOSS_SYN_SENT
-	GODD_SYN_REC
+	GOSS_SYN_REC
 	GOSS_SYN_ACK_SENT
 	GOSS_SYN_ACK_REC
 	GOSS_ACK_SENT
@@ -153,7 +154,6 @@ var nodePoolLarge = &sync.Pool{
 func nodePoolGet(size int) []byte {
 	switch {
 	case size <= NodeWritePoolSmall:
-		log.Printf("acquiring small node pool")
 		return nodePoolSmall.Get().(*[NodeWritePoolSmall]byte)[:0]
 	case size <= NodeWritePoolMedium:
 		return nodePoolMedium.Get().(*[NodeWritePoolMedium]byte)[:0]
@@ -165,7 +165,6 @@ func nodePoolGet(size int) []byte {
 func nodePoolPut(b []byte) {
 	switch cap(b) {
 	case NodeWritePoolSmall:
-		log.Printf("returning small buffer to pool - %v", len(b))
 		b := (*[NodeWritePoolSmall]byte)(b[0:NodeWritePoolSmall])
 		nodePoolSmall.Put(b)
 	case NodeWritePoolMedium:
@@ -270,7 +269,6 @@ func (c *gbClient) readLoop() {
 	//------------------
 	//Beginning the read loop - read into buffer and adjust size if necessary - parse and process
 
-	log.Printf("beginning read...")
 	c.flags.set(READ_LOOP_STARTED)
 
 	c.mu.Unlock()
@@ -330,13 +328,12 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		log.Printf("bytes read --> %d", n)
+		//log.Printf("bytes read --> %d", n)
 		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
 		// TODO Think about flushing and writing and any clean up after the read
 
 	}
-	log.Printf("end of loop")
 
 }
 
@@ -355,14 +352,12 @@ func (c *gbClient) queueOutbound(data []byte) {
 	}
 
 	c.outbound.bytesInQ += int64(len(data))
-	log.Printf("number of bytes added to queue: %d for client %s", c.outbound.bytesInQ, c.gbc.RemoteAddr())
 
 	toBuffer := data
 
 	// Topping up the queued buffer if it isn't full yet
 	if len(c.outbound.writeBuffer) > 0 {
 		last := &c.outbound.writeBuffer[len(c.outbound.writeBuffer)-1]
-		log.Printf("last = %d", last)
 		if free := cap(*last) - len(*last); free > 0 {
 			if l := len(toBuffer); l < free {
 				free = l
@@ -374,12 +369,9 @@ func (c *gbClient) queueOutbound(data []byte) {
 
 	for len(toBuffer) > 0 {
 		newPool := nodePoolGet(len(toBuffer))
-		log.Printf("newPool = %d", newPool)
 		n := copy(newPool[:cap(newPool)], toBuffer)
-		log.Printf("n = %d", n)
 		c.outbound.writeBuffer = append(c.outbound.writeBuffer, newPool[:n])
 		toBuffer = toBuffer[n:]
-		log.Printf("outbound buffer => %d", c.outbound.writeBuffer)
 	}
 
 	// Buffer pool will be returned when we flush outbound
@@ -399,8 +391,6 @@ func (c *gbClient) flushSignal() {
 // Lock must be held coming in
 func (c *gbClient) flushWriteOutbound() bool {
 
-	log.Printf("FLUSHING!!")
-
 	c.flags.set(FLUSH_OUTBOUND)
 	defer func() {
 		c.flags.clear(FLUSH_OUTBOUND)
@@ -414,7 +404,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 	c.mu.Unlock()
 
 	c.outbound.copyWriteBuffer = append(c.outbound.copyWriteBuffer, toWrite...)
-	log.Printf("copy outbound --> %v", c.outbound.copyWriteBuffer)
+
 	var _orig [1024][]byte
 	orig := append(_orig[:0], c.outbound.copyWriteBuffer...)
 
@@ -433,7 +423,6 @@ func (c *gbClient) flushWriteOutbound() bool {
 		consumed := len(wb)
 
 		wn, err = wb.WriteTo(nc)
-		log.Printf("wb = %d", wn)
 
 		n += wn
 		c.outbound.copyWriteBuffer = c.outbound.copyWriteBuffer[consumed-len(wb):]
@@ -456,10 +445,6 @@ func (c *gbClient) flushWriteOutbound() bool {
 		c.flushSignal()
 	}
 
-	log.Printf("write error %v", err)
-	log.Printf("end out --> %v", c.outbound.copyWriteBuffer)
-
-	log.Println("flush called")
 	return true
 
 }
@@ -470,23 +455,22 @@ func (c *gbClient) flushWriteOutbound() bool {
 //TODO sync.Cond requires that the associated lock be held when calling Wait and Signal.
 // releases the lock temporarily while waiting and reacquires it before returning.
 
+// TODO Need to add context control and errors to write loop
+
 func (c *gbClient) writeLoop() {
 
 	c.mu.Lock()
-
 	c.flags.set(WRITE_LOOP_STARTED)
-
 	c.mu.Unlock()
 
 	waitOk := true
-	log.Printf("write loop running -- %s", c.srv.ServerName)
 
 	for {
 		c.mu.Lock()
 
 		if waitOk {
 			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
-			// Can i add a broadcast here instead
+			// Can I add a broadcast here instead
 			c.outbound.flushSignal.Wait()
 			log.Println("Flush signal awakened.")
 		}
@@ -503,7 +487,6 @@ func (c *gbClient) writeLoop() {
 
 // Lock should be held
 func (c *gbClient) qProto(proto []byte, flush bool) {
-	log.Println("queueing...")
 	c.queueOutbound(proto)
 	if c.outbound.flushSignal != nil && flush {
 		c.outbound.flushSignal.Signal()
@@ -511,7 +494,7 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 }
 
 //---------------------------
-//Response Handling
+//Node Response Handling
 
 type responseHandler struct {
 	resp    map[int]chan []byte
@@ -532,23 +515,21 @@ func (c *gbClient) addResponseChannel(seqID int) chan []byte {
 	return respChan
 }
 
-func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
-
-	respID := proto[2]
-
-	responseChannel := c.addResponseChannel(int(respID))
-
-	if sendNow {
-
-		c.qProto(proto, false)
-		c.mu.Lock()
-		c.flushWriteOutbound()
-		c.mu.Unlock()
-	}
+func (c *gbClient) waitForResponse(ctx context.Context, response chan []byte, respID byte, timeout time.Duration) {
 
 	// Wait for the response with timeout
 	select {
-	case response := <-responseChannel:
+	case <-ctx.Done():
+		log.Printf("context cancelled waiting for response channel %d", respID)
+		close(response)
+		c.rm.Lock()
+		delete(c.responseHandler.resp, int(respID))
+		c.rm.Unlock()
+		log.Printf("deleting response channel %d", int(respID))
+		log.Printf("returning sequence to the pool")
+		c.srv.releaseReqID(respID)
+		return
+	case response := <-response:
 		log.Printf("I got a response WOO!")
 		log.Printf("response = %v", string(response))
 		c.rm.Lock()
@@ -557,13 +538,37 @@ func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
 		log.Printf("deleting response channel %d", int(respID))
 		log.Printf("returning sequence to the pool")
 		c.srv.releaseReqID(respID)
-	case <-time.After(2 * time.Second):
+		return
+	case <-time.After(timeout):
 		// Clean up the response channel on timeout
+		close(response)
 		c.rm.Lock()
 		delete(c.responseHandler.resp, int(respID))
 		c.rm.Unlock()
 		log.Printf("timed out waiting for response channel %d", int(respID))
+		return
 	}
+
+}
+
+// Lock not held on entry
+func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
+
+	respID := proto[2]
+
+	responseChannel := c.addResponseChannel(int(respID))
+
+	if sendNow {
+
+		// Client lock to flush outbound
+		c.qProto(proto, false)
+		c.mu.Lock()
+		c.flushWriteOutbound()
+		c.mu.Unlock()
+	}
+
+	// Wait for the response with timeout
+	go c.waitForResponse(c.srv.serverContext, responseChannel, respID, 2*time.Second)
 
 }
 
@@ -578,11 +583,8 @@ func (c *gbClient) processINFO(arg []byte) error {
 		c.nh.version = arg[0]
 		c.nh.id = arg[2]
 		c.nh.command = arg[1]
-		log.Printf("arg command = %v", c.nh.command)
 		// Extract the last 4 bytes
 		msgLengthBytes := arg[3:5]
-		log.Printf("message length = %v", msgLengthBytes)
-
 		// Convert those 4 bytes to uint32 (BigEndian)
 		c.nh.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
@@ -606,59 +608,9 @@ func (c *gbClient) processINFO(arg []byte) error {
 // if node - use switch case for command type
 
 func (c *gbClient) processMessage(message []byte) {
-	log.Printf("arg buf = %v", c.argBuf)
 	if c.cType == NODE {
-		log.Printf("command = %v", c.nh.command)
-		if c.nh.command == INFO {
 
-			log.Printf("arg 1 %v", c.argBuf[0])
-			tmpC, err := deserialiseDelta(message)
-			if err != nil {
-				log.Printf("deserialiseDelta failed: %v", err)
-			}
-			for key, value := range tmpC.delta {
-				log.Printf("length of key value = %v", len(value.keyValues))
-				log.Printf("key = %s", key)
-				for k, v := range value.keyValues {
-					log.Printf("value[%v]: %v", k, v)
-				}
-			}
-
-			cereal := []byte("OK +\r\n")
-
-			// Construct header
-			header := constructNodeHeader(1, OK, 1, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
-			// Create packet
-			packet := &nodePacket{
-				header,
-				cereal,
-			}
-			pay1, _ := packet.serialize()
-
-			c.qProto(pay1, true)
-
-		}
-
-		if c.nh.command == OK {
-
-			log.Printf("returned message = %s", string(message))
-			c.rm.Lock()
-			responseChan, exists := c.resp[int(c.argBuf[2])]
-			c.rm.Unlock()
-
-			if exists {
-
-				responseChan <- message
-
-				c.mu.Lock()
-				delete(c.resp, int(c.argBuf[0]))
-				c.mu.Unlock()
-
-			} else {
-				log.Printf("no response channel found")
-			}
-
-		}
+		c.dispatchNodeCommands(message)
 
 	}
 }
@@ -666,4 +618,95 @@ func (c *gbClient) processMessage(message []byte) {
 //---------------------------
 // Node Handlers
 
-func (c *gbClient) dispatchNodeCommands() {}
+func (c *gbClient) dispatchNodeCommands(message []byte) {
+
+	//GOSS_SYN
+	//GOSS_SYN_ACK
+	//GOSS_ACK
+	//TEST
+
+	switch c.nh.command {
+	case INFO:
+		c.processInitialMessage(message)
+	case GOSS_SYN:
+		c.processGossSyn(message)
+	case GOSS_SYN_ACK:
+		c.processGossSynAck(message)
+	case GOSS_ACK:
+		c.processGossAck(message)
+	case OK:
+		c.processOK(message)
+	case ERR_RESP:
+		c.processErrResp(message)
+	default:
+		log.Printf("unknown command %v", c.nh.command)
+	}
+
+}
+
+func (c *gbClient) processErrResp(message []byte) {
+
+}
+
+func (c *gbClient) processOK(message []byte) {
+
+	//log.Printf("returned message = %s", string(message))
+	c.rm.Lock()
+	responseChan, exists := c.resp[int(c.argBuf[2])]
+	c.rm.Unlock()
+
+	if exists {
+
+		responseChan <- message
+
+		c.mu.Lock()
+		delete(c.resp, int(c.argBuf[0]))
+		c.mu.Unlock()
+
+	} else {
+		log.Printf("no response channel found")
+	}
+
+}
+
+func (c *gbClient) processGossAck(message []byte) {
+
+}
+
+func (c *gbClient) processGossSynAck(message []byte) {
+
+}
+
+func (c *gbClient) processGossSyn(message []byte) {
+
+}
+
+func (c *gbClient) processInitialMessage(message []byte) {
+
+	tmpC, err := deserialiseDelta(message)
+	if err != nil {
+		log.Printf("deserialiseDelta failed: %v", err)
+	}
+	for key, value := range tmpC.delta {
+		log.Printf("key = %s", key)
+		for k, v := range value.keyValues {
+			log.Printf("value[%v]: %v", k, v)
+		}
+	}
+
+	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
+
+	cereal := []byte("OK +\r\n")
+
+	// Construct header
+	header := constructNodeHeader(1, OK, 1, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+	// Create packet
+	packet := &nodePacket{
+		header,
+		cereal,
+	}
+	pay1, _ := packet.serialize()
+
+	c.qProto(pay1, true)
+
+}

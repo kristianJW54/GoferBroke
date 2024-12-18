@@ -9,12 +9,18 @@ import (
 const (
 	START = iota
 	VERSION1
+
+	// Node Commands
+
 	INFO
-	INITIAL
 	GOSS_SYN
 	GOSS_SYN_ACK
 	GOSS_ACK
 	TEST
+
+	// Client Commands
+
+	// Message End
 
 	MSG_PAYLOAD
 	MSG_R_END
@@ -68,13 +74,10 @@ func (c *gbClient) parsePacket(packet []byte) {
 		switch c.state {
 		case START:
 
-			log.Println("start b = ", b)
-
 			c.command = b
 
 			switch b {
 			case 1:
-				log.Println(b)
 				c.position = i
 				c.state = VERSION1
 			}
@@ -83,13 +86,9 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 			// Now switch on the command types
 			switch b {
-			case 2:
-				// TODO Need to do a forward check for command - this is the version currently
-				log.Println("switching to info state")
-				//c.position = i // Important to reset according to i if we enter a new header to avoid slice error
+			case INFO:
 				c.state = INFO
-			case 11:
-				log.Println("switching to OK?? im confused! --> ", b)
+			case OK:
 				c.state = OK
 			default:
 				log.Println("something wrong with yo state fam")
@@ -226,8 +225,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 			// TODO Create process message dispatcher
 			c.processMessage(c.msgBuf)
-
-			log.Printf("arg buf = %v", c.argBuf)
 
 			c.argBuf, c.msgBuf = nil, nil
 			c.nh.msgLength, c.nh.headerLength, c.nh.command, c.nh.version = 0, 0, 0, 0

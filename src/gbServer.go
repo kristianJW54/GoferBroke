@@ -231,7 +231,7 @@ func (s *GBServer) StartServer() {
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
-	s.AcceptLoop("client-test")
+	//s.AcceptLoop("client-test")
 
 	//TODO add monitoring routines to keep internal state up to date
 	// CPU Metrics using an aggregate or significant change metric - how to signal?
@@ -312,7 +312,6 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 				return err
 			}
 			s.seedAddr = append(s.seedAddr, tcpAddr)
-			//log.Printf("seed server list --> %v\n", s.seedAddr)
 		}
 	}
 	return nil

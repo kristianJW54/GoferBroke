@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 )
@@ -200,7 +199,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 	}
 
 	length := len(delta)
-	log.Println("length internal = ", length)
 	metaLength := binary.BigEndian.Uint32(delta[1:5])
 
 	if length != int(metaLength) {

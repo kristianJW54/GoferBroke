@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 )
 
 const (
@@ -78,8 +77,6 @@ func (np *nodePacket) serialize() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	log.Println(header)
 
 	dataBuf := make([]byte, np.msgSize+np.headerSize)
 	copy(dataBuf, header)

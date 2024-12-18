@@ -154,12 +154,12 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
 		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
 
 	} else {
 		client.directionType = RECEIVED
-		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
+		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
 
 		//var testData = []byte{1, 1, 1, 0, 16, 0, 9, 13, 10, 84, 104, 105, 115, 32, 105, 115, 32, 97, 32, 116, 101, 115, 116, 13, 10}
 		//
@@ -187,14 +187,10 @@ func (s *GBServer) connectToSeed() error {
 
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
 
-	fmt.Printf("%s Attempting to connect to seed server: %s\n", s.ServerName, addr)
-
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
-
-	log.Println("connection to seed successful - ", conn.RemoteAddr())
 
 	pay1, err := s.prepareInfoSend()
 	if err != nil {
@@ -203,20 +199,14 @@ func (s *GBServer) connectToSeed() error {
 
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 
-	//client.qProto(pay1, false)
-
-	// Flushing here as we may be earlier than signal setup
-	//client.mu.Lock()
-	//client.flushWriteOutbound()
-	//client.mu.Unlock()
-
 	client.qProtoWithResponse(pay1, false, true)
 
 	// TODO should move to createNodeClient?
 	select {
 	case <-ctx.Done():
 		log.Println("connect to seed cancelled because of context")
-		//s.releaseReqID(seq)
+		return ctx.Err()
+	default:
 	}
 
 	return nil
@@ -329,8 +319,6 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	log.Println("cereal = ", cereal)
 
 	// Acquire sequence ID
 	seq, err := s.acquireReqID()
