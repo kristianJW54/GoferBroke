@@ -128,6 +128,6 @@ func TestInfoSend(t *testing.T) {
 	go gbs.StartServer()
 	//time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-	time.Sleep(1 * time.Second)
+	time.Sleep(7 * time.Second)
 
 }

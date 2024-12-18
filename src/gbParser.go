@@ -8,16 +8,17 @@ import (
 
 const (
 	START = iota
-	COMM
+	VERSION1
 	INFO
+	INITIAL
+	GOSS_SYN
+	GOSS_SYN_ACK
+	GOSS_ACK
+	TEST
 
 	MSG_PAYLOAD
 	MSG_R_END
 	MSG_N_END
-
-	GS
-	GSA
-	ACK
 
 	// Response types
 
@@ -25,8 +26,9 @@ const (
 	ERR_RESP
 )
 
+type parserState int
 type stateMachine struct {
-	state    int
+	state    parserState
 	parsed   int
 	position int
 	drop     int
@@ -66,28 +68,70 @@ func (c *gbClient) parsePacket(packet []byte) {
 		switch c.state {
 		case START:
 
-			switch b {
-			case 1:
-				log.Println(b)
-				c.position = i
-				c.state = COMM
-			}
-
-		case COMM:
+			log.Println("start b = ", b)
 
 			c.command = b
 
 			switch b {
 			case 1:
+				log.Println(b)
+				c.position = i
+				c.state = VERSION1
+			}
+
+		case VERSION1:
+
+			// Now switch on the command types
+			switch b {
+			case 2:
 				// TODO Need to do a forward check for command - this is the version currently
-				//log.Println("switching to info state")
+				log.Println("switching to info state")
 				//c.position = i // Important to reset according to i if we enter a new header to avoid slice error
 				c.state = INFO
+			case 11:
+				log.Println("switching to OK?? im confused! --> ", b)
+				c.state = OK
 			default:
 				log.Println("something wrong with yo state fam")
 			}
 
 		case INFO:
+
+			// Switch on args
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				var arg []byte
+				if c.argBuf != nil {
+					arg = c.argBuf
+					c.argBuf = nil
+				} else {
+					arg = packet[c.position : i-c.drop]
+				}
+				if err := c.processINFO(arg); err != nil {
+					log.Println("error processing info header:", err)
+				}
+
+				c.drop = 0
+				c.position = i + 1
+				//log.Println("switching to message payload state")
+				c.state = MSG_PAYLOAD
+
+				if c.msgBuf == nil {
+					// If no saved buffer exists, assume this packet contains the full payload.
+					// Calculate the position to jump directly to the end of the payload.
+					i = c.position + c.nh.msgLength - 2 // Subtract 2 for CRLF at the end.
+					//log.Println("No saved buffer. Skipping to i:", i)
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case OK:
 			switch b {
 			case '\r':
 				c.drop = 1
@@ -182,6 +226,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 			// TODO Create process message dispatcher
 			c.processMessage(c.msgBuf)
+
+			log.Printf("arg buf = %v", c.argBuf)
 
 			c.argBuf, c.msgBuf = nil, nil
 			c.nh.msgLength, c.nh.headerLength, c.nh.command, c.nh.version = 0, 0, 0, 0

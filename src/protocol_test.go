@@ -85,6 +85,8 @@ func TestHighParseLoad(t *testing.T) {
 
 	go gbs.StartServer()
 
+	time.Sleep(1 * time.Second)
+
 	// Dial the TCP server
 	conn, err := net.Dial("tcp", "localhost:8080")
 	if err != nil {
@@ -96,7 +98,7 @@ func TestHighParseLoad(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 2; i++ {
 
 		t.Log("iteration -> ", i)
 

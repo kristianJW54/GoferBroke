@@ -1,7 +1,7 @@
 package src
 
 type GbConfig struct {
-	SeedServers []Seeds
+	SeedServers []Seeds `gb:"seed"`
 }
 
 type Seeds struct {

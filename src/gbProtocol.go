@@ -23,16 +23,6 @@ const (
 	INITIAL_BUFF_SIZE = 512
 )
 
-// Node Commands
-const (
-	GOSS_SYN uint8 = iota
-	GOSS_SYN_ACK
-	GOSS_ACK
-	TEST
-	INITIAL
-	ERROR // Error message
-)
-
 // Response Codes ??/
 
 //TODO Consider implementing interface with serialisation methods and sending mehtods for packets

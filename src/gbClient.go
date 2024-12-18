@@ -79,6 +79,9 @@ type gbClient struct {
 	cType int
 	// directionType determines if the conn was initiated (dialed by this server) or received (accepted in the accept loop)
 	directionType string
+
+	// TODO Add client options and better handling/separation of client types
+
 	// Node client
 	node
 
@@ -87,6 +90,9 @@ type gbClient struct {
 
 	//Flags --> will tell us what state the client is in (connected, awaiting_syn_ack, etc...)
 	flags clientFlags
+
+	//Responses
+	responseHandler
 
 	//Syncing
 	mu sync.Mutex
@@ -184,6 +190,8 @@ func (c *gbClient) initClient() {
 	//Outbound setup
 	c.outbound.flushSignal = sync.NewCond(&(c.mu))
 
+	c.responseHandler.resp = make(map[int]chan []byte, 10) // Need to align with SeqID pool-size
+
 }
 
 // TODO Think about the locks we may need in this method
@@ -203,6 +211,9 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	defer client.mu.Unlock()
 
 	client.initClient()
+
+	//TODO before starting the loops - handle TLS Handshake if needed
+	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
 	// Track the goroutine for the read loop using startGoRoutine
@@ -330,7 +341,7 @@ func (c *gbClient) readLoop() {
 }
 
 //===================================================================================
-// Write Loop, Queueing and Flushing
+// Write Loop, Queueing, Flushing and Response Handling
 //===================================================================================
 
 //---------------------------
@@ -487,6 +498,9 @@ func (c *gbClient) writeLoop() {
 	}
 }
 
+//--------------------------
+// Queue Proto
+
 // Lock should be held
 func (c *gbClient) qProto(proto []byte, flush bool) {
 	log.Println("queueing...")
@@ -496,6 +510,63 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 	}
 }
 
+//---------------------------
+//Response Handling
+
+type responseHandler struct {
+	resp    map[int]chan []byte
+	timeout time.Duration
+	rm      sync.Mutex
+}
+
+func (c *gbClient) addResponseChannel(seqID int) chan []byte {
+
+	respChan := make(chan []byte, 1)
+
+	log.Printf("adding response channel %d", seqID)
+
+	c.rm.Lock()
+	c.resp[seqID] = respChan
+	c.rm.Unlock()
+
+	return respChan
+}
+
+func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
+
+	respID := proto[2]
+
+	responseChannel := c.addResponseChannel(int(respID))
+
+	if sendNow {
+
+		c.qProto(proto, false)
+		c.mu.Lock()
+		c.flushWriteOutbound()
+		c.mu.Unlock()
+	}
+
+	// Wait for the response with timeout
+	select {
+	case response := <-responseChannel:
+		log.Printf("I got a response WOO!")
+		log.Printf("response = %v", string(response))
+		c.rm.Lock()
+		delete(c.responseHandler.resp, int(respID))
+		c.rm.Unlock()
+		log.Printf("deleting response channel %d", int(respID))
+		log.Printf("returning sequence to the pool")
+		c.srv.releaseReqID(respID)
+	case <-time.After(2 * time.Second):
+		// Clean up the response channel on timeout
+		c.rm.Lock()
+		delete(c.responseHandler.resp, int(respID))
+		c.rm.Unlock()
+		log.Printf("timed out waiting for response channel %d", int(respID))
+	}
+
+}
+
 //===================================================================================
 // Handlers
 //===================================================================================
@@ -503,13 +574,11 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 func (c *gbClient) processINFO(arg []byte) error {
 	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
 
-	//log.Println("printing arg from method")
-	//log.Println(arg)
-
 	if len(arg) >= 4 {
 		c.nh.version = arg[0]
-		c.nh.id = arg[1]
-		c.nh.command = arg[2]
+		c.nh.id = arg[2]
+		c.nh.command = arg[1]
+		log.Printf("arg command = %v", c.nh.command)
 		// Extract the last 4 bytes
 		msgLengthBytes := arg[3:5]
 		log.Printf("message length = %v", msgLengthBytes)
@@ -523,6 +592,8 @@ func (c *gbClient) processINFO(arg []byte) error {
 		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
 	}
 
+	c.argBuf = arg
+
 	return nil
 }
 
@@ -535,16 +606,64 @@ func (c *gbClient) processINFO(arg []byte) error {
 // if node - use switch case for command type
 
 func (c *gbClient) processMessage(message []byte) {
+	log.Printf("arg buf = %v", c.argBuf)
+	if c.cType == NODE {
+		log.Printf("command = %v", c.nh.command)
+		if c.nh.command == INFO {
 
-	tmpC, err := deserialiseDelta(message)
-	if err != nil {
-		log.Printf("deserialiseDelta failed: %v", err)
-	}
-	for key, value := range tmpC.delta {
-		log.Printf("length of key value = %v", len(value.keyValues))
-		log.Printf("key = %s", key)
-		for k, v := range value.keyValues {
-			log.Printf("value[%v]: %v", k, v)
+			log.Printf("arg 1 %v", c.argBuf[0])
+			tmpC, err := deserialiseDelta(message)
+			if err != nil {
+				log.Printf("deserialiseDelta failed: %v", err)
+			}
+			for key, value := range tmpC.delta {
+				log.Printf("length of key value = %v", len(value.keyValues))
+				log.Printf("key = %s", key)
+				for k, v := range value.keyValues {
+					log.Printf("value[%v]: %v", k, v)
+				}
+			}
+
+			cereal := []byte("OK +\r\n")
+
+			// Construct header
+			header := constructNodeHeader(1, OK, 1, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+			// Create packet
+			packet := &nodePacket{
+				header,
+				cereal,
+			}
+			pay1, _ := packet.serialize()
+
+			c.qProto(pay1, true)
+
 		}
+
+		if c.nh.command == OK {
+
+			log.Printf("returned message = %s", string(message))
+			c.rm.Lock()
+			responseChan, exists := c.resp[int(c.argBuf[2])]
+			c.rm.Unlock()
+
+			if exists {
+
+				responseChan <- message
+
+				c.mu.Lock()
+				delete(c.resp, int(c.argBuf[0]))
+				c.mu.Unlock()
+
+			} else {
+				log.Printf("no response channel found")
+			}
+
+		}
+
 	}
 }
+
+//---------------------------
+// Node Handlers
+
+func (c *gbClient) dispatchNodeCommands() {}

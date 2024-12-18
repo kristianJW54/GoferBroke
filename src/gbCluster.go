@@ -203,12 +203,14 @@ func (s *GBServer) connectToSeed() error {
 
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 
-	client.qProto(pay1, false)
+	//client.qProto(pay1, false)
 
 	// Flushing here as we may be earlier than signal setup
-	client.mu.Lock()
-	client.flushWriteOutbound()
-	client.mu.Unlock()
+	//client.mu.Lock()
+	//client.flushWriteOutbound()
+	//client.mu.Unlock()
+
+	client.qProtoWithResponse(pay1, false, true)
 
 	// TODO should move to createNodeClient?
 	select {
@@ -337,7 +339,7 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	}
 
 	// Construct header
-	header := constructNodeHeader(1, 1, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+	header := constructNodeHeader(1, INFO, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
 	// Create packet
 	packet := &nodePacket{
 		header,

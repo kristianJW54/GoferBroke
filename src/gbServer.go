@@ -97,6 +97,8 @@ type GBServer struct {
 	gbConfig *GbConfig
 	seedAddr []*net.TCPAddr
 
+	// Options - for config - tls etc...
+
 	//Server Info for gossip
 	selfInfo   *Participant
 	clusterMap ClusterMap //Need pointer?
@@ -220,6 +222,10 @@ func (s *GBServer) StartServer() {
 	s.grTracking.trackingFlag.Store(true)
 
 	//s.serverLock.Unlock()
+
+	//---------------- OCSP Stapling ----------------//
+	//TODO Need to start OCSP monitoring
+	//TODO Look into when and how to staple the OCSP to the Cert
 
 	//---------------- Node Accept Loop ----------------//
 	s.AcceptNodeLoop("node-test")
@@ -511,7 +517,7 @@ func (s *GBServer) acquireReqID() (uint8, error) {
 }
 
 func (s *GBServer) releaseReqID(id uint8) {
-	//log.Printf("Releasing sequence ID %d back to the pool", id)
+	log.Printf("Releasing sequence ID %d back to the pool", id)
 	s.nodeReqPool.reqPool.Put(id)
 }
 
