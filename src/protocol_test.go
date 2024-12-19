@@ -205,7 +205,7 @@ func sendTwoDataPackets() ([]byte, []byte) {
 		"I rode on the back decks of a blinker and watched C-beams glitter in the dark near the Tannhäuser Gate. " +
 		"All those moments... they'll be gone\r\n"
 
-	nh1 := constructNodeHeader(1, 1, uint8(2), uint16(len(data)), NODE_HEADER_SIZE_V1)
+	nh1 := constructNodeHeader(1, 2, uint8(2), uint16(len(data)), NODE_HEADER_SIZE_V1)
 	packet := &nodePacket{
 		nh1,
 		[]byte(data),
@@ -215,7 +215,7 @@ func sendTwoDataPackets() ([]byte, []byte) {
 		fmt.Printf("Failed to serialize packet: %v\n", err)
 	}
 
-	nh2 := constructNodeHeader(1, 1, uint8(2), uint16(len(data2)), NODE_HEADER_SIZE_V1)
+	nh2 := constructNodeHeader(1, 2, uint8(2), uint16(len(data2)), NODE_HEADER_SIZE_V1)
 	packet2 := &nodePacket{
 		nh2,
 		[]byte(data2),

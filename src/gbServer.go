@@ -223,15 +223,11 @@ func (s *GBServer) StartServer() {
 
 	//s.serverLock.Unlock()
 
-	//---------------- OCSP Stapling ----------------//
-	//TODO Need to start OCSP monitoring
-	//TODO Look into when and how to staple the OCSP to the Cert
-
 	//---------------- Node Accept Loop ----------------//
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
-	//s.AcceptLoop("client-test")
+	s.AcceptLoop("client-test")
 
 	//TODO add monitoring routines to keep internal state up to date
 	// CPU Metrics using an aggregate or significant change metric - how to signal?

@@ -19,6 +19,8 @@ const (
 	TEST
 
 	// Client Commands
+	DELTA
+	DELTA_KEY
 
 	// Message End
 
@@ -74,17 +76,74 @@ func (c *gbClient) parsePacket(packet []byte) {
 		switch c.state {
 		case START:
 
+			log.Println("start b = ", string(b))
+
 			c.command = b
 
 			switch b {
 			case 1:
 				c.position = i
 				c.state = VERSION1
+			case 'V':
+				log.Println("switching to delta")
+				c.position = i
+				c.state = DELTA
+
+			}
+
+		case DELTA:
+			switch b {
+
+			case '\r':
+				c.drop = 1
+			case '\n':
+				var arg []byte
+				if c.argBuf != nil {
+					arg = c.argBuf
+					c.argBuf = nil
+				} else {
+					arg = packet[c.position : i-c.drop]
+				}
+				if err := c.processDeltaHdr(arg); err != nil {
+					log.Println("error processing info header:", err)
+				}
+
+				c.drop = 0
+				c.position = i + 1
+				//log.Println("switching to message payload state")
+				c.state = MSG_PAYLOAD
+
+				if c.msgBuf == nil {
+					// If no saved buffer exists, assume this packet contains the full payload.
+					// Calculate the position to jump directly to the end of the payload.
+					i = c.position + c.nh.msgLength - 2 // Subtract 2 for CRLF at the end.
+					//log.Println("No saved buffer. Skipping to i:", i)
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+		case DELTA_KEY:
+			switch b {
+			case ' ':
+				// Process the delta key for the client (add it??)
+				key := string(packet[c.position:i])
+				log.Printf("delta key: %s", key)
+				// Check if the next 8 bytes are the version stamp
+				log.Printf("i = %v", i)
+				version := i + 11
+				log.Printf("version: %s", string(packet[version+1]))
+				i = i + 11
+				c.state = MSG_PAYLOAD
+				// Ensure the next 8 bytes are a valid version stamp (if necessary)
+
 			}
 
 		case VERSION1:
 
-			// Now switch on the command types
+			// Now switch on the command types for clients it could also be (V:)
 			switch b {
 			case INFO:
 				c.state = INFO
@@ -165,10 +224,10 @@ func (c *gbClient) parsePacket(packet []byte) {
 			}
 
 		case MSG_PAYLOAD:
-
+			log.Println("we're here! I = ", i)
 			if c.msgBuf != nil {
 				left := c.nh.msgLength - len(c.msgBuf)
-				//log.Println("what is left to copy --> ", left)
+				log.Println("what is left to copy --> ", left)
 				avail := len(c.msgBuf) - i
 				if avail < left {
 					left = avail
@@ -182,6 +241,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 					i = (i + left) - 1
 				} else {
 					c.msgBuf = append(c.msgBuf, b)
+					log.Printf("message buf = %v", c.msgBuf)
 				}
 
 				if len(c.msgBuf) >= c.nh.msgLength {
@@ -190,7 +250,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 					c.state = MSG_R_END
 				}
 			} else if i-c.position+1 >= c.nh.msgLength {
-				//log.Println("switching to r_end 2")
+				log.Println("switching to r_end 2")
 				i = i - 2
 				c.state = MSG_R_END
 			}
@@ -200,7 +260,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 			//log.Println(c.msgBuf)
 			if b != '\r' {
 				log.Println("end of message error")
-				//log.Println("printing b ", b)
+				log.Println("printing b ", string(b))
+				log.Printf("printing next b %s", string(packet[i+2]))
 				return
 			} else {
 				//log.Println("printing b ", b)
@@ -208,7 +269,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			if c.msgBuf != nil {
 				c.msgBuf = append(c.msgBuf, b)
 			}
-			//log.Println("switching to n_end")
+			log.Println("switching to n_end")
 			c.state = MSG_N_END
 		case MSG_N_END:
 			if b != '\n' {
@@ -220,7 +281,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 			//log.Println("n_end")
-			//log.Println(c.msgBuf)
+			log.Println(c.msgBuf)
 			log.Println("final message --> ", string(c.msgBuf))
 
 			// TODO Create process message dispatcher
