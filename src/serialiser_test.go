@@ -72,18 +72,18 @@ func TestSerialiseDelta(t *testing.T) {
 	testClusterDelta := &clusterDelta{
 		delta: map[string]*tmpParticipant{
 			nodeAName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.1"),
-					CPU_USAGE_V: createDelta(0, timeCode, "45.3%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.1"),
+					_CPU_USAGE_: createDelta(0, timeCode, "45.3%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			nodeBName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.2"),
-					CPU_USAGE_V: createDelta(0, timeCode, "55.7%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.2"),
+					_CPU_USAGE_: createDelta(0, timeCode, "55.7%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 		},
 	}
@@ -95,7 +95,7 @@ func TestSerialiseDelta(t *testing.T) {
 	for key, value := range testClusterDelta.delta {
 		t.Logf("name = %s", key)
 		for k, value := range value.keyValues {
-			t.Logf("(key-%d)(%d)(%s)", k, value.valueType, value.value)
+			t.Logf("(key-%s)(%d)(%s)", k, value.valueType, value.value)
 		}
 	}
 
@@ -116,7 +116,7 @@ func TestSerialiseDelta(t *testing.T) {
 	for key, value := range cd.delta {
 		t.Logf("name = %s", key)
 		for k, value := range value.keyValues {
-			t.Logf("key-%d(%d)(%s)", k, value.valueType, value.value)
+			t.Logf("key-%s(%d)(%s)", k, value.valueType, value.value)
 		}
 	}
 
@@ -141,83 +141,83 @@ func BenchmarkSerialiseDelta(b *testing.B) {
 		delta: map[string]*tmpParticipant{
 			// Participant 1
 			nodeAName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.1"),
-					CPU_USAGE_V: createDelta(0, timeCode, "45.3%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.1"),
+					_CPU_USAGE_: createDelta(0, timeCode, "45.3%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 2
 			nodeBName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.2"),
-					CPU_USAGE_V: createDelta(0, timeCode, "55.7%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.2"),
+					_CPU_USAGE_: createDelta(0, timeCode, "55.7%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 3
 			nodeCName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.3"),
-					CPU_USAGE_V: createDelta(0, timeCode, "65.2%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.3"),
+					_CPU_USAGE_: createDelta(0, timeCode, "65.2%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 4
 			nodeDName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.4"),
-					CPU_USAGE_V: createDelta(0, timeCode, "72.8%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.4"),
+					_CPU_USAGE_: createDelta(0, timeCode, "72.8%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 5
 			nodeEName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.5"),
-					CPU_USAGE_V: createDelta(0, timeCode, "30.9%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.5"),
+					_CPU_USAGE_: createDelta(0, timeCode, "30.9%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 6
 			nodeFName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.6"),
-					CPU_USAGE_V: createDelta(0, timeCode, "62.4%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.6"),
+					_CPU_USAGE_: createDelta(0, timeCode, "62.4%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 7
 			nodeGName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.7"),
-					CPU_USAGE_V: createDelta(0, timeCode, "80.5%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.7"),
+					_CPU_USAGE_: createDelta(0, timeCode, "80.5%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 8
 			nodeHName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.8"),
-					CPU_USAGE_V: createDelta(0, timeCode, "90.6%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.8"),
+					_CPU_USAGE_: createDelta(0, timeCode, "90.6%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 9
 			nodeIName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.9"),
-					CPU_USAGE_V: createDelta(0, timeCode, "50.7%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.9"),
+					_CPU_USAGE_: createDelta(0, timeCode, "50.7%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 			// Participant 10
 			nodeJName: {
-				keyValues: map[int]*Delta{
-					ADDR_V:      createDelta(0, timeCode, "192.168.0.10"),
-					CPU_USAGE_V: createDelta(0, timeCode, "33.3%"),
+				keyValues: map[string]*Delta{
+					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.10"),
+					_CPU_USAGE_: createDelta(0, timeCode, "33.3%"),
 				},
-				vi: []int{ADDR_V, CPU_USAGE_V}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
 			},
 		},
 	}

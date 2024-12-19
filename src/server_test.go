@@ -37,8 +37,8 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[1])
-	log.Printf("p name = %v | values %v", gbs2.selfInfo.name, gbs.selfInfo.keyValues[1])
+	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
+	log.Printf("p name = %v | values %v", gbs2.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
 
 	// Current break is here
 
@@ -84,7 +84,7 @@ func TestServerRunningOneNodes(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	t.Logf("self name: %s", gbs.selfInfo.name)
 	for k, value := range gbs.selfInfo.keyValues {
-		t.Logf("key: %d value: %d", k, value)
+		t.Logf("key: %s value: %d", k, value)
 	}
 
 	time.Sleep(3 * time.Second)

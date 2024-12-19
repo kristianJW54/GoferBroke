@@ -25,6 +25,16 @@ const (
 	ROUTES_V
 )
 
+// Internal Delta Keys [NOT TO BE USED EXTERNALLY]
+const (
+	_ADDRESS_      = "ADDR"
+	_CPU_USAGE_    = "CPU_USAGE"
+	_MEMORY_USAGE  = "MEMORY_USAGE"
+	_NODE_CONNS_   = "NODE_CONNS"
+	_CLIENT_CONNS_ = "CLIENT_CONNS"
+	_HEARTBEAT_    = "HEARTBEAT"
+)
+
 type Seed struct {
 	seedAddr *net.TCPAddr
 }
@@ -40,8 +50,8 @@ type Delta struct {
 
 type Participant struct {
 	name       string // Possibly can remove
-	keyValues  map[int]*Delta
-	valueIndex []int
+	keyValues  map[string]*Delta
+	valueIndex []string
 	maxVersion int64
 	paValue    float64 // Not to be gossiped
 	pm         sync.RWMutex
@@ -223,36 +233,36 @@ func initSelfParticipant(name, addr string) *Participant {
 
 	p := &Participant{
 		name:       name,
-		keyValues:  make(map[int]*Delta),
-		valueIndex: make([]int, 3),
+		keyValues:  make(map[string]*Delta),
+		valueIndex: make([]string, 3),
 		maxVersion: t,
 	}
 
-	p.keyValues[ADDR_V] = &Delta{
+	p.keyValues[_ADDRESS_] = &Delta{
 		valueType: STRING_DV,
 		version:   t,
 		value:     []byte(addr),
 	}
-	p.valueIndex[0] = ADDR_V
+	p.valueIndex[0] = _ADDRESS_
 
 	// Set the numNodeConnections delta
 	numNodeConnBytes := make([]byte, 1)
 	numNodeConnBytes[0] = 0
-	p.keyValues[NUM_NODE_CONN_V] = &Delta{
+	p.keyValues[_NODE_CONNS_] = &Delta{
 		valueType: INT_DV,
 		version:   t,
 		value:     numNodeConnBytes,
 	}
-	p.valueIndex[1] = NUM_NODE_CONN_V
+	p.valueIndex[1] = _NODE_CONNS_
 
 	heart := make([]byte, 8)
 	binary.BigEndian.PutUint64(heart, uint64(t))
-	p.keyValues[HEARTBEAT_V] = &Delta{
+	p.keyValues[_HEARTBEAT_] = &Delta{
 		valueType: HEARTBEAT_V,
 		version:   t,
 		value:     heart,
 	}
-	p.valueIndex[2] = HEARTBEAT_V
+	p.valueIndex[2] = _HEARTBEAT_
 
 	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
 
@@ -305,7 +315,7 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	// Capture the indexes
 	pi := s.clusterMap.partIndex
 
-	tmpP := &tmpParticipant{keyValues: make(map[int]*Delta, len(participant.keyValues)), vi: participant.valueIndex}
+	tmpP := &tmpParticipant{keyValues: make(map[string]*Delta, len(participant.keyValues)), vi: participant.valueIndex}
 
 	tmpC.delta[s.ServerName] = tmpP
 

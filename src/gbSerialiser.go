@@ -95,8 +95,8 @@ type clusterDigest struct {
 //-------------------
 
 type tmpParticipant struct {
-	keyValues map[int]*Delta
-	vi        []int
+	keyValues map[string]*Delta
+	vi        []string
 }
 
 type clusterDelta struct {
@@ -120,8 +120,9 @@ func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
 		length += 1 + len(idx) + 2 // 1 byte for name length + name length + size of delta key-values
 
 		for _, value := range participant.vi {
+			key := value
 			valueData := participant.keyValues[value]
-			length += 14 + len(valueData.value) // 1 byte for key + 8 bytes for version + 1 byte for valueType + 4 bytes for value length
+			length += 14 + len(key) + len(valueData.value) // 1 byte for key length + key length + 8 bytes for version + 1 byte for valueType + 4 bytes for value length
 		}
 	}
 
@@ -157,10 +158,13 @@ func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
 		for _, value := range participant.vi {
 			// Retrieve the key-value pair from the participant's keyValues map
 			valueData := participant.keyValues[value]
+			v := value
 
-			// Write key (in this case, it's an int, so it's safe to use uint8)
-			deltaBuf[offset] = uint8(value)
+			// Write key (which is similar to how we handle name)
+			deltaBuf[offset] = uint8(len(v))
 			offset++
+			copy(deltaBuf[offset:], v)
+			offset += len(v)
 
 			// Write version (8 bytes, uint64)
 			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(valueData.version))
@@ -192,6 +196,7 @@ func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
 	return deltaBuf, nil
 }
 
+// TODO Better error handling to pass up
 func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 	if delta[0] != byte(DELTA_TYPE) {
@@ -231,7 +236,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 		deltaSize := binary.BigEndian.Uint16(delta[offset : offset+2])
 
 		cDelta.delta[name] = &tmpParticipant{
-			make(map[int]*Delta, deltaSize),
+			make(map[string]*Delta, deltaSize),
 			nil,
 		}
 
@@ -239,9 +244,15 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 		for j := 0; j < int(deltaSize); j++ {
 
-			key := int(delta[offset])
+			keyLen := int(delta[offset])
+
+			start := offset + 1
+			end := start + keyLen
+
+			key := string(delta[start:end])
 
 			offset += 1
+			offset += keyLen
 
 			d := cDelta.delta[name]
 			d.keyValues[key] = &Delta{}
