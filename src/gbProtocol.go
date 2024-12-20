@@ -28,8 +28,11 @@ const (
 // which packets can implement, then we can pass an interface to handle connection methods on server...?
 
 //=====================================================================
-// Packet constructor and serialisation
+// Node Protocol
 //=====================================================================
+
+//------------------------
+//Packet constructor and serialisation
 
 type nodePacketHeader struct {
 	version    uint8
@@ -85,3 +88,9 @@ func (np *nodePacket) serialize() ([]byte, error) {
 }
 
 // We only de-serialize when we need to produce a readable output
+
+//=====================================================================
+// Client Protocol
+//=====================================================================
+
+// Current Client Header format [V 0 0] 1st Byte = Command followed by 2 Bytes for message length

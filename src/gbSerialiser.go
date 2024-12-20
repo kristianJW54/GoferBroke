@@ -72,13 +72,13 @@ func cerealPoolPut(b []byte) {
 	case CerealPoolSmall:
 		//log.Printf("returning small buffer to pool - %v", len(b))
 		b := (*[CerealPoolSmall]byte)(b[0:CerealPoolSmall])
-		nodePoolSmall.Put(b)
+		nbPoolSmall.Put(b)
 	case CerealPoolMedium:
 		b := (*[CerealPoolMedium]byte)(b[0:CerealPoolMedium])
-		nodePoolMedium.Put(b)
+		nbPoolMedium.Put(b)
 	case CerealPoolLarge:
 		b := (*[CerealPoolLarge]byte)(b[0:CerealPoolLarge])
-		nodePoolLarge.Put(b)
+		nbPoolLarge.Put(b)
 	default:
 
 	}

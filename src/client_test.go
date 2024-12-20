@@ -43,7 +43,7 @@ func TestClientDelta(t *testing.T) {
 
 	// Format the message for a CACHE_UPDATE delta
 	key := "CACHE_UPDATE"
-	value := "user123:password\r\n"
+	value := "user123:password:0000\r\n"
 	timestamp := "1697785200"
 
 	deltaMessage := fmt.Sprintf("V: %s %s %s", key, timestamp, value)
@@ -63,10 +63,46 @@ func TestClientDelta(t *testing.T) {
 		return
 	}
 
+	// Format the message for a CACHE_UPDATE delta
+	key2 := "CACHE_UPDATE"
+	value2 := "user456:password:1111\r\n"
+	timestamp2 := "1697785200"
+
+	deltaMessage2 := fmt.Sprintf("V: %s %s %s", key2, timestamp2, value2)
+
+	hdr2 := make([]byte, 4+1)
+	hdr2[0] = deltaMessage2[0]
+	binary.BigEndian.PutUint16(hdr2[1:3], uint16(len(deltaMessage2)))
+	copy(hdr2[3:], deltaMessage2[3:]) // Copy the deltaMessage starting from position 3
+	copy(hdr2[len(hdr2)-2:], "\r\n")  // Adding CLRF at the end
+
+	formattedMessage2 := append(hdr, []byte(deltaMessage2)...)
+
+	// Send the message over the connection
+	_, err = conn.Write(formattedMessage2) // Ensure to add the newline for your parser to detect the end
+	if err != nil {
+		fmt.Printf("Failed to send message: %v\n", err)
+		return
+	}
+
 	log.Printf("Sent message: %s", formattedMessage)
+	log.Printf("Sent message: %s", formattedMessage2)
 
 	log.Printf("Connected to server %s", conn.RemoteAddr())
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
+
+	srvDelta := gbs.selfInfo
+	for _, value := range srvDelta.valueIndex {
+		log.Printf("key = %s value = %s", value, srvDelta.keyValues[value].value)
+	}
+
+	//Check the cluster map is the same
+	//clusterD := gbs.clusterMap
+	//for _, value := range clusterD.participants[gbs.ServerName].valueIndex {
+	//	log.Printf("key = %s value = %s", value, clusterD.participants[gbs.ServerName].keyValues[value].value)
+	//}
+
+	time.Sleep(2 * time.Second)
 
 }

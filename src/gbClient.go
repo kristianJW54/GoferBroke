@@ -74,7 +74,7 @@ type gbClient struct {
 	// Inbound is a read cache for wire reads
 	inbound readCache
 	// Outbound is an outbound struct for queueing to write loop and flushing
-	outbound outboundNodeQueue
+	outbound outboundQueue
 
 	// cType determines if the conn is a node or client
 	cType int
@@ -111,11 +111,13 @@ type readCache struct {
 }
 
 // TODO Should the outbound be a general all purpose connection outbound?
+
+// TODO Should I have an inbound struct which has a pool and deals with processing inbound reads
 //===================================================================================
 // Outbound Node Write - For Per connection [Node] During Gossip Exchange
 //===================================================================================
 
-type outboundNodeQueue struct {
+type outboundQueue struct {
 	bytesInQ        int64
 	writeBuffer     net.Buffers
 	copyWriteBuffer net.Buffers
@@ -125,54 +127,54 @@ type outboundNodeQueue struct {
 }
 
 const (
-	NodeWritePoolSmall  = 512
-	NodeWritePoolMedium = 2048
-	NodeWritePoolLarge  = 4096
+	nbWritePoolSmall  = 512
+	nbWritePoolMedium = 2048
+	nbWritePoolLarge  = 4096
 )
 
-var nodePoolSmall = &sync.Pool{
+var nbPoolSmall = &sync.Pool{
 	New: func() any {
-		b := [NodeWritePoolSmall]byte{}
+		b := [nbWritePoolSmall]byte{}
 		return &b
 	},
 }
 
-var nodePoolMedium = &sync.Pool{
+var nbPoolMedium = &sync.Pool{
 	New: func() any {
-		b := [NodeWritePoolMedium]byte{}
+		b := [nbWritePoolMedium]byte{}
 		return &b
 	},
 }
 
-var nodePoolLarge = &sync.Pool{
+var nbPoolLarge = &sync.Pool{
 	New: func() any {
-		b := [NodeWritePoolLarge]byte{}
+		b := [nbWritePoolLarge]byte{}
 		return &b
 	},
 }
 
-func nodePoolGet(size int) []byte {
+func nbPoolGet(size int) []byte {
 	switch {
-	case size <= NodeWritePoolSmall:
-		return nodePoolSmall.Get().(*[NodeWritePoolSmall]byte)[:0]
-	case size <= NodeWritePoolMedium:
-		return nodePoolMedium.Get().(*[NodeWritePoolMedium]byte)[:0]
+	case size <= nbWritePoolSmall:
+		return nbPoolSmall.Get().(*[nbWritePoolSmall]byte)[:0]
+	case size <= nbWritePoolMedium:
+		return nbPoolMedium.Get().(*[nbWritePoolMedium]byte)[:0]
 	default:
-		return nodePoolLarge.Get().(*[NodeWritePoolLarge]byte)[:0]
+		return nbPoolLarge.Get().(*[nbWritePoolLarge]byte)[:0]
 	}
 }
 
-func nodePoolPut(b []byte) {
+func nbPoolPut(b []byte) {
 	switch cap(b) {
-	case NodeWritePoolSmall:
-		b := (*[NodeWritePoolSmall]byte)(b[0:NodeWritePoolSmall])
-		nodePoolSmall.Put(b)
-	case NodeWritePoolMedium:
-		b := (*[NodeWritePoolMedium]byte)(b[0:NodeWritePoolMedium])
-		nodePoolMedium.Put(b)
-	case NodeWritePoolLarge:
-		b := (*[NodeWritePoolLarge]byte)(b[0:NodeWritePoolLarge])
-		nodePoolLarge.Put(b)
+	case nbWritePoolSmall:
+		b := (*[nbWritePoolSmall]byte)(b[0:nbWritePoolSmall])
+		nbPoolSmall.Put(b)
+	case nbWritePoolMedium:
+		b := (*[nbWritePoolMedium]byte)(b[0:nbWritePoolMedium])
+		nbPoolMedium.Put(b)
+	case nbWritePoolLarge:
+		b := (*[nbWritePoolLarge]byte)(b[0:nbWritePoolLarge])
+		nbPoolLarge.Put(b)
 	default:
 
 	}
@@ -368,7 +370,7 @@ func (c *gbClient) queueOutbound(data []byte) {
 	}
 
 	for len(toBuffer) > 0 {
-		newPool := nodePoolGet(len(toBuffer))
+		newPool := nbPoolGet(len(toBuffer))
 		n := copy(newPool[:cap(newPool)], toBuffer)
 		c.outbound.writeBuffer = append(c.outbound.writeBuffer, newPool[:n])
 		toBuffer = toBuffer[n:]
@@ -434,7 +436,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 	c.mu.Lock()
 
 	for i := 0; i < len(orig)-len(c.outbound.copyWriteBuffer); i++ {
-		nodePoolPut(orig[i])
+		nbPoolPut(orig[i])
 	}
 
 	c.outbound.copyWriteBuffer = append(start[:0], c.outbound.copyWriteBuffer...)
@@ -578,9 +580,9 @@ func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
 
 func (c *gbClient) processDeltaHdr(arg []byte) error {
 
-	c.nh.command = arg[0]
+	c.ph.command = arg[0]
 	msgLengthBytes := arg[1:3]
-	c.nh.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
+	c.ph.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
 	return nil
 
@@ -600,4 +602,52 @@ func (c *gbClient) processMessage(message []byte) {
 		c.dispatchNodeCommands(message)
 
 	}
+
+	if c.cType == CLIENT {
+
+		c.dispatchClientCommands(message)
+
+	}
+}
+
+//===================================================================================
+// Client Commands
+//===================================================================================
+
+func (c *gbClient) dispatchClientCommands(message []byte) {
+
+	// Need a switch on commands
+
+	log.Printf("command received: %v", string(c.ph.command))
+	// Method for handling delta
+	err := c.processDelta(message)
+	if err != nil {
+		log.Printf("error processing delta: %v", err)
+	}
+
+}
+
+// Delta handling method which will hand off to server to process in a go-routine
+func (c *gbClient) processDelta(message []byte) error {
+
+	srv := c.srv
+	log.Printf("%s processing command", srv.ServerName)
+
+	// Will need to copy message buf and msg length to avoid race conditions with the parser setting to nil
+	// TODO Consider more efficient way of reducing allocations - maybe another pool of buffers? for inbound?
+	// TODO Do testing to see if we need to copy here
+	//msg := make([]byte, c.ph.msgLength)
+	//copy(msg, message)
+	msgLen := c.ph.msgLength
+
+	// Can use server go-routine tracker ?? Or go func() to return an error
+	go func() {
+		_, err := srv.parseClientDelta(message, msgLen)
+		if err != nil {
+			log.Printf("error parsing client delta message: %v", err)
+		}
+	}()
+
+	return nil
+
 }

@@ -6,6 +6,9 @@ import (
 
 // Thank the lord for NATS for being my spirit guide on this packet parsing journey - their scriptures are profound
 
+//TODO Think about client commands
+// Eg - [V:]=Delta [RV:]=GetDelta
+
 const (
 	START = iota
 	VERSION1
@@ -43,7 +46,7 @@ type stateMachine struct {
 	command  byte
 	argBuf   []byte
 	msgBuf   []byte
-	nh       nodeHeader
+	ph       parseHeader
 
 	scratch [4096]byte
 
@@ -51,8 +54,8 @@ type stateMachine struct {
 	rounds int
 }
 
-// nodeHeader is used by parsing handlers when parsing argBuf to populate and hold the node header
-type nodeHeader struct {
+// parseHeader is used by parsing handlers when parsing argBuf to populate and hold the node header
+type parseHeader struct {
 	version      uint8
 	command      uint8
 	id           uint8
@@ -116,7 +119,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				if c.msgBuf == nil {
 					// If no saved buffer exists, assume this packet contains the full payload.
 					// Calculate the position to jump directly to the end of the payload.
-					i = c.position + c.nh.msgLength - 2 // Subtract 2 for CRLF at the end.
+					i = c.position + c.ph.msgLength - 2 // Subtract 2 for CRLF at the end.
 					//log.Println("No saved buffer. Skipping to i:", i)
 				}
 
@@ -179,7 +182,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				if c.msgBuf == nil {
 					// If no saved buffer exists, assume this packet contains the full payload.
 					// Calculate the position to jump directly to the end of the payload.
-					i = c.position + c.nh.msgLength - 2 // Subtract 2 for CRLF at the end.
+					i = c.position + c.ph.msgLength - 2 // Subtract 2 for CRLF at the end.
 					//log.Println("No saved buffer. Skipping to i:", i)
 				}
 
@@ -213,7 +216,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				if c.msgBuf == nil {
 					// If no saved buffer exists, assume this packet contains the full payload.
 					// Calculate the position to jump directly to the end of the payload.
-					i = c.position + c.nh.msgLength - 2 // Subtract 2 for CRLF at the end.
+					i = c.position + c.ph.msgLength - 2 // Subtract 2 for CRLF at the end.
 					//log.Println("No saved buffer. Skipping to i:", i)
 				}
 
@@ -226,7 +229,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 		case MSG_PAYLOAD:
 			log.Println("we're here! I = ", i)
 			if c.msgBuf != nil {
-				left := c.nh.msgLength - len(c.msgBuf)
+				left := c.ph.msgLength - len(c.msgBuf)
 				log.Println("what is left to copy --> ", left)
 				avail := len(c.msgBuf) - i
 				if avail < left {
@@ -244,12 +247,12 @@ func (c *gbClient) parsePacket(packet []byte) {
 					log.Printf("message buf = %v", c.msgBuf)
 				}
 
-				if len(c.msgBuf) >= c.nh.msgLength {
+				if len(c.msgBuf) >= c.ph.msgLength {
 					//log.Println("switching to r_end 1")
 					i = i - 2
 					c.state = MSG_R_END
 				}
-			} else if i-c.position+1 >= c.nh.msgLength {
+			} else if i-c.position+1 >= c.ph.msgLength {
 				log.Println("switching to r_end 2")
 				i = i - 2
 				c.state = MSG_R_END
@@ -281,14 +284,14 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 			//log.Println("n_end")
-			log.Println(c.msgBuf)
+			//log.Println(c.msgBuf)
 			log.Println("final message --> ", string(c.msgBuf))
 
 			// TODO Create process message dispatcher
 			c.processMessage(c.msgBuf)
 
 			c.argBuf, c.msgBuf = nil, nil
-			c.nh.msgLength, c.nh.headerLength, c.nh.command, c.nh.version = 0, 0, 0, 0
+			c.ph.msgLength, c.ph.headerLength, c.ph.command, c.ph.version = 0, 0, 0, 0
 			c.state = START
 			c.position = i + 1
 			c.drop = 0
@@ -301,14 +304,14 @@ func (c *gbClient) parsePacket(packet []byte) {
 	//log.Println("state = ", c.state)
 	if c.state == MSG_PAYLOAD || c.state == MSG_R_END && c.msgBuf == nil {
 
-		if c.nh.msgLength > cap(c.scratch)-len(c.argBuf) {
+		if c.ph.msgLength > cap(c.scratch)-len(c.argBuf) {
 			rem := len(packet[c.position:])
-			if rem > c.nh.msgLength+2 {
+			if rem > c.ph.msgLength+2 {
 				log.Println("cap error")
 				return
 			}
 
-			c.msgBuf = make([]byte, rem, c.nh.msgLength+2)
+			c.msgBuf = make([]byte, rem, c.ph.msgLength+2)
 			copy(c.msgBuf, packet[c.position:])
 		} else {
 			c.msgBuf = c.scratch[len(c.argBuf):len(c.argBuf)]
