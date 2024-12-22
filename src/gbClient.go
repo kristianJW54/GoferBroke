@@ -83,7 +83,7 @@ type gbClient struct {
 
 	// TODO Add client options and better handling/separation of client types
 
-	// Node client
+	// Node client - extra node specific details
 	node
 
 	//Parsing + State
@@ -213,6 +213,13 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 	client.initClient()
 
+	//TODO:
+	// At the moment - tmpClientStore is NEEDED in order to effectively close clients on server shutdown
+	// This is important for fault detection as when a node/client goes down we won't know to close the connection unless
+	// we detect it or us as a server shuts down
+	//We also only get a read error once we close the connection - so we need to handle our connections in a robust way
+	s.tmpClientStore[conn.RemoteAddr().String()] = client
+
 	//TODO before starting the loops - handle TLS Handshake if needed
 	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
 
@@ -247,6 +254,8 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 //---------------------------
 //Read Loop
 
+// TODO Need to add more robust connection handling - including closures and reconnects
+
 func (c *gbClient) readLoop() {
 
 	c.mu.Lock()
@@ -277,8 +286,6 @@ func (c *gbClient) readLoop() {
 
 	for {
 
-		//c.cLock.Lock()
-
 		n, err := reader.Read(buff)
 		if err != nil {
 			if err == io.EOF {
@@ -288,6 +295,8 @@ func (c *gbClient) readLoop() {
 			log.Printf("read error: %s", err)
 			return
 		}
+
+		c.mu.Lock()
 
 		// Check if we are utilizing more than half the buffer capacity - if not we may need to shrink
 		if n <= cap(buff)/2 {
@@ -329,6 +338,8 @@ func (c *gbClient) readLoop() {
 		} else if c.cType == NODE {
 			c.parsePacket(buff[:n])
 		}
+
+		c.mu.Unlock()
 
 		//log.Printf("bytes read --> %d", n)
 		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
@@ -457,7 +468,34 @@ func (c *gbClient) flushWriteOutbound() bool {
 //TODO sync.Cond requires that the associated lock be held when calling Wait and Signal.
 // releases the lock temporarily while waiting and reacquires it before returning.
 
-// TODO Need to add context control and errors to write loop
+// To exit out of the wait loop gracefully with context - we need to wait on the context as a condition and once cancelled
+// Broadcast will be called to signal all waiting go-routines to exit once the condition of context cancellation has been
+// met
+// https://pkg.go.dev/context#example-AfterFunc-Cond
+
+func waitOnCond(ctx context.Context, cond *sync.Cond, conditionMet func() bool) error {
+
+	stopCondition := context.AfterFunc(ctx, func() {
+
+		cond.L.Lock()
+		defer cond.L.Unlock()
+
+		cond.Broadcast()
+
+	})
+
+	defer stopCondition()
+
+	for !conditionMet() {
+		cond.Wait()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+
+	return nil
+
+}
 
 func (c *gbClient) writeLoop() {
 
@@ -469,12 +507,14 @@ func (c *gbClient) writeLoop() {
 
 	for {
 		c.mu.Lock()
-
 		if waitOk {
-			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
-			// Can I add a broadcast here instead
-			c.outbound.flushSignal.Wait()
-			log.Println("Flush signal awakened.")
+			err := waitOnCond(c.srv.serverContext, c.outbound.flushSignal, func() bool {
+				return false
+			})
+			if err != nil {
+				c.mu.Unlock()
+				return
+			}
 		}
 		waitOk = c.flushWriteOutbound()
 		log.Printf("flushWriteOutbound result: %v", waitOk)

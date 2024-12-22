@@ -19,7 +19,7 @@ func run(ctx context.Context, w io.Writer, nodeIp, nodePort string) error {
 
 	lc := net.ListenConfig{}
 
-	ip := "127.0.0.1" // Use the full IP address
+	ip := "localhost" // Use the full IP address
 	port := "8081"
 
 	// Initialize config with the seed server address

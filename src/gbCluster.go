@@ -76,9 +76,6 @@ type phiAccrual struct {
 
 // -- Maybe a PhiAcc map with node-name as key and phiAccrual as value?
 
-// TODO Think about functions or methods which will take new participant data and serialise/de-serialise it for adding to map
-// TODO Think about where these functions need to live and how to handle
-
 // handler for first gossip round
 // command will be syn
 // inside - will need to create a digest and queue it, then wait for response
@@ -110,8 +107,8 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 func (s *GBServer) prepareInfoSend() ([]byte, error) {
 
-	s.clusterLock.Lock()
-	defer s.clusterLock.Unlock()
+	s.clusterMapLock.Lock()
+	defer s.clusterMapLock.Unlock()
 
 	// Check if the server name exists in participants
 	participant, ok := s.clusterMap.participants[s.ServerName]
@@ -182,8 +179,8 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 // Thread safe and to be used when cached digest is nil or invalidated
 func (s *GBServer) generateDigest() ([]*clusterDigest, error) {
 
-	s.clusterLock.RLock()
-	defer s.clusterLock.RUnlock()
+	s.clusterMapLock.RLock()
+	defer s.clusterMapLock.RUnlock()
 
 	if s.clusterMap.participants == nil {
 		return nil, fmt.Errorf("cluster map is empty")
@@ -217,7 +214,7 @@ func (s *GBServer) generateDigest() ([]*clusterDigest, error) {
 //=======================================================
 
 func (s *GBServer) parseClientDelta(delta []byte, msgLen int) (int, error) {
-
+	log.Printf("hello")
 	log.Printf("delta = %s", string(delta))
 	log.Printf("msgLen = %d", msgLen)
 

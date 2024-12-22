@@ -23,12 +23,6 @@ type node struct {
 	// Info
 	tcpAddr   *net.TCPAddr
 	direction string
-
-	//Serialisation + Gossip
-	clusterDigest //TODO May not need
-	gossipingWith string
-	// Gossip state - Handlers will check against this and make sure no duplicate or conflicting work is being done
-	gossipState int
 }
 
 //===================================================================================
@@ -36,7 +30,7 @@ type node struct {
 //===================================================================================
 
 //-------------------------------
-// Creating a node server
+// Creating a node as a client from a connection
 //-------------------------------
 
 // createNode is the entry point to reading and writing
@@ -92,10 +86,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		client.directionType = RECEIVED
 		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
 
-		//var testData = []byte{1, 1, 1, 0, 16, 0, 9, 13, 10, 84, 104, 105, 115, 32, 105, 115, 32, 97, 32, 116, 101, 115, 116, 13, 10}
-		//
-		////time.Sleep(1 * time.Second)
-		//client.qProto(testData, false)
 	}
 
 	return client
@@ -148,6 +138,8 @@ func (s *GBServer) connectToSeed() error {
 // Node Info + Initial Connect Packet Creation
 //=======================================================
 
+// TODO This needs to be a carefully considered initialisation which takes into account the server configurations
+// And environment + users use case
 func initSelfParticipant(name, addr string) *Participant {
 
 	t := time.Now().Unix()

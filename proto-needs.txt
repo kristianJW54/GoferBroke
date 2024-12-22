@@ -11,3 +11,16 @@ FUTURE SCOPE:
 
 - dynamic handlers included in the gossip at runtime
 - dynamic key registry included in the gossip
+
+
+
+// Use Cases
+
+- Database Replication
+- Logging
+- Caching
+- File Sharing/Backup
+- Config Changes
+- Shard Assignment
+- Task Queue/Pool
+-

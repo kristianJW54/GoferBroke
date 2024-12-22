@@ -94,3 +94,6 @@ func (np *nodePacket) serialize() ([]byte, error) {
 //=====================================================================
 
 // Current Client Header format [V 0 0] 1st Byte = Command followed by 2 Bytes for message length
+
+// For client id in headers we should provision for a 64 byte length id? or some form of standard id length which
+// Clients can add and we echo back in our response

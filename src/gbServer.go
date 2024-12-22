@@ -79,11 +79,6 @@ type GBServer struct {
 
 	flags serverFlags
 
-	// Metrics or values for gossip
-	// CPU Load
-	// Latency ...
-	//
-
 	listener           net.Listener
 	listenConfig       net.ListenConfig
 	nodeListener       net.Listener
@@ -92,7 +87,6 @@ type GBServer struct {
 	//Context
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
-	shuttingDown        sync.Map
 
 	gbConfig *GbConfig
 	seedAddr []*net.TCPAddr
@@ -103,11 +97,16 @@ type GBServer struct {
 	selfInfo   *Participant
 	clusterMap ClusterMap //Need pointer?
 
+	// Configurations and extensibility should be handled in Options which will be embedded here
 	//Distributed Info
-	isOriginal  bool
-	isGossiping chan bool
+	isOriginal bool
+	// Metrics or values for gossip
+	// CPU Load
+	// Latency ...
+	// Other Use Cases such as shard assignment, state, config changes etc, all should be gossiped
 
 	//Connection Handling
+	// May need one for client and one for node as we will treat them differently
 	tmpClientStore       map[string]*gbClient
 	numNodeConnections   uint8
 	numClientConnections uint16
@@ -119,8 +118,8 @@ type GBServer struct {
 	nodeReqPool seqReqPool
 
 	// Locks
-	serverLock  sync.RWMutex
-	clusterLock sync.RWMutex
+	serverLock     sync.RWMutex
+	clusterMapLock sync.RWMutex
 
 	//serverWg *sync.WaitGroup
 
@@ -196,6 +195,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 // Start server will be a go routine alongside this, the server will have to perform connection dials to other servers
 // to maintain persistent connections and perform reconciliation of cluster map
 
+// TODO Need to have a signal channel for startup to have accept connection routines wait until the rest is ready
+
 func (s *GBServer) StartServer() {
 
 	//s.serverLock.Lock()
@@ -239,14 +240,24 @@ func (s *GBServer) StartServer() {
 	// Also will need a start gossiping method call once this setup is done - this will start the gossiping routines
 	// Which will use the cluster map etc...
 
+	// Main routines will be :....
+	// - System monitoring
+	// - Config changes
+	// - State changes
+	// - Use case assignments
+	// - Handlers added
+	// - Routing??
+
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
 }
 
 //=======================================================
 
+// TODO Shutdown flag set - and for go-routines and processes to be signalled to terminate once shutdown signalled
+
 func (s *GBServer) Shutdown() {
 	log.Printf("%s -- shut down initiated\n", s.ServerName)
-	s.shuttingDown.Store("shutdown", true)
+	s.flags.set(SHUTTING_DOWN)
 
 	//log.Println("context called")
 	s.serverContextCancel()
@@ -279,6 +290,8 @@ func (s *GBServer) Shutdown() {
 //=======================================================
 
 //=======================================================
+
+// TODO Resolver URL's also - to IPs and addr that can be stored as TCPAddr
 
 func (s *GBServer) resolveConfigSeedAddr() error {
 

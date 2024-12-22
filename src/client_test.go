@@ -44,9 +44,8 @@ func TestClientDelta(t *testing.T) {
 	// Format the message for a CACHE_UPDATE delta
 	key := "CACHE_UPDATE"
 	value := "user123:password:0000\r\n"
-	timestamp := "1697785200"
 
-	deltaMessage := fmt.Sprintf("V: %s %s %s", key, timestamp, value)
+	deltaMessage := fmt.Sprintf("V: %s %s", key, value)
 
 	hdr := make([]byte, 4+1)
 	hdr[0] = deltaMessage[0]
@@ -66,9 +65,8 @@ func TestClientDelta(t *testing.T) {
 	// Format the message for a CACHE_UPDATE delta
 	key2 := "CACHE_UPDATE"
 	value2 := "user456:password:1111\r\n"
-	timestamp2 := "1697785200"
 
-	deltaMessage2 := fmt.Sprintf("V: %s %s %s", key2, timestamp2, value2)
+	deltaMessage2 := fmt.Sprintf("V: %s %s", key2, value2)
 
 	hdr2 := make([]byte, 4+1)
 	hdr2[0] = deltaMessage2[0]
@@ -90,7 +88,7 @@ func TestClientDelta(t *testing.T) {
 
 	log.Printf("Connected to server %s", conn.RemoteAddr())
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	srvDelta := gbs.selfInfo
 	for _, value := range srvDelta.valueIndex {
@@ -103,6 +101,9 @@ func TestClientDelta(t *testing.T) {
 	//	log.Printf("key = %s value = %s", value, clusterD.participants[gbs.ServerName].keyValues[value].value)
 	//}
 
-	time.Sleep(2 * time.Second)
+	go gbs.Shutdown()
+	time.Sleep(1 * time.Second)
+	//log.Printf(gbs.tmpClientStore[1].Name)
+	gbs.logActiveGoRoutines()
 
 }
