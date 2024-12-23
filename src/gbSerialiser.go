@@ -92,6 +92,13 @@ type clusterDigest struct {
 	maxVersion int64
 }
 
+type fullDigest struct {
+	nodeName    string
+	maxVersion  int64
+	keyVersions map[string]int64
+	vi          []string
+}
+
 //-------------------
 
 type tmpParticipant struct {
@@ -290,9 +297,17 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 }
 
+// TODO Finish -----------------------------------------------------------------
+
 // Need to trust that we are being given a digest slice from the packet and message length checks have happened before
 // being handed to this method
-func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
+func serialiseDigest(digest []*fullDigest) ([]byte, error) {
+
+	// TODO Implement new digest
+	// TODO Needs to have efficient allocations
+	//node1: 10 [user123: 5, user456: 8, user789: 4, ]
+	//node2: 12 [user123: 6, user456: 10, user789: 7, ]
+	//node3: 9 [user123: 5, user456: 9, user789: 6, ]
 
 	// Need type = Digest - 1 byte Uint8
 	// Need length of payload - 4 byte uint32
@@ -303,8 +318,14 @@ func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 
 	for _, value := range digest {
 		length += 1
-		length += len(value.name)
-		length += 8 // Time unix which is int64 --> 8 Bytes
+		length += len(value.nodeName)
+		length += 8 + 2 // Time unix which is int64 --> 8 Bytes plus 2 for the number of delta versions
+
+		for _, v := range value.vi {
+			length += 1
+			length += len(v)
+			length += 8
+		}
 	}
 
 	length += 2 // Adding CLRF at the end
@@ -317,18 +338,34 @@ func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 	offset++
 	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
 	offset += 4
-	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(digest)))
+	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(digest))) // Number of participants
 	offset += 2
 	for _, value := range digest {
-		if len(value.name) > 255 {
-			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.name)
+		if len(value.nodeName) > 255 {
+			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.nodeName)
 		}
-		digestBuf[offset] = uint8(len(value.name))
+		nameLen := len(value.nodeName)
+		digestBuf[offset] = uint8(nameLen)
 		offset++
-		copy(digestBuf[offset:], value.name)
-		offset += len(value.name)
+		copy(digestBuf[offset:], value.nodeName)
+		offset += nameLen
 		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(value.maxVersion))
 		offset += 8
+
+		binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(value.keyVersions)))
+		offset += 2
+
+		for _, v := range value.vi {
+			version := value.keyVersions[v]
+			keyLen := len(v)
+			digestBuf[offset] = uint8(keyLen)
+			offset++
+			copy(digestBuf[offset:], v)
+			offset += keyLen
+			binary.BigEndian.PutUint64(digestBuf[offset:], uint64(version))
+			offset += 8
+		}
+
 	}
 	copy(digestBuf[offset:], CLRF)
 	offset += len(CLRF)
@@ -339,7 +376,7 @@ func serialiseDigest(digest []*clusterDigest) ([]byte, error) {
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
-func deSerialiseDigest(digest []byte) ([]*clusterDigest, error) {
+func deSerialiseDigest(digest []byte) ([]*fullDigest, error) {
 
 	//CLRF Check
 	//if bytes.HasSuffix(digest, []byte(CLRF)) {
@@ -356,19 +393,19 @@ func deSerialiseDigest(digest []byte) ([]*clusterDigest, error) {
 	sizeMeta := binary.BigEndian.Uint16(digest[5:7])
 	//log.Println("sizeMeta = ", sizeMeta)
 
-	digestMap := make([]*clusterDigest, sizeMeta)
+	digestMap := make([]*fullDigest, sizeMeta)
 
 	offset := 7
 
 	for i := 0; i < int(sizeMeta); i++ {
-		td := &clusterDigest{}
+		fd := &fullDigest{}
 
 		nameLen := int(digest[offset])
 
 		start := offset + 1
 		end := start + nameLen
 		name := string(digest[start:end])
-		td.name = name
+		fd.nodeName = name
 
 		offset += 1
 		offset += nameLen
@@ -379,11 +416,37 @@ func deSerialiseDigest(digest []byte) ([]*clusterDigest, error) {
 		// Convert maxVersion to time
 		maxVersionTime := time.Unix(int64(maxVersion), 0)
 
-		td.maxVersion = maxVersionTime.Unix()
+		fd.maxVersion = maxVersionTime.Unix()
 
-		digestMap[i] = td
+		digestMap[i] = fd
 
 		offset += 8
+
+		deltaSize := binary.BigEndian.Uint16(digest[offset : offset+2])
+
+		fd.keyVersions = make(map[string]int64, deltaSize)
+
+		offset += 2
+
+		for j := 0; j < int(deltaSize); j++ {
+
+			keyLen := int(digest[offset])
+			start := offset + 1
+			end := start + keyLen
+			key := string(digest[start:end])
+
+			offset += keyLen + 1
+
+			//Extract key version
+			version := int64(binary.BigEndian.Uint64(digest[offset : offset+8]))
+
+			versionTime := time.Unix(int64(version), 0)
+
+			offset += 8
+
+			fd.keyVersions[key] = versionTime.Unix()
+
+		}
 
 	}
 

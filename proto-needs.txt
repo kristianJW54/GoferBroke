@@ -1,8 +1,20 @@
+
+
+//NEED
+
+//- Delta Compaction for old deltas
+//-
+
+
+//// Metrics
+//Gossip Based
+//- Gossip round duration, data transferred, deltas exchanged, and resolved conflicts.
+
 // Application Extensibility
 
 - For users to deploy the cluster to their use cases they would need:
     - Abstraction layer and interfaces to defines their own deltas
-    - Key Registry
+    - Key Registry??
     - Handler Registry for delta changes to check against registered handlers for what they should do (write to file etc)
     - Client Connections need to have commands to send data in for deltas to be made/updated
 

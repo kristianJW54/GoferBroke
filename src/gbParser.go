@@ -1,20 +1,12 @@
 package src
 
-import (
-	"log"
-)
-
-// Thank the lord for NATS for being my spirit guide on this packet parsing journey - their scriptures are profound
-
-//TODO Think about client commands
-// Eg - [V:]=Delta [RV:]=GetDelta
+import "log"
 
 const (
 	START = iota
 	VERSION1
 
 	// Node Commands
-
 	INFO
 	GOSS_SYN
 	GOSS_SYN_ACK
@@ -26,13 +18,11 @@ const (
 	DELTA_KEY
 
 	// Message End
-
 	MSG_PAYLOAD
 	MSG_R_END
 	MSG_N_END
 
 	// Response types
-
 	OK
 	ERR_RESP
 )
@@ -50,7 +40,7 @@ type stateMachine struct {
 
 	scratch [4096]byte
 
-	//Testing stats
+	// Testing stats
 	rounds int
 }
 
@@ -63,8 +53,6 @@ type parseHeader struct {
 	headerLength int
 }
 
-//TODO Need to handle parsing errors and get rid of packets which cannot not be parsed to not block read
-
 func (c *gbClient) parsePacket(packet []byte) {
 
 	c.rounds++
@@ -76,89 +64,64 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 		b = packet[i]
 
+		// Log `i` and `position` for tracking
+
 		switch c.state {
 		case START:
-
-			log.Println("start b = ", string(b))
-
 			c.command = b
-
 			switch b {
 			case 1:
 				c.position = i
 				c.state = VERSION1
 			case 'V':
-				log.Println("switching to delta")
 				c.position = i
 				c.state = DELTA
-
+				log.Printf("ROUND %d START = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 			}
 
 		case DELTA:
 			switch b {
-
 			case '\r':
 				c.drop = 1
+				log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+				c.drop = 1
 			case '\n':
-				var arg []byte
-				if c.argBuf != nil {
-					arg = c.argBuf
-					c.argBuf = nil
-				} else {
-					arg = packet[c.position : i-c.drop]
-				}
-				if err := c.processDeltaHdr(arg); err != nil {
-					log.Println("error processing info header:", err)
-				}
+				if packet[i-1] == 13 {
+					log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+					var arg []byte
+					if c.argBuf != nil {
+						arg = c.argBuf
+						c.argBuf = nil
+					} else {
+						arg = packet[c.position : i-c.drop]
+					}
+					c.processDeltaHdr(arg)
 
-				c.drop = 0
-				c.position = i + 1
-				//log.Println("switching to message payload state")
-				c.state = MSG_PAYLOAD
+					c.drop = 0
+					c.position = i + 1
+					c.state = MSG_PAYLOAD
 
-				if c.msgBuf == nil {
-					// If no saved buffer exists, assume this packet contains the full payload.
-					// Calculate the position to jump directly to the end of the payload.
-					i = c.position + c.ph.msgLength - 2 // Subtract 2 for CRLF at the end.
-					//log.Println("No saved buffer. Skipping to i:", i)
+					if c.msgBuf == nil {
+						i = c.position + c.ph.msgLength - 2
+					}
 				}
-
 			default:
 				if c.argBuf != nil {
 					c.argBuf = append(c.argBuf, b)
+					log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 				}
-			}
-		case DELTA_KEY:
-			switch b {
-			case ' ':
-				// Process the delta key for the client (add it??)
-				key := string(packet[c.position:i])
-				log.Printf("delta key: %s", key)
-				// Check if the next 8 bytes are the version stamp
-				log.Printf("i = %v", i)
-				version := i + 11
-				log.Printf("version: %s", string(packet[version+1]))
-				i = i + 11
-				c.state = MSG_PAYLOAD
-				// Ensure the next 8 bytes are a valid version stamp (if necessary)
-
+				log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 			}
 
 		case VERSION1:
-
-			// Now switch on the command types for clients it could also be (V:)
 			switch b {
 			case INFO:
 				c.state = INFO
 			case OK:
 				c.state = OK
-			default:
-				log.Println("something wrong with yo state fam")
 			}
 
 		case INFO:
-
-			// Switch on args
 			switch b {
 			case '\r':
 				c.drop = 1
@@ -170,20 +133,14 @@ func (c *gbClient) parsePacket(packet []byte) {
 				} else {
 					arg = packet[c.position : i-c.drop]
 				}
-				if err := c.processINFO(arg); err != nil {
-					log.Println("error processing info header:", err)
-				}
+				c.processINFO(arg)
 
 				c.drop = 0
 				c.position = i + 1
-				//log.Println("switching to message payload state")
 				c.state = MSG_PAYLOAD
 
 				if c.msgBuf == nil {
-					// If no saved buffer exists, assume this packet contains the full payload.
-					// Calculate the position to jump directly to the end of the payload.
-					i = c.position + c.ph.msgLength - 2 // Subtract 2 for CRLF at the end.
-					//log.Println("No saved buffer. Skipping to i:", i)
+					i = c.position + c.ph.msgLength - 2
 				}
 
 			default:
@@ -204,20 +161,14 @@ func (c *gbClient) parsePacket(packet []byte) {
 				} else {
 					arg = packet[c.position : i-c.drop]
 				}
-				if err := c.processINFO(arg); err != nil {
-					log.Println("error processing info header:", err)
-				}
+				c.processINFO(arg)
 
 				c.drop = 0
 				c.position = i + 1
-				//log.Println("switching to message payload state")
 				c.state = MSG_PAYLOAD
 
 				if c.msgBuf == nil {
-					// If no saved buffer exists, assume this packet contains the full payload.
-					// Calculate the position to jump directly to the end of the payload.
-					i = c.position + c.ph.msgLength - 2 // Subtract 2 for CRLF at the end.
-					//log.Println("No saved buffer. Skipping to i:", i)
+					i = c.position + c.ph.msgLength - 2
 				}
 
 			default:
@@ -227,68 +178,50 @@ func (c *gbClient) parsePacket(packet []byte) {
 			}
 
 		case MSG_PAYLOAD:
-			log.Println("we're here! I = ", i)
 			if c.msgBuf != nil {
 				left := c.ph.msgLength - len(c.msgBuf)
-				log.Println("what is left to copy --> ", left)
 				avail := len(c.msgBuf) - i
 				if avail < left {
 					left = avail
 				}
 				if left > 0 {
 					start := len(c.msgBuf)
-					//log.Println("length of msg.buf before: ", len(c.msgBuf))
 					c.msgBuf = c.msgBuf[:start+left]
-					//log.Println("length of msg.buf after: ", len(c.msgBuf))
 					copy(c.msgBuf[start:], packet[i:i+left])
 					i = (i + left) - 1
 				} else {
 					c.msgBuf = append(c.msgBuf, b)
-					log.Printf("message buf = %v", c.msgBuf)
 				}
 
 				if len(c.msgBuf) >= c.ph.msgLength {
-					//log.Println("switching to r_end 1")
 					i = i - 2
 					c.state = MSG_R_END
 				}
 			} else if i-c.position+1 >= c.ph.msgLength {
-				log.Println("switching to r_end 2")
 				i = i - 2
 				c.state = MSG_R_END
 			}
 
 		case MSG_R_END:
-			//log.Println("arrived at r_end")
-			//log.Println(c.msgBuf)
 			if b != '\r' {
-				log.Println("end of message error")
-				log.Println("printing b ", string(b))
-				log.Printf("printing next b %s", string(packet[i+2]))
 				return
-			} else {
-				//log.Println("printing b ", b)
 			}
 			if c.msgBuf != nil {
 				c.msgBuf = append(c.msgBuf, b)
 			}
-			log.Println("switching to n_end")
 			c.state = MSG_N_END
+
 		case MSG_N_END:
 			if b != '\n' {
-				log.Println("end of message error")
+				return
 			}
 			if c.msgBuf != nil {
 				c.msgBuf = append(c.msgBuf, b)
 			} else {
 				c.msgBuf = packet[c.position : i+1]
 			}
-			//log.Println("n_end")
-			//log.Println(c.msgBuf)
-			log.Println("final message --> ", string(c.msgBuf))
 
-			// TODO Create process message dispatcher
-			c.processMessage(c.msgBuf)
+			log.Println("final message --> ", string(c.msgBuf))
 
 			c.argBuf, c.msgBuf = nil, nil
 			c.ph.msgLength, c.ph.headerLength, c.ph.command, c.ph.version = 0, 0, 0, 0
@@ -300,14 +233,10 @@ func (c *gbClient) parsePacket(packet []byte) {
 		}
 	}
 
-	//log.Println("end of for loop - starting again lol")
-	//log.Println("state = ", c.state)
 	if c.state == MSG_PAYLOAD || c.state == MSG_R_END && c.msgBuf == nil {
-
 		if c.ph.msgLength > cap(c.scratch)-len(c.argBuf) {
 			rem := len(packet[c.position:])
 			if rem > c.ph.msgLength+2 {
-				log.Println("cap error")
 				return
 			}
 
@@ -317,9 +246,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			c.msgBuf = c.scratch[len(c.argBuf):len(c.argBuf)]
 			c.msgBuf = append(c.msgBuf, packet[c.position:]...)
 		}
-
 	}
 
 	return
-
 }

@@ -42,8 +42,8 @@ func TestClientDelta(t *testing.T) {
 	}
 
 	// Format the message for a CACHE_UPDATE delta
-	key := "CACHE_UPDATE"
-	value := "user123:password:0000\r\n"
+	key := "newAccount.log"
+	value := "new-accounts:[100500]\r\n"
 
 	deltaMessage := fmt.Sprintf("V: %s %s", key, value)
 
@@ -52,7 +52,7 @@ func TestClientDelta(t *testing.T) {
 	binary.BigEndian.PutUint16(hdr[1:3], uint16(len(deltaMessage)))
 	copy(hdr[3:], deltaMessage[3:]) // Copy the deltaMessage starting from position 3
 	copy(hdr[len(hdr)-2:], "\r\n")  // Adding CLRF at the end
-
+	log.Printf("header 1 = %v", hdr)
 	formattedMessage := append(hdr, []byte(deltaMessage)...)
 
 	// Send the message over the connection
@@ -62,9 +62,8 @@ func TestClientDelta(t *testing.T) {
 		return
 	}
 
-	// Format the message for a CACHE_UPDATE delta
-	key2 := "CACHE_UPDATE"
-	value2 := "user456:password:1111\r\n"
+	key2 := "accountChange.user123"
+	value2 := "[{\"username\":\"user123\",\"password\":\"imapassword\",\"pin\":\"0000\"}}]\r\n"
 
 	deltaMessage2 := fmt.Sprintf("V: %s %s", key2, value2)
 
@@ -73,9 +72,10 @@ func TestClientDelta(t *testing.T) {
 	binary.BigEndian.PutUint16(hdr2[1:3], uint16(len(deltaMessage2)))
 	copy(hdr2[3:], deltaMessage2[3:]) // Copy the deltaMessage starting from position 3
 	copy(hdr2[len(hdr2)-2:], "\r\n")  // Adding CLRF at the end
+	log.Printf("header 1 = %v", hdr2)
+	formattedMessage2 := append(hdr2, []byte(deltaMessage2)...)
 
-	formattedMessage2 := append(hdr, []byte(deltaMessage2)...)
-
+	//time.Sleep(1 * time.Second)
 	// Send the message over the connection
 	_, err = conn.Write(formattedMessage2) // Ensure to add the newline for your parser to detect the end
 	if err != nil {
@@ -83,27 +83,21 @@ func TestClientDelta(t *testing.T) {
 		return
 	}
 
-	log.Printf("Sent message: %s", formattedMessage)
-	log.Printf("Sent message: %s", formattedMessage2)
-
-	log.Printf("Connected to server %s", conn.RemoteAddr())
-
-	time.Sleep(1 * time.Second)
-
 	srvDelta := gbs.selfInfo
 	for _, value := range srvDelta.valueIndex {
 		log.Printf("key = %s value = %s", value, srvDelta.keyValues[value].value)
 	}
 
+	time.Sleep(1 * time.Second)
+
 	//Check the cluster map is the same
-	//clusterD := gbs.clusterMap
-	//for _, value := range clusterD.participants[gbs.ServerName].valueIndex {
-	//	log.Printf("key = %s value = %s", value, clusterD.participants[gbs.ServerName].keyValues[value].value)
-	//}
+	clusterD := gbs.clusterMap
+	for _, value := range clusterD.participants[gbs.ServerName].valueIndex {
+		log.Printf("key = %s value = %s", value, clusterD.participants[gbs.ServerName].keyValues[value].value)
+	}
 
 	go gbs.Shutdown()
 	time.Sleep(1 * time.Second)
-	//log.Printf(gbs.tmpClientStore[1].Name)
 	gbs.logActiveGoRoutines()
 
 }

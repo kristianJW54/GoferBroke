@@ -13,23 +13,48 @@ func TestSerialiseDigest(t *testing.T) {
 	nodeAName := fmt.Sprintf("node-a%d", timeCode)
 	nodeBName := fmt.Sprintf("node-b%d", timeCode)
 
-	nodeA := &clusterDigest{
-		name:       nodeAName,
-		maxVersion: 1733134288,
-	}
-	nodeB := &clusterDigest{
-		name:       nodeBName,
-		maxVersion: 1733134288,
+	nodeA := &fullDigest{
+		nodeName:    nodeAName,
+		maxVersion:  1733134288,
+		keyVersions: make(map[string]int64, 4),
 	}
 
-	t.Logf("%s:%d", nodeA.name, nodeA.maxVersion)
-	t.Logf("%s:%d", nodeB.name, nodeB.maxVersion)
+	nodeA.keyVersions["key1"] = time.Now().Unix() - 100
+	nodeA.keyVersions["key2"] = time.Now().Unix() - 200
+	nodeA.keyVersions["key3"] = time.Now().Unix() - 300
+	nodeA.keyVersions["key4"] = time.Now().Unix() - 400
+
+	nodeA.vi = make([]string, 4)
+	nodeA.vi[0] = "key1"
+	nodeA.vi[1] = "key2"
+	nodeA.vi[2] = "key3"
+	nodeA.vi[3] = "key4"
+
+	nodeB := &fullDigest{
+		nodeName:    nodeBName,
+		maxVersion:  1733134288,
+		keyVersions: make(map[string]int64, 4),
+	}
+
+	nodeB.keyVersions["key1"] = time.Now().Unix() - 500
+	nodeB.keyVersions["key2"] = time.Now().Unix() - 600
+	nodeB.keyVersions["key3"] = time.Now().Unix() - 700
+	nodeB.keyVersions["key4"] = time.Now().Unix() - 800
+
+	nodeB.vi = make([]string, 4)
+	nodeB.vi[0] = "key1"
+	nodeB.vi[1] = "key2"
+	nodeB.vi[2] = "key3"
+	nodeB.vi[3] = "key4"
+
+	t.Logf("%s:%d", nodeA.nodeName, nodeA.maxVersion)
+	t.Logf("%s:%d", nodeB.nodeName, nodeB.maxVersion)
 
 	// Serialise will create wrapper array specifying type, length, size of digest
 	// And also serialise elements within the digest
 
 	// Create digest slice
-	digest := []*clusterDigest{nodeA, nodeB}
+	digest := []*fullDigest{nodeA, nodeB}
 
 	// Call the serialiseDigest method
 	serialized, err := serialiseDigest(digest)
@@ -47,9 +72,81 @@ func TestSerialiseDigest(t *testing.T) {
 	}
 
 	for _, value := range deserialized {
-		t.Logf("%s:%v", value.name, value.maxVersion)
+		t.Logf("%s:%v", value.nodeName, value.maxVersion)
+		for k, v := range value.keyVersions {
+			t.Logf("%s:%v", k, v)
+		}
 	}
 
+}
+
+func BenchmarkSerialiseAndDeserialiseDigest(b *testing.B) {
+	// Setup: Create example digests
+	timeCode := time.Now().Unix()
+	nodeAName := fmt.Sprintf("node-a%d", timeCode)
+	nodeBName := fmt.Sprintf("node-b%d", timeCode)
+
+	nodeA := &fullDigest{
+		nodeName:    nodeAName,
+		maxVersion:  1733134288,
+		keyVersions: make(map[string]int64, 4),
+		vi:          make([]string, 4),
+	}
+
+	nodeA.keyVersions["key1"] = time.Now().Unix() - 100
+	nodeA.keyVersions["key2"] = time.Now().Unix() - 200
+	nodeA.keyVersions["key3"] = time.Now().Unix() - 300
+	nodeA.keyVersions["key4"] = time.Now().Unix() - 400
+
+	nodeA.vi[0] = "key1"
+	nodeA.vi[1] = "key2"
+	nodeA.vi[2] = "key3"
+	nodeA.vi[3] = "key4"
+
+	nodeB := &fullDigest{
+		nodeName:    nodeBName,
+		maxVersion:  1733134288,
+		keyVersions: make(map[string]int64, 4),
+		vi:          make([]string, 4),
+	}
+
+	nodeB.keyVersions["key1"] = time.Now().Unix() - 500
+	nodeB.keyVersions["key2"] = time.Now().Unix() - 600
+	nodeB.keyVersions["key3"] = time.Now().Unix() - 700
+	nodeB.keyVersions["key4"] = time.Now().Unix() - 800
+
+	nodeB.vi[0] = "key1"
+	nodeB.vi[1] = "key2"
+	nodeB.vi[2] = "key3"
+	nodeB.vi[3] = "key4"
+
+	digest := []*fullDigest{nodeA, nodeB}
+
+	// Benchmark serialization
+	b.Run("SerializeDigest", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_, err := serialiseDigest(digest)
+			if err != nil {
+				b.Fatalf("Failed to serialize digest: %v", err)
+			}
+		}
+	})
+
+	// Prepare serialized data for deserialization benchmark
+	serialized, err := serialiseDigest(digest)
+	if err != nil {
+		b.Fatalf("Failed to serialize digest: %v", err)
+	}
+
+	// Benchmark deserialization
+	b.Run("DeserializeDigest", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_, err := deSerialiseDigest(serialized)
+			if err != nil {
+				b.Fatalf("Failed to deserialize digest: %v", err)
+			}
+		}
+	})
 }
 
 // Helper function to create a Delta
