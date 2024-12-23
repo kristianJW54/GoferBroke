@@ -118,6 +118,8 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 
 	log.Println("STARTED PREPARING")
 
+	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
+
 	// Setup tmpCluster
 	tmpC := &clusterDelta{make(map[string]*tmpParticipant, 1)}
 
@@ -145,6 +147,7 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 
 	// Acquire sequence ID
 	seq, err := s.acquireReqID()
+	log.Printf("seq ID = %d", seq)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +160,7 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 		cereal,
 	}
 	pay1, err := packet.serialize()
+	log.Printf("pay1 %v", pay1)
 	if err != nil {
 		return nil, err
 	}
@@ -175,9 +179,10 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 //--
 
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
+// TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest
 
 // Thread safe and to be used when cached digest is nil or invalidated
-func (s *GBServer) generateDigest() ([]*clusterDigest, error) {
+func (s *GBServer) generateDigest() ([]*fullDigest, error) {
 
 	s.clusterMapLock.RLock()
 	defer s.clusterMapLock.RUnlock()
@@ -186,7 +191,7 @@ func (s *GBServer) generateDigest() ([]*clusterDigest, error) {
 		return nil, fmt.Errorf("cluster map is empty")
 	}
 
-	td := make([]*clusterDigest, len(s.clusterMap.participants))
+	td := make([]*fullDigest, len(s.clusterMap.participants))
 
 	cm := s.clusterMap.participants
 
@@ -195,10 +200,17 @@ func (s *GBServer) generateDigest() ([]*clusterDigest, error) {
 		// Lock the participant to safely read the data
 		value.pm.RLock()
 		// Initialize the map entry for each participant
-		td[idx] = &clusterDigest{
-			name:       value.name,
-			maxVersion: value.maxVersion,
+		td[idx] = &fullDigest{
+			nodeName:    value.name,
+			maxVersion:  value.maxVersion,
+			keyVersions: make(map[string]int64, len(value.keyValues)),
+			vi:          value.valueIndex,
 		}
+
+		for _, v := range value.valueIndex {
+			td[idx].keyVersions[v] = value.keyValues[v].version
+		}
+
 		idx++
 		value.pm.RUnlock() // Release the participant lock
 	}

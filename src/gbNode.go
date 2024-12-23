@@ -200,7 +200,7 @@ func (c *gbClient) processINFO(arg []byte) error {
 		c.ph.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
 		// Log the result to verify
-		//log.Printf("Extracted msgLength: %d\n", c.ph.msgLength)
+		log.Printf("Extracted msgLength: %d\n", c.ph.msgLength)
 	} else {
 		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
 	}
@@ -219,7 +219,6 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 	//GOSS_SYN_ACK
 	//GOSS_ACK
 	//TEST
-
 	switch c.ph.command {
 	case INFO:
 		c.processInitialMessage(message)
@@ -291,6 +290,8 @@ func (c *gbClient) processInitialMessage(message []byte) {
 
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
 
+	// TODO This is causing go-routines to hang
+
 	cereal := []byte("OK +\r\n")
 
 	// Construct header
@@ -303,5 +304,7 @@ func (c *gbClient) processInitialMessage(message []byte) {
 	pay1, _ := packet.serialize()
 
 	c.qProto(pay1, true)
+
+	return
 
 }

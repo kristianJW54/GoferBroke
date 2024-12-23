@@ -118,6 +118,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case INFO:
 				c.state = INFO
 			case OK:
+				log.Printf("switching to ok")
 				c.state = OK
 			}
 
@@ -220,6 +221,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 			} else {
 				c.msgBuf = packet[c.position : i+1]
 			}
+
+			c.processMessage(c.msgBuf)
 
 			log.Println("final message --> ", string(c.msgBuf))
 

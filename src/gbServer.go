@@ -275,7 +275,7 @@ func (s *GBServer) Shutdown() {
 
 	//Close connections
 	for name, client := range s.tmpClientStore {
-		//log.Printf("closing client %s\n", name)
+		log.Printf("%s closing client %s\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.tmpClientStore, name)
 	}

@@ -172,15 +172,17 @@ func TestSerialiseDelta(t *testing.T) {
 				keyValues: map[string]*Delta{
 					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.1"),
 					_CPU_USAGE_: createDelta(0, timeCode, "45.3%"),
+					"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
 				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
 			},
 			nodeBName: {
 				keyValues: map[string]*Delta{
 					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.2"),
 					_CPU_USAGE_: createDelta(0, timeCode, "55.7%"),
+					"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
 				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
+				vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
 			},
 		},
 	}

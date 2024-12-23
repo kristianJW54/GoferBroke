@@ -218,7 +218,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// This is important for fault detection as when a node/client goes down we won't know to close the connection unless
 	// we detect it or us as a server shuts down
 	//We also only get a read error once we close the connection - so we need to handle our connections in a robust way
-	s.tmpClientStore[conn.RemoteAddr().String()] = client
+	s.tmpClientStore["1"] = client
 
 	//TODO before starting the loops - handle TLS Handshake if needed
 	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
@@ -489,6 +489,7 @@ func waitOnCond(ctx context.Context, cond *sync.Cond, conditionMet func() bool) 
 	for !conditionMet() {
 		cond.Wait()
 		if ctx.Err() != nil {
+			log.Printf("exiting write loop")
 			return ctx.Err()
 		}
 	}
@@ -505,14 +506,33 @@ func (c *gbClient) writeLoop() {
 
 	waitOk := true
 
+	stopCondition := context.AfterFunc(c.srv.serverContext, func() {
+
+		c.outbound.flushSignal.L.Lock()
+		defer c.outbound.flushSignal.L.Unlock()
+
+		c.outbound.flushSignal.Broadcast()
+
+	})
+
+	defer stopCondition()
+
 	for {
 		c.mu.Lock()
 		if waitOk {
-			err := waitOnCond(c.srv.serverContext, c.outbound.flushSignal, func() bool {
-				return false
-			})
-			if err != nil {
-				c.mu.Unlock()
+			//err := waitOnCond(c.srv.serverContext, c.outbound.flushSignal, func() bool {
+			//	return !waitOk
+			//})
+			//if err != nil {
+			//	c.mu.Unlock()
+			//	return
+			//}
+			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
+			//// Can I add a broadcast here instead
+			c.outbound.flushSignal.Wait()
+			log.Println("Flush signal awakened.")
+			if c.srv.serverContext.Err() != nil {
+				log.Printf("exiting write loop")
 				return
 			}
 		}

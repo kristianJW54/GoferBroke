@@ -87,7 +87,7 @@ func cerealPoolPut(b []byte) {
 //-------------------
 //Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
 
-type clusterDigest struct {
+type summaryDigest struct {
 	name       string
 	maxVersion int64
 }
@@ -297,13 +297,10 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 }
 
-// TODO Finish -----------------------------------------------------------------
-
 // Need to trust that we are being given a digest slice from the packet and message length checks have happened before
 // being handed to this method
 func serialiseDigest(digest []*fullDigest) ([]byte, error) {
 
-	// TODO Implement new digest
 	// TODO Needs to have efficient allocations
 	//node1: 10 [user123: 5, user456: 8, user789: 4, ]
 	//node2: 12 [user123: 6, user456: 10, user789: 7, ]

@@ -128,6 +128,11 @@ func TestInfoSend(t *testing.T) {
 	go gbs.StartServer()
 	//time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-	time.Sleep(7 * time.Second)
+	time.Sleep(3 * time.Second)
 
+	go gbs.Shutdown()
+	go gbs2.Shutdown()
+	time.Sleep(1 * time.Second)
+	gbs.logActiveGoRoutines()
+	gbs2.logActiveGoRoutines()
 }
