@@ -591,15 +591,16 @@ func (c *gbClient) waitForResponse(ctx context.Context, response chan []byte, re
 		log.Printf("returning sequence to the pool")
 		c.srv.releaseReqID(respID)
 		return
-	case response := <-response:
+	case rsp := <-response:
 		log.Printf("I got a response WOO!")
-		log.Printf("response = %v", string(response))
+		log.Printf("response = %v", string(rsp))
 		c.rm.Lock()
 		delete(c.responseHandler.resp, int(respID))
 		c.rm.Unlock()
 		log.Printf("deleting response channel %d", int(respID))
 		log.Printf("returning sequence to the pool")
 		c.srv.releaseReqID(respID)
+		close(response)
 		return
 	case <-time.After(timeout):
 		// Clean up the response channel on timeout
@@ -623,15 +624,14 @@ func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
 	if sendNow {
 
 		// Client lock to flush outbound
-		c.qProto(proto, false)
 		c.mu.Lock()
+		c.qProto(proto, false)
 		c.flushWriteOutbound()
 		c.mu.Unlock()
+
+		// Wait for the response with timeout
+		go c.waitForResponse(c.srv.serverContext, responseChannel, respID, 2*time.Second)
 	}
-
-	// Wait for the response with timeout
-	go c.waitForResponse(c.srv.serverContext, responseChannel, respID, 2*time.Second)
-
 }
 
 //===================================================================================

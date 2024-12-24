@@ -253,9 +253,9 @@ func (c *gbClient) processOK(message []byte) {
 
 		responseChan <- message
 
-		c.mu.Lock()
+		c.rm.Lock()
 		delete(c.resp, int(c.argBuf[0]))
-		c.mu.Unlock()
+		c.rm.Unlock()
 
 	} else {
 		log.Printf("no response channel found")
@@ -304,6 +304,7 @@ func (c *gbClient) processInitialMessage(message []byte) {
 	pay1, _ := packet.serialize()
 
 	c.qProto(pay1, true)
+	//log.Printf("pay 1 length %v", len(pay1))
 
 	return
 

@@ -124,7 +124,7 @@ func TestInfoSend(t *testing.T) {
 	//log.Println(config)
 
 	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server", config, "localhost", "8082", "8083", lc)
+	gbs2 := NewServer("test-server 2", config, "localhost", "8082", "8083", lc)
 	go gbs.StartServer()
 	//time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
