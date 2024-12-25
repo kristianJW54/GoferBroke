@@ -49,6 +49,8 @@ type parseHeader struct {
 	version      uint8
 	command      uint8
 	id           uint8
+	keyLength    int
+	valueLength  int
 	msgLength    int
 	headerLength int
 }
@@ -64,8 +66,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 		b = packet[i]
 
-		// Log `i` and `position` for tracking
-
 		switch c.state {
 		case START:
 			c.command = b
@@ -76,18 +76,18 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case 'V':
 				c.position = i
 				c.state = DELTA
-				log.Printf("ROUND %d START = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+				//log.Printf("ROUND %d START = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 			}
 
 		case DELTA:
 			switch b {
 			case '\r':
 				c.drop = 1
-				log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+				//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 				c.drop = 1
 			case '\n':
 				if packet[i-1] == 13 {
-					log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
 						arg = c.argBuf
@@ -108,9 +108,9 @@ func (c *gbClient) parsePacket(packet []byte) {
 			default:
 				if c.argBuf != nil {
 					c.argBuf = append(c.argBuf, b)
-					log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 				}
-				log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+				//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 			}
 
 		case VERSION1:
@@ -118,7 +118,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case INFO:
 				c.state = INFO
 			case OK:
-				log.Printf("switching to ok")
 				c.state = OK
 			}
 

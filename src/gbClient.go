@@ -643,6 +643,9 @@ func (c *gbClient) processDeltaHdr(arg []byte) error {
 	c.ph.command = arg[0]
 	msgLengthBytes := arg[1:3]
 	c.ph.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
+	c.ph.keyLength = int(arg[3])
+	valueLen := arg[4:6]
+	c.ph.valueLength = int(binary.BigEndian.Uint16(valueLen))
 
 	return nil
 
@@ -677,14 +680,15 @@ func (c *gbClient) processMessage(message []byte) {
 func (c *gbClient) dispatchClientCommands(message []byte) {
 
 	// Need a switch on commands
-
-	log.Printf("command received: %v", string(c.ph.command))
-	// Method for handling delta
-	err := c.processDelta(message)
-	if err != nil {
-		log.Printf("error processing delta: %v", err)
+	switch c.ph.command {
+	case 'V':
+		log.Printf("command received: %v", string(c.ph.command))
+		// Method for handling delta
+		err := c.processDelta(message)
+		if err != nil {
+			log.Printf("error processing delta: %v", err)
+		}
 	}
-
 }
 
 // Delta handling method which will hand off to server to process in a go-routine
@@ -700,9 +704,13 @@ func (c *gbClient) processDelta(message []byte) error {
 	//copy(msg, message)
 	msgLen := c.ph.msgLength
 
+	keyLen := c.ph.keyLength
+	valueLen := c.ph.valueLength
+
 	// Can use server go-routine tracker ?? Or go func() to return an error
+	// TODO Pass the header? Which should include the length, size, type and anything else needed)
 	go func() {
-		_, err := srv.parseClientDelta(message, msgLen)
+		_, err := srv.parseClientDelta(message, msgLen, keyLen, valueLen)
 		if err != nil {
 			log.Printf("error parsing client delta message: %v", err)
 		}

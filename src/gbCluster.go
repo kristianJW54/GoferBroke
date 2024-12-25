@@ -105,70 +105,6 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 }
 
-func (s *GBServer) prepareInfoSend() ([]byte, error) {
-
-	s.clusterMapLock.Lock()
-	defer s.clusterMapLock.Unlock()
-
-	// Check if the server name exists in participants
-	participant, ok := s.clusterMap.participants[s.ServerName]
-	if !ok {
-		return nil, fmt.Errorf("no participant found for server %s", s.ServerName)
-	}
-
-	log.Println("STARTED PREPARING")
-
-	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
-
-	// Setup tmpCluster
-	tmpC := &clusterDelta{make(map[string]*tmpParticipant, 1)}
-
-	// Lock the participant for reading
-	participant.pm.RLock()
-	defer participant.pm.RUnlock() // Ensure the read lock is released even on errors
-
-	// Capture the indexes
-	pi := s.clusterMap.partIndex
-
-	tmpP := &tmpParticipant{keyValues: make(map[string]*Delta, len(participant.keyValues)), vi: participant.valueIndex}
-
-	tmpC.delta[s.ServerName] = tmpP
-
-	for _, v := range participant.valueIndex {
-		// Copy keyValues into tmpParticipant
-		tmpP.keyValues[v] = participant.keyValues[v]
-	}
-
-	// Need to serialise the tmpCluster
-	cereal, err := serialiseClusterDelta(tmpC, pi)
-	if err != nil {
-		return nil, err
-	}
-
-	// Acquire sequence ID
-	seq, err := s.acquireReqID()
-	log.Printf("seq ID = %d", seq)
-	if err != nil {
-		return nil, err
-	}
-
-	// Construct header
-	header := constructNodeHeader(1, INFO, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
-	// Create packet
-	packet := &nodePacket{
-		header,
-		cereal,
-	}
-	pay1, err := packet.serialize()
-	log.Printf("pay1 %v", pay1)
-	if err != nil {
-		return nil, err
-	}
-
-	return pay1, nil
-
-}
-
 //--------
 //Update cluster
 
@@ -225,10 +161,12 @@ func (s *GBServer) generateDigest() ([]*fullDigest, error) {
 // Delta Parsing, Handling and Changes
 //=======================================================
 
-func (s *GBServer) parseClientDelta(delta []byte, msgLen int) (int, error) {
-	log.Printf("hello")
+func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) (int, error) {
+	log.Printf("parse client deltas arrived")
 	log.Printf("delta = %s", string(delta))
 	log.Printf("msgLen = %d", msgLen)
+	log.Printf("keyLen = %d", keyLen)
+	log.Printf("valueLen = %d", valueLen)
 
 	return 0, nil
 }

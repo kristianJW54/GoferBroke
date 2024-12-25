@@ -134,57 +134,84 @@ func (s *GBServer) connectToSeed() error {
 
 }
 
-//=======================================================
-// Node Info + Initial Connect Packet Creation
-//=======================================================
+func (s *GBServer) prepareInfoSend() ([]byte, error) {
 
-// TODO This needs to be a carefully considered initialisation which takes into account the server configurations
-// And environment + users use case
-func initSelfParticipant(name, addr string) *Participant {
+	s.clusterMapLock.Lock()
+	defer s.clusterMapLock.Unlock()
 
-	t := time.Now().Unix()
-
-	p := &Participant{
-		name:       name,
-		keyValues:  make(map[string]*Delta),
-		valueIndex: make([]string, 3),
-		maxVersion: t,
+	// Check if the server name exists in participants
+	participant, ok := s.clusterMap.participants[s.ServerName]
+	if !ok {
+		return nil, fmt.Errorf("no participant found for server %s", s.ServerName)
 	}
 
-	p.keyValues[_ADDRESS_] = &Delta{
-		valueType: STRING_DV,
-		version:   t,
-		value:     []byte(addr),
+	log.Println("STARTED PREPARING")
+
+	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
+
+	// Setup tmpCluster
+	tmpC := &clusterDelta{make(map[string]*tmpParticipant, 1)}
+
+	// Lock the participant for reading
+	participant.pm.RLock()
+	defer participant.pm.RUnlock() // Ensure the read lock is released even on errors
+
+	// Capture the indexes
+	pi := s.clusterMap.partIndex
+
+	tmpP := &tmpParticipant{keyValues: make(map[string]*Delta, len(participant.keyValues)), vi: participant.valueIndex}
+
+	tmpC.delta[s.ServerName] = tmpP
+
+	for _, v := range participant.valueIndex {
+		// Copy keyValues into tmpParticipant
+		tmpP.keyValues[v] = participant.keyValues[v]
 	}
-	p.valueIndex[0] = _ADDRESS_
 
-	// Set the numNodeConnections delta
-	numNodeConnBytes := make([]byte, 1)
-	numNodeConnBytes[0] = 0
-	p.keyValues[_NODE_CONNS_] = &Delta{
-		valueType: INT_DV,
-		version:   t,
-		value:     numNodeConnBytes,
+	// Need to serialise the tmpCluster
+	cereal, err := serialiseClusterDelta(tmpC, pi)
+	if err != nil {
+		return nil, err
 	}
-	p.valueIndex[1] = _NODE_CONNS_
 
-	heart := make([]byte, 8)
-	binary.BigEndian.PutUint64(heart, uint64(t))
-	p.keyValues[_HEARTBEAT_] = &Delta{
-		valueType: HEARTBEAT_V,
-		version:   t,
-		value:     heart,
+	// Acquire sequence ID
+	seq, err := s.acquireReqID()
+	log.Printf("seq ID = %d", seq)
+	if err != nil {
+		return nil, err
 	}
-	p.valueIndex[2] = _HEARTBEAT_
 
-	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
+	// Construct header
+	header := constructNodeHeader(1, INFO, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+	// Create packet
+	packet := &nodePacket{
+		header,
+		cereal,
+	}
+	pay1, err := packet.serialize()
+	log.Printf("pay1 %v", pay1)
+	if err != nil {
+		return nil, err
+	}
 
-	return p
+	return pay1, nil
 
 }
 
+//=======================================================
+// Seed Server
+//=======================================================
+
+//---------
+//Receiving Node Join
+
+// Compute how many nodes we need to send and if we need to split it up
+// We will know how many crucial internal state deltas we'll need to send to the total size can be estimated
+// From there gossip will up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
+// for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
+
 //===================================================================================
-// Parser Processing
+// Parser Header Processing
 //===================================================================================
 
 func (c *gbClient) processINFO(arg []byte) error {
@@ -209,6 +236,10 @@ func (c *gbClient) processINFO(arg []byte) error {
 
 	return nil
 }
+
+//===================================================================================
+// Parser Message Processing - Dispatched from processMessage()
+//===================================================================================
 
 //---------------------------
 // Node Handlers

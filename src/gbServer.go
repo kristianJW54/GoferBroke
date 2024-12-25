@@ -2,6 +2,7 @@ package src
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -39,9 +40,9 @@ const (
 	SHUTTING_DOWN
 	ACCEPT_LOOP_STARTED
 	ACCEPT_NODE_LOOP_STARTED
-	CONNECTED_TO_SEED
+	CONNECTED_TO_CLUSTER
 	IS_GOSSIPING
-	UPDATING_INTERNAL_STATE
+	JOINING
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -239,6 +240,7 @@ func (s *GBServer) StartServer() {
 
 	// Also will need a start gossiping method call once this setup is done - this will start the gossiping routines
 	// Which will use the cluster map etc...
+	// Gossiping cannot start until the seeds have sent over the cluster map and state flag is moved from JOINING to CONNECTED_TO_CLUSTER
 
 	// Main routines will be :....
 	// - System monitoring
@@ -339,6 +341,55 @@ func (s *GBServer) seedCheck() int {
 	}
 
 	return 0
+
+}
+
+//=======================================================
+// Initialisation
+//=======================================================
+
+// TODO This needs to be a carefully considered initialisation which takes into account the server configurations
+// And environment + users use case
+func initSelfParticipant(name, addr string) *Participant {
+
+	t := time.Now().Unix()
+
+	p := &Participant{
+		name:       name,
+		keyValues:  make(map[string]*Delta),
+		valueIndex: make([]string, 3),
+		maxVersion: t,
+	}
+
+	p.keyValues[_ADDRESS_] = &Delta{
+		valueType: STRING_DV,
+		version:   t,
+		value:     []byte(addr),
+	}
+	p.valueIndex[0] = _ADDRESS_
+
+	// Set the numNodeConnections delta
+	numNodeConnBytes := make([]byte, 1)
+	numNodeConnBytes[0] = 0
+	p.keyValues[_NODE_CONNS_] = &Delta{
+		valueType: INT_DV,
+		version:   t,
+		value:     numNodeConnBytes,
+	}
+	p.valueIndex[1] = _NODE_CONNS_
+
+	heart := make([]byte, 8)
+	binary.BigEndian.PutUint64(heart, uint64(t))
+	p.keyValues[_HEARTBEAT_] = &Delta{
+		valueType: HEARTBEAT_V,
+		version:   t,
+		value:     heart,
+	}
+	p.valueIndex[2] = _HEARTBEAT_
+
+	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
+
+	return p
 
 }
 

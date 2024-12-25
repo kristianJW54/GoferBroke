@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// Delta Header should be --> Command[V], MessageLength[0 0], KeyLength[0], ValueLength [0 0]
+
 func TestClientDelta(t *testing.T) {
 
 	lc := net.ListenConfig{}
@@ -47,11 +49,22 @@ func TestClientDelta(t *testing.T) {
 
 	deltaMessage := fmt.Sprintf("V: %s %s", key, value)
 
-	hdr := make([]byte, 4+1)
+	hdr := make([]byte, 6+2)
+	offset := 0
 	hdr[0] = deltaMessage[0]
-	binary.BigEndian.PutUint16(hdr[1:3], uint16(len(deltaMessage)))
-	copy(hdr[3:], deltaMessage[3:]) // Copy the deltaMessage starting from position 3
-	copy(hdr[len(hdr)-2:], "\r\n")  // Adding CLRF at the end
+	offset += 1
+	binary.BigEndian.PutUint16(hdr[offset:], uint16(len(deltaMessage)))
+	log.Printf("length of deltaMessage: %v\n", uint16(len(deltaMessage)))
+	offset += 2
+	// Adding in key length
+	hdr[offset] = uint8(len(key))
+	log.Printf("key length: %d\n", len(key))
+	offset += 1
+	// Adding in value length
+	binary.BigEndian.PutUint16(hdr[offset:], uint16(len(value)))
+	offset += 2
+	copy(hdr[len(hdr)-2:], "\r\n") // Adding CLRF at the end
+	offset += 2
 	log.Printf("header 1 = %v", hdr)
 	formattedMessage := append(hdr, []byte(deltaMessage)...)
 
@@ -67,11 +80,19 @@ func TestClientDelta(t *testing.T) {
 
 	deltaMessage2 := fmt.Sprintf("V: %s %s", key2, value2)
 
-	hdr2 := make([]byte, 4+1)
+	hdr2 := make([]byte, 6+2)
+	offset2 := 0
 	hdr2[0] = deltaMessage2[0]
-	binary.BigEndian.PutUint16(hdr2[1:3], uint16(len(deltaMessage2)))
-	copy(hdr2[3:], deltaMessage2[3:]) // Copy the deltaMessage starting from position 3
-	copy(hdr2[len(hdr2)-2:], "\r\n")  // Adding CLRF at the end
+	offset2 += 1
+	binary.BigEndian.PutUint16(hdr2[offset2:], uint16(len(deltaMessage2)))
+	offset2 += 2
+	// Adding key length
+	hdr2[offset2] = uint8(len(key2))
+	offset2 += 1
+	binary.BigEndian.PutUint16(hdr2[offset2:], uint16(len(value2)))
+	offset2 += 2
+	copy(hdr2[len(hdr2)-2:], "\r\n") // Adding CLRF at the end
+	offset2 += 2
 	log.Printf("header 1 = %v", hdr2)
 	formattedMessage2 := append(hdr2, []byte(deltaMessage2)...)
 
@@ -85,7 +106,7 @@ func TestClientDelta(t *testing.T) {
 
 	srvDelta := gbs.selfInfo
 	for _, value := range srvDelta.valueIndex {
-		log.Printf("key = %s value = %s", value, srvDelta.keyValues[value].value)
+		log.Printf("%s --> key = %s value = %s", srvDelta.name, value, srvDelta.keyValues[value].value)
 	}
 
 	time.Sleep(1 * time.Second)
@@ -93,7 +114,7 @@ func TestClientDelta(t *testing.T) {
 	//Check the cluster map is the same
 	clusterD := gbs.clusterMap
 	for _, value := range clusterD.participants[gbs.ServerName].valueIndex {
-		log.Printf("key = %s value = %s", value, clusterD.participants[gbs.ServerName].keyValues[value].value)
+		log.Printf("%s --> key = %s value = %s", gbs.ServerName, value, clusterD.participants[gbs.ServerName].keyValues[value].value)
 	}
 
 	go gbs.Shutdown()
