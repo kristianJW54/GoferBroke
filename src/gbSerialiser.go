@@ -13,15 +13,10 @@ const (
 )
 
 const (
-	STRING_DV = iota
-	UINT8_DV
-	UINT16_DV
-	UINT32_DV
-	UINT64_DV
-	INT_DV
-	BYTE_DV
-	FLOAT_DV
-	TIME_DV
+	CONFIG_D = iota
+	STATE_D
+	INTERNAL_D
+	CLIENT_D
 )
 
 const (

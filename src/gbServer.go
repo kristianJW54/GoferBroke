@@ -362,7 +362,7 @@ func initSelfParticipant(name, addr string) *Participant {
 	}
 
 	p.keyValues[_ADDRESS_] = &Delta{
-		valueType: STRING_DV,
+		valueType: INTERNAL_D,
 		version:   t,
 		value:     []byte(addr),
 	}
@@ -372,7 +372,7 @@ func initSelfParticipant(name, addr string) *Participant {
 	numNodeConnBytes := make([]byte, 1)
 	numNodeConnBytes[0] = 0
 	p.keyValues[_NODE_CONNS_] = &Delta{
-		valueType: INT_DV,
+		valueType: INTERNAL_D,
 		version:   t,
 		value:     numNodeConnBytes,
 	}
@@ -381,7 +381,7 @@ func initSelfParticipant(name, addr string) *Participant {
 	heart := make([]byte, 8)
 	binary.BigEndian.PutUint64(heart, uint64(t))
 	p.keyValues[_HEARTBEAT_] = &Delta{
-		valueType: HEARTBEAT_V,
+		valueType: INTERNAL_D,
 		version:   t,
 		value:     heart,
 	}

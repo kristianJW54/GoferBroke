@@ -206,7 +206,7 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 //Receiving Node Join
 
 // Compute how many nodes we need to send and if we need to split it up
-// We will know how many crucial internal state deltas we'll need to send to the total size can be estimated
+// We will know how many crucial internal state deltas we'll need to send so the total size can be estimated?
 // From there gossip will up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
 // for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
 
@@ -321,12 +321,10 @@ func (c *gbClient) processInitialMessage(message []byte) {
 
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
 
-	// TODO This is causing go-routines to hang
-
 	cereal := []byte("OK +\r\n")
 
 	// Construct header
-	header := constructNodeHeader(1, OK, 1, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
 	// Create packet
 	packet := &nodePacket{
 		header,
@@ -335,7 +333,6 @@ func (c *gbClient) processInitialMessage(message []byte) {
 	pay1, _ := packet.serialize()
 
 	c.qProto(pay1, true)
-	//log.Printf("pay 1 length %v", len(pay1))
 
 	return
 

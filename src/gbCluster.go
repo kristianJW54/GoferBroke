@@ -2,9 +2,9 @@ package src
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 //===================================================================================
@@ -40,7 +40,7 @@ type Seed struct {
 // Main cluster map for gossiping
 
 type Delta struct {
-	valueType int
+	valueType int // Type could be internal, config, state, client
 	version   int64
 	value     []byte // Value should go last for easier de-serialisation
 	// Could add user defined metadata later on??
@@ -162,11 +162,30 @@ func (s *GBServer) generateDigest() ([]*fullDigest, error) {
 //=======================================================
 
 func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) (int, error) {
-	log.Printf("parse client deltas arrived")
-	log.Printf("delta = %s", string(delta))
-	log.Printf("msgLen = %d", msgLen)
-	log.Printf("keyLen = %d", keyLen)
-	log.Printf("valueLen = %d", valueLen)
+
+	switch delta[0] {
+	case 'V':
+
+		s.clusterMapLock.Lock()
+		defer s.clusterMapLock.Unlock()
+
+		// TODO Need error checks here + correct locking
+
+		key := delta[3 : 3+keyLen]
+
+		value := delta[3+keyLen+1 : 2+keyLen+valueLen]
+
+		now := time.Now().Unix()
+
+		s.selfInfo.keyValues[string(key)] = &Delta{
+			valueType: CLIENT_D,
+			version:   now,
+			value:     value,
+		}
+
+		s.selfInfo.valueIndex = append(s.selfInfo.valueIndex, string(key))
+
+	}
 
 	return 0, nil
 }
