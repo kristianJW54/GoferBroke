@@ -108,9 +108,10 @@ type clusterDelta struct {
 // TODO Look at flattening or refining the data structure passed to the serialiser for faster performance
 
 // TODO Look at efficiency - can we do this in once pass with byte.Buffer?
-// TODO Look at sync.Pool for buffer use
 
 // TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
+
+// TODO Should be able to pass size and skip loop step if we have it - if not, calc size ourselves in here
 
 func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
 

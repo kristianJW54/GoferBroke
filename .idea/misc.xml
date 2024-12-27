@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="excludedPrintfFunctions.xml">
+    <option name="excludedDescriptors">
+      <set>
+        <PrintfFuncDescriptorState>
+          <option name="importPath" value="log" />
+          <option name="name" value="Printf" />
+        </PrintfFuncDescriptorState>
+      </set>
+    </option>
+    <option name="excludedNames">
+      <set>
+        <option value="Printf" />
+      </set>
+    </option>
+  </component>
+</project>

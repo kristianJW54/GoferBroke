@@ -8,6 +8,8 @@ const (
 
 	// Node Commands
 	INFO
+	INFO_ACK // Info Ack is acknowledging and responding with some cluster nodes and their critical deltas
+	INFO_ALL // Info All is acknowledging and responding with all cluster nodes and critical deltas
 	GOSS_SYN
 	GOSS_SYN_ACK
 	GOSS_ACK
@@ -119,6 +121,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.state = INFO
 			case OK:
 				c.state = OK
+			case INFO_ALL:
+				c.state = INFO_ALL
 			}
 
 		case INFO:
@@ -150,6 +154,34 @@ func (c *gbClient) parsePacket(packet []byte) {
 			}
 
 		case OK:
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				var arg []byte
+				if c.argBuf != nil {
+					arg = c.argBuf
+					c.argBuf = nil
+				} else {
+					arg = packet[c.position : i-c.drop]
+				}
+				c.processINFO(arg)
+
+				c.drop = 0
+				c.position = i + 1
+				c.state = MSG_PAYLOAD
+
+				if c.msgBuf == nil {
+					i = c.position + c.ph.msgLength - 2
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case INFO_ALL:
 			switch b {
 			case '\r':
 				c.drop = 1

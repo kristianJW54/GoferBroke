@@ -210,6 +210,80 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 // From there gossip will up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
 // for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
 
+func (c *gbClient) sendNewJoinerInfo() ([]byte, error) {
+
+	s := c.srv
+
+	s.clusterMapLock.RLock()
+	defer s.clusterMapLock.RUnlock()
+
+	if len(s.clusterMap.partIndex) > 100 {
+		log.Printf("lots of participants - may need more efficient snapshot transfer")
+		// In this case we would send an INFO_ACK to tell the joining node that more info will come
+		// The joining node can then reach out to other seed servers or send another request to this seed server
+		// With the digest of what it has been given so far to complete it's joining
+		// A mini bootstrapped gossip between joiner and seeds
+
+		// TODO If cluster too large - will need to stream data and use metadata to track progress
+	}
+
+	tmpC := &clusterDelta{make(map[string]*tmpParticipant, len(s.clusterMap.partIndex))}
+	log.Println("HERE ====================================================")
+
+	// TODO Need to serialise from the cluster map and not use tmp structs
+
+	for _, v := range s.clusterMap.partIndex {
+		participant := s.clusterMap.participants[v]
+
+		// Lock the participant for safe read access
+		participant.pm.RLock()
+
+		// Create and populate tmpParticipant
+		tmP := &tmpParticipant{
+			keyValues: make(map[string]*Delta, len(participant.valueIndex)),
+			vi:        append([]string{}, participant.valueIndex...), // Copy the slice
+		}
+
+		for _, key := range participant.valueIndex {
+			// Create a Delta for each key if not already initialized
+			originalDelta := participant.keyValues[key]
+			if originalDelta != nil {
+				tmP.keyValues[key] = &Delta{
+					valueType: originalDelta.valueType,
+					version:   originalDelta.version,
+					value:     append([]byte{}, originalDelta.value...), // Copy the value
+				}
+			}
+		}
+
+		// Assign the temporary participant to tmpC
+		tmpC.delta[v] = tmP
+
+		participant.pm.RUnlock()
+	}
+
+	msg, err := serialiseClusterDelta(tmpC, s.clusterMap.partIndex)
+	if err != nil {
+		return nil, err
+	}
+
+	hdr := constructNodeHeader(1, INFO_ALL, c.ph.id, uint16(len(msg)), NODE_HEADER_SIZE_V1)
+	log.Printf("HEADER RESPONSE = %v", hdr)
+
+	packet := &nodePacket{
+		hdr,
+		msg,
+	}
+
+	pay1, err := packet.serialize()
+	if err != nil {
+		return nil, err
+	}
+
+	return pay1, nil
+
+}
+
 //===================================================================================
 // Parser Header Processing
 //===================================================================================
@@ -252,7 +326,9 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 	//TEST
 	switch c.ph.command {
 	case INFO:
-		c.processInitialMessage(message)
+		c.processInfoMessage(message)
+	case INFO_ALL:
+		log.Printf("info all process step")
 	case GOSS_SYN:
 		c.processGossSyn(message)
 	case GOSS_SYN_ACK:
@@ -306,7 +382,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 }
 
-func (c *gbClient) processInitialMessage(message []byte) {
+func (c *gbClient) processInfoMessage(message []byte) {
 
 	tmpC, err := deserialiseDelta(message)
 	if err != nil {
@@ -321,16 +397,18 @@ func (c *gbClient) processInitialMessage(message []byte) {
 
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
 
-	cereal := []byte("OK +\r\n")
+	//cereal := []byte("OK +\r\n")
+	//
+	//// Construct header
+	//header := constructNodeHeader(1, OK, c.ph.id, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+	//// Create packet
+	//packet := &nodePacket{
+	//	header,
+	//	cereal,
+	//}
+	//pay1, _ := packet.serialize()
 
-	// Construct header
-	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
-	// Create packet
-	packet := &nodePacket{
-		header,
-		cereal,
-	}
-	pay1, _ := packet.serialize()
+	pay1, err := c.sendNewJoinerInfo()
 
 	c.qProto(pay1, true)
 
