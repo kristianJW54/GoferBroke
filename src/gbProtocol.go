@@ -13,7 +13,7 @@ const (
 const (
 	PROTO_VERSION_1     uint8 = 1
 	HEADER_SIZE_V1            = 6
-	NODE_HEADER_SIZE_V1       = 9
+	NODE_HEADER_SIZE_V1       = 11
 )
 
 const (
@@ -35,11 +35,13 @@ const (
 //Packet constructor and serialisation
 
 type nodePacketHeader struct {
-	version    uint8
-	command    uint8
-	id         uint8
-	msgSize    uint16
-	headerSize uint16
+	version             uint8
+	command             uint8
+	id                  uint8
+	msgSize             uint16
+	headerSize          uint16
+	streamBatchSize     uint8
+	streamBatchSequence uint8
 }
 
 type nodePacket struct {
@@ -47,8 +49,8 @@ type nodePacket struct {
 	data []byte
 }
 
-func constructNodeHeader(version, command, id uint8, msgSize, headerSize uint16) *nodePacketHeader {
-	return &nodePacketHeader{version, command, id, msgSize, headerSize}
+func constructNodeHeader(version, command, id uint8, msgSize, headerSize uint16, batchSize, batchSequence uint8) *nodePacketHeader {
+	return &nodePacketHeader{version, command, id, msgSize, headerSize, batchSize, batchSequence}
 }
 
 func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
@@ -67,8 +69,10 @@ func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
 	header[2] = nph.id
 	binary.BigEndian.PutUint16(header[3:5], nph.msgSize)
 	binary.BigEndian.PutUint16(header[5:7], nph.headerSize)
-	header[7] = '\r'
-	header[8] = '\n'
+	header[7] = nph.streamBatchSize
+	header[8] = nph.streamBatchSequence
+	header[9] = '\r'
+	header[10] = '\n'
 
 	return header, nil
 

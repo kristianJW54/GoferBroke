@@ -156,9 +156,6 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	participant.pm.RLock()
 	defer participant.pm.RUnlock() // Ensure the read lock is released even on errors
 
-	// Capture the indexes
-	pi := s.clusterMap.partIndex
-
 	tmpP := &tmpParticipant{keyValues: make(map[string]*Delta, len(participant.keyValues)), vi: participant.valueIndex}
 
 	tmpC.delta[s.ServerName] = tmpP
@@ -169,7 +166,7 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	}
 
 	// Need to serialise the tmpCluster
-	cereal, err := serialiseClusterDelta(tmpC, pi)
+	cereal, err := s.serialiseClusterDelta(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +179,7 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	}
 
 	// Construct header
-	header := constructNodeHeader(1, INFO, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
+	header := constructNodeHeader(1, INFO, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
 	// Create packet
 	packet := &nodePacket{
 		header,
@@ -262,12 +259,12 @@ func (c *gbClient) sendNewJoinerInfo() ([]byte, error) {
 		participant.pm.RUnlock()
 	}
 
-	msg, err := serialiseClusterDelta(tmpC, s.clusterMap.partIndex)
+	msg, err := s.serialiseClusterDelta(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	hdr := constructNodeHeader(1, INFO_ALL, c.ph.id, uint16(len(msg)), NODE_HEADER_SIZE_V1)
+	hdr := constructNodeHeader(1, INFO_ALL, c.ph.id, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
 	log.Printf("HEADER RESPONSE = %v", hdr)
 
 	packet := &nodePacket{

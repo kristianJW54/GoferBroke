@@ -2,6 +2,8 @@ package src
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"testing"
 	"time"
 )
@@ -160,49 +162,68 @@ func createDelta(valueType int, version int64, value string) *Delta {
 
 func TestSerialiseDelta(t *testing.T) {
 
-	// Creating node names
-	timeCode := time.Now().Unix()
-	nodeAName := fmt.Sprintf("node-a%d", timeCode)
-	nodeBName := fmt.Sprintf("node-b%d", timeCode)
+	lc := net.ListenConfig{}
 
-	// Create test clusterDelta
-	testClusterDelta := &clusterDelta{
-		delta: map[string]*tmpParticipant{
-			nodeAName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.1"),
-					_CPU_USAGE_: createDelta(0, timeCode, "45.3%"),
-					"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
-			},
-			nodeBName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.2"),
-					_CPU_USAGE_: createDelta(0, timeCode, "55.7%"),
-					"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
 			},
 		},
 	}
 
-	// Define value index and participant index for serialization
-	pi := []string{nodeAName, nodeBName} // Participant index, referencing the node names
+	//log.Println(config)
 
-	// Print the test structure for verification
-	for key, value := range testClusterDelta.delta {
-		t.Logf("name = %s", key)
-		for k, value := range value.keyValues {
-			t.Logf("(key-%s)(%d)(%s)", k, value.valueType, value.value)
-		}
-	}
+	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
+
+	//// Creating node names
+	//timeCode := time.Now().Unix()
+	//nodeAName := fmt.Sprintf("node-a%d", timeCode)
+	//nodeBName := fmt.Sprintf("node-b%d", timeCode)
+	//
+	//// Create test clusterDelta
+	//testClusterDelta := &clusterDelta{
+	//	delta: map[string]*tmpParticipant{
+	//		nodeAName: {
+	//			keyValues: map[string]*Delta{
+	//				_ADDRESS_:   createDelta(0, timeCode, "192.168.0.1"),
+	//				_CPU_USAGE_: createDelta(0, timeCode, "45.3%"),
+	//				"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
+	//			},
+	//			vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
+	//		},
+	//		nodeBName: {
+	//			keyValues: map[string]*Delta{
+	//				_ADDRESS_:   createDelta(0, timeCode, "192.168.0.2"),
+	//				_CPU_USAGE_: createDelta(0, timeCode, "55.7%"),
+	//				"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
+	//			},
+	//			vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
+	//		},
+	//	},
+	//}
+	//
+	//// Define value index and participant index for serialization
+	//pi := []string{nodeAName, nodeBName} // Participant index, referencing the node names
 
 	// Serialise the testClusterDelta with the participant index and value index
-	cereal, err := serialiseClusterDelta(testClusterDelta, pi)
+	gbs.clusterMapLock.RLock()
+	cereal, err := gbs.serialiseClusterDelta(nil)
 	if err != nil {
 		t.Fatalf("Failed to serialise cluster delta: %v", err)
 	}
+	gbs.clusterMapLock.RUnlock()
+
+	log.Println("cereal ==== ", cereal)
 
 	// De-serialise the serialized data back into a new clusterDelta
 	cd, err := deserialiseDelta(cereal)
@@ -221,121 +242,68 @@ func TestSerialiseDelta(t *testing.T) {
 
 }
 
-func BenchmarkSerialiseDelta(b *testing.B) {
-	// Creating node names
-	timeCode := time.Now().Unix()
-	nodeAName := fmt.Sprintf("node-a%d", timeCode)
-	nodeBName := fmt.Sprintf("node-b%d", timeCode)
-	nodeCName := fmt.Sprintf("node-c%d", timeCode)
-	nodeDName := fmt.Sprintf("node-d%d", timeCode)
-	nodeEName := fmt.Sprintf("node-e%d", timeCode)
-	nodeFName := fmt.Sprintf("node-f%d", timeCode)
-	nodeGName := fmt.Sprintf("node-g%d", timeCode)
-	nodeHName := fmt.Sprintf("node-h%d", timeCode)
-	nodeIName := fmt.Sprintf("node-i%d", timeCode)
-	nodeJName := fmt.Sprintf("node-j%d", timeCode)
+// TODO Test this with protobuf
 
-	// Create test clusterDelta with 10 participants
-	testClusterDelta := &clusterDelta{
-		delta: map[string]*tmpParticipant{
-			// Participant 1
-			nodeAName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.1"),
-					_CPU_USAGE_: createDelta(0, timeCode, "45.3%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 2
-			nodeBName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.2"),
-					_CPU_USAGE_: createDelta(0, timeCode, "55.7%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 3
-			nodeCName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.3"),
-					_CPU_USAGE_: createDelta(0, timeCode, "65.2%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 4
-			nodeDName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.4"),
-					_CPU_USAGE_: createDelta(0, timeCode, "72.8%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 5
-			nodeEName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.5"),
-					_CPU_USAGE_: createDelta(0, timeCode, "30.9%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 6
-			nodeFName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.6"),
-					_CPU_USAGE_: createDelta(0, timeCode, "62.4%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 7
-			nodeGName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.7"),
-					_CPU_USAGE_: createDelta(0, timeCode, "80.5%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 8
-			nodeHName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.8"),
-					_CPU_USAGE_: createDelta(0, timeCode, "90.6%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 9
-			nodeIName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.9"),
-					_CPU_USAGE_: createDelta(0, timeCode, "50.7%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
-			// Participant 10
-			nodeJName: {
-				keyValues: map[string]*Delta{
-					_ADDRESS_:   createDelta(0, timeCode, "192.168.0.10"),
-					_CPU_USAGE_: createDelta(0, timeCode, "33.3%"),
-				},
-				vi: []string{_ADDRESS_, _CPU_USAGE_}, // Store the value indices here
-			},
+func BenchmarkSerialiseDelta(b *testing.B) {
+	// Mock server setup with an empty Server struct
+	gbs := &GBServer{
+		selfInfo: &Participant{
+			name:      "test-server",
+			keyValues: make(map[string]*Delta),
+		},
+		clusterMap: ClusterMap{
+			participants: make(map[string]*Participant),
+			partIndex:    []string{"node-1", "node-2", "node-3"}, // Manually entering participants
 		},
 	}
 
-	// Define value index and participant index for serialization
-	pi := []string{
-		nodeAName, nodeBName, nodeCName, nodeDName, nodeEName,
-		nodeFName, nodeGName, nodeHName, nodeIName, nodeJName,
-	} // Participant index, referencing the node names
+	// Manually enter mock data into the cluster map with larger, realistic values
+	gbs.clusterMap.participants["node-1"] = &Participant{
+		name: "node-1",
+		keyValues: map[string]*Delta{
+			"newAccount.log":        createDelta(1, 1, `{"username": "user123", "password": "SecurePassword123!", "email": "user123@example.com", "created_at": "2024-12-27T12:00:00Z", "address": {"street": "123 Elm St", "city": "New York", "state": "NY", "zip": "10001"}}`),
+			"accountChange.user123": createDelta(1, 2, `{"username": "user123", "password": "UpdatedPassword456!", "email": "user123_new@example.com", "last_login": "2024-12-27T14:00:00Z", "preferences": {"theme": "dark", "notifications": true}}`),
+		},
+		valueIndex: []string{"newAccount.log", "accountChange.user123"},
+		maxVersion: 2,
+	}
 
-	// Reset the timer to exclude setup time
-	b.ResetTimer()
+	gbs.clusterMap.participants["node-2"] = &Participant{
+		name: "node-2",
+		keyValues: map[string]*Delta{
+			"newAccount.log":        createDelta(1, 3, `{"username": "user124", "password": "SuperSecure123", "email": "user124@example.com", "created_at": "2024-12-26T09:30:00Z", "address": {"street": "456 Maple Ave", "city": "Chicago", "state": "IL", "zip": "60601"}}`),
+			"accountChange.user123": createDelta(1, 4, `{"username": "user124", "password": "RevisedSecurePass789", "email": "user124_new@example.com", "last_login": "2024-12-26T10:00:00Z", "preferences": {"theme": "light", "notifications": false}}`),
+		},
+		valueIndex: []string{"newAccount.log", "accountChange.user123"},
+		maxVersion: 4,
+	}
 
-	for i := 0; i < b.N; i++ {
-		_, err := serialiseClusterDelta(testClusterDelta, pi)
-		if err != nil {
-			b.Fatalf("Failed to serialise cluster delta: %v", err)
+	gbs.clusterMap.participants["node-3"] = &Participant{
+		name: "node-3",
+		keyValues: map[string]*Delta{
+			"newAccount.log":        createDelta(1, 5, `{"username": "user125", "password": "Password123!", "email": "user125@example.com", "created_at": "2024-12-25T15:00:00Z", "address": {"street": "789 Oak Dr", "city": "Los Angeles", "state": "CA", "zip": "90001"}}`),
+			"accountChange.user123": createDelta(1, 6, `{"username": "user125", "password": "UpdatedPassword321!", "email": "user125_new@example.com", "last_login": "2024-12-25T17:00:00Z", "preferences": {"theme": "auto", "notifications": true}}`),
+		},
+		valueIndex: []string{"newAccount.log", "accountChange.user123"},
+		maxVersion: 6,
+	}
+
+	// Now that the server and participants are set up, start benchmarking
+	b.ResetTimer() // Reset the timer to avoid setup time affecting the benchmark
+	b.StartTimer()
+
+	// Serialize delta for each participant
+	for i := 0; i < b.N; i++ { // Iterate multiple times for better accuracy
+		for _, participant := range gbs.clusterMap.partIndex {
+			// Only serialize the name and keyValues delta
+			_, err := gbs.serialiseClusterDelta(nil)
+			if err != nil {
+				b.Fatalf("Failed to serialize delta for participant %v: %v", participant, err)
+			}
 		}
 	}
+
+	b.StopTimer()
 }
 
 func BenchmarkMapIteration(b *testing.B) {

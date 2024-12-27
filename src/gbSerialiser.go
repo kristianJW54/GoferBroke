@@ -113,56 +113,78 @@ type clusterDelta struct {
 
 // TODO Should be able to pass size and skip loop step if we have it - if not, calc size ourselves in here
 
-func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
+// TODO Checkout ProtoBuf and maybe admit defeat
 
-	length := 7 + 2 // Including CLRF
+// Lock should be held on entry
+func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 
-	// Pre-calculate buffer size (with minimal overhead)
-	for _, idx := range pi {
-		participant := cd.delta[idx]
-		length += 1 + len(idx) + 2 // 1 byte for name length + name length + size of delta key-values
+	// Type = Delta - 1 byte Uint8
+	// Length of payload - 4 byte uint32
+	// Size of Delta - 2 byte uint16
+	// Total metadata for digest byte array = --> 7 <--
 
-		for _, value := range participant.vi {
-			key := value
-			valueData := participant.keyValues[value]
-			length += 14 + len(key) + len(valueData.value) // 1 byte for key length + key length + 8 bytes for version + 1 byte for valueType + 4 bytes for value length
+	length := 7 + 2 //Including CLRF
+
+	pi := s.clusterMap.partIndex
+
+	for _, p := range pi {
+
+		participant := s.clusterMap.participants[p]
+		length += 1 + len(p) + 2 // 1 byte for name length + name length + size of delta key-values
+
+		// If no specific keys are included, serialize all keys
+		keysToSerialize := include
+		if len(include) == 0 {
+			keysToSerialize = participant.valueIndex // Serialize all keys
 		}
+
+		for _, key := range keysToSerialize {
+			if valueData, exists := participant.keyValues[key]; exists && valueData != nil {
+				//log.Printf("Found key: %s with value data: %+v\n", key, valueData)
+				length += 14 + len(key) + len(valueData.value) // Calculate size for this key
+			} else {
+				// Log missing key and continue
+				fmt.Printf("Warning: key %s not found or valueData is nil for participant %s\n", key, p)
+			}
+		}
+
 	}
 
 	// Allocate buffer
 	deltaBuf := make([]byte, length)
-	//deltaBuf := cerealPoolGet(length)
 
 	// Write metadata header directly
 	deltaBuf[0] = byte(DELTA_TYPE)
 	binary.BigEndian.PutUint32(deltaBuf[1:5], uint32(length))
-	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(cd.delta)))
+	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(pi)))
 
 	offset := 7
 
-	//// Serialize participants
-
-	// Efficient serialization of clusterDelta participants
-	for _, idx := range pi {
+	// Serialize participants
+	for _, p := range pi {
 		// Get the participant's data (avoiding repeated map lookups)
-		participant := cd.delta[idx]
-
+		participant := s.clusterMap.participants[p]
 		// Write participant name length and name
-		deltaBuf[offset] = uint8(len(idx))
+		deltaBuf[offset] = uint8(len(p))
 		offset++
-		copy(deltaBuf[offset:], idx)
-		offset += len(idx)
+		copy(deltaBuf[offset:], p)
+		offset += len(p)
 
 		// Write the number of key-value pairs for the participant
 		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(participant.keyValues)))
 		offset += 2
 
-		// Serialize each key-value pair for the participant
-		for _, value := range participant.vi {
-			// Retrieve the key-value pair from the participant's keyValues map
+		// If no specific keys are included, serialize all keys
+		keysToSerialize := include
+		if len(include) == 0 {
+			keysToSerialize = participant.valueIndex // Serialize all keys if 'include' is empty
+		}
+
+		// Serialize each key in 'keysToSerialize'
+		for _, value := range keysToSerialize {
+
 			valueData := participant.keyValues[value]
 			v := value
-
 			// Write key (which is similar to how we handle name)
 			deltaBuf[offset] = uint8(len(v))
 			offset++
@@ -182,7 +204,9 @@ func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
 			offset += 4
 			copy(deltaBuf[offset:], valueData.value)
 			offset += len(valueData.value)
+
 		}
+
 	}
 
 	// Append CRLF
@@ -193,8 +217,6 @@ func serialiseClusterDelta(cd *clusterDelta, pi []string) ([]byte, error) {
 	if offset != length {
 		return nil, fmt.Errorf("buffer mismatch: calculated length %d, written offset %d", length, offset)
 	}
-
-	//defer cerealPoolPut(deltaBuf)
 
 	return deltaBuf, nil
 }
