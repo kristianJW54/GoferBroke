@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package src;
+
+// Enum for value types (could be internal, config, state, client, etc.)
+enum ValueType {
+  INTERNAL_D = 0;
+  CONFIG_D = 1;
+  STATE_D = 2;
+  CLIENT_D = 3;
+}
+
+// Delta represents a data structure with a value and version for a specific participant.
+message PBDelta {
+  ValueType valueType = 1;    // Type of the value (internal, config, etc.)
+  int64 version = 2;          // Version of the value
+  bytes value = 3;            // The actual value
+}
+
+// Participant represents an individual participant in the cluster.
+message PBParticipant {
+  string name = 1;                          // Name of the participant
+  map<string, PBDelta> keyValues = 2;         // Key-value pairs for the participant (map of string -> Delta)
+  int64 maxVersion = 3;                     // Maximum version for participant data
+}
+
+// ClusterMap represents the entire cluster, mapping participant names to their Participant data.
+message PBClusterMap {
+  PBParticipant seedServer = 1;               // Seed server (could be a separate message)
+  map<string, PBParticipant> participants = 2; // Mapping of participant names to Participant data
+}
+
+
+// Specify the Go package for the generated code
+option go_package = "./src";

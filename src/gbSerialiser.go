@@ -113,8 +113,6 @@ type clusterDelta struct {
 
 // TODO Should be able to pass size and skip loop step if we have it - if not, calc size ourselves in here
 
-// TODO Checkout ProtoBuf and maybe admit defeat
-
 // Lock should be held on entry
 func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 
@@ -289,7 +287,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			offset += 8
 
 			// Type
-			vType := int(delta[offset])
+			vType := delta[offset]
 			offset += 1
 
 			// Length

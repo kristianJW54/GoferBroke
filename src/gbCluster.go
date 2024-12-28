@@ -40,7 +40,7 @@ type Seed struct {
 // Main cluster map for gossiping
 
 type Delta struct {
-	valueType int // Type could be internal, config, state, client
+	valueType byte // Type could be internal, config, state, client
 	version   int64
 	value     []byte // Value should go last for easier de-serialisation
 	// Could add user defined metadata later on??

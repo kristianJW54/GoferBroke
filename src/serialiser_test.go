@@ -1,7 +1,9 @@
 package src
 
 import (
+	"encoding/json"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"log"
 	"net"
 	"testing"
@@ -152,12 +154,106 @@ func BenchmarkSerialiseAndDeserialiseDigest(b *testing.B) {
 }
 
 // Helper function to create a Delta
-func createDelta(valueType int, version int64, value string) *Delta {
+func createDelta(valueType uint8, version int64, value string) *Delta {
 	return &Delta{
 		valueType: valueType,
 		version:   version,
 		value:     []byte(value),
 	}
+}
+
+func BenchmarkJSONSerialization(b *testing.B) {
+	keyValues := map[string]*Delta{
+		"key1":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("hello world")},
+		"key2":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
+		"key3":  &Delta{valueType: INTERNAL_D, version: 1640995201, value: []byte("short")},
+		"key4":  &Delta{valueType: INTERNAL_D, version: 1640995202, value: []byte("This is a slightly longer string to test serialization.")},
+		"key5":  &Delta{valueType: INTERNAL_D, version: 1640995203, value: []byte("1234567890")},
+		"key6":  &Delta{valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  &Delta{valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+		"key8":  &Delta{valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  &Delta{valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"key10": &Delta{valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+		"key11": &Delta{valueType: INTERNAL_D, version: 1640995209, value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
+		"key12": &Delta{valueType: INTERNAL_D, version: 1640995210, value: []byte("abcdefghijklmnopqrstuvwxyz")},
+		"key13": &Delta{valueType: INTERNAL_D, version: 1640995211, value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
+		"key14": &Delta{valueType: INTERNAL_D, version: 1640995212, value: []byte("Yet another string, this one a bit longer than the previous.")},
+		"key15": &Delta{valueType: INTERNAL_D, version: 1640995213, value: []byte("Small string.")},
+		"key16": &Delta{valueType: INTERNAL_D, version: 1640995214, value: []byte("A moderately sized string for testing.")},
+		"key17": &Delta{valueType: INTERNAL_D, version: 1640995215, value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
+		"key18": &Delta{valueType: INTERNAL_D, version: 1640995216, value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
+		"key19": &Delta{valueType: INTERNAL_D, version: 1640995217, value: []byte("Medium length string for benchmarking purposes.")},
+		"key20": &Delta{valueType: INTERNAL_D, version: 1640995218, value: []byte("Final key-value pair.")},
+	}
+
+	for i := 0; i < b.N; i++ {
+		_, _ = json.Marshal(keyValues)
+	}
+}
+
+func BenchmarkProtobufSerialization(b *testing.B) {
+	// Create keyValues with PBDelta messages
+	keyValues := map[string]*PBDelta{
+		"key1":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995200, Value: []byte("hello world")},
+		"key2":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995200, Value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
+		"key3":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995201, Value: []byte("short")},
+		"key4":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995202, Value: []byte("This is a slightly longer string to test serialization.")},
+		"key5":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995203, Value: []byte("1234567890")},
+		"key6":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+		"key8":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"key10": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
+		"key11": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995209, Value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
+		"key12": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995210, Value: []byte("abcdefghijklmnopqrstuvwxyz")},
+		"key13": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995211, Value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
+		"key14": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995212, Value: []byte("Yet another string, this one a bit longer than the previous.")},
+		"key15": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995213, Value: []byte("Small string.")},
+		"key16": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995214, Value: []byte("A moderately sized string for testing.")},
+		"key17": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995215, Value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
+		"key18": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995216, Value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
+		"key19": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995217, Value: []byte("Medium length string for benchmarking purposes.")},
+		"key20": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995218, Value: []byte("Final key-value pair.")},
+	}
+
+	// Initialize the keys slice to avoid map iteration overhead inside benchmark
+	keys := make([]string, 0, len(keyValues))
+	for key := range keyValues {
+		keys = append(keys, key)
+	}
+
+	// Create a ClusterMap which maps a string to PBParticipant
+	clusterMap := make(map[string]*PBParticipant)
+
+	// Create a Participant and map Delta values to the Participant
+	participant := &PBParticipant{
+		KeyValues: make(map[string]*PBDelta),
+	}
+
+	// Map all key-values from `keyValues` to the participant's KeyValues
+	for key, delta := range keyValues {
+		participant.KeyValues[key] = delta
+	}
+
+	// Add the participant to the ClusterMap with a key (e.g., "cluster1")
+	clusterMap["cluster1"] = participant
+
+	// Warm-up phase: Run once before the actual benchmarking to avoid initial overhead
+	_, _ = proto.Marshal(clusterMap["cluster1"]) // Marshal the participant of "cluster1" to remove startup costs
+
+	// Run the benchmark
+	b.ResetTimer() // Exclude the time spent in setup (like key-value initialization)
+
+	// Run the serialization in parallel to test performance under load
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			// Serialize the entire ClusterMap entry (participant of "cluster1")
+			_, err := proto.Marshal(clusterMap["cluster1"])
+			if err != nil {
+				b.Fatalf("Failed to marshal ClusterMap entry: %v", err)
+			}
+		}
+	})
 }
 
 func TestSerialiseDelta(t *testing.T) {
@@ -184,36 +280,6 @@ func TestSerialiseDelta(t *testing.T) {
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
-
-	//// Creating node names
-	//timeCode := time.Now().Unix()
-	//nodeAName := fmt.Sprintf("node-a%d", timeCode)
-	//nodeBName := fmt.Sprintf("node-b%d", timeCode)
-	//
-	//// Create test clusterDelta
-	//testClusterDelta := &clusterDelta{
-	//	delta: map[string]*tmpParticipant{
-	//		nodeAName: {
-	//			keyValues: map[string]*Delta{
-	//				_ADDRESS_:   createDelta(0, timeCode, "192.168.0.1"),
-	//				_CPU_USAGE_: createDelta(0, timeCode, "45.3%"),
-	//				"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
-	//			},
-	//			vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
-	//		},
-	//		nodeBName: {
-	//			keyValues: map[string]*Delta{
-	//				_ADDRESS_:   createDelta(0, timeCode, "192.168.0.2"),
-	//				_CPU_USAGE_: createDelta(0, timeCode, "55.7%"),
-	//				"ACCOUNT":   createDelta(0, timeCode, "{user123:password:thisismypassword"),
-	//			},
-	//			vi: []string{_ADDRESS_, _CPU_USAGE_, "ACCOUNT"}, // Store the value indices here
-	//		},
-	//	},
-	//}
-	//
-	//// Define value index and participant index for serialization
-	//pi := []string{nodeAName, nodeBName} // Participant index, referencing the node names
 
 	// Serialise the testClusterDelta with the participant index and value index
 	gbs.clusterMapLock.RLock()
