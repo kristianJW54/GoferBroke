@@ -137,7 +137,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				} else {
 					arg = packet[c.position : i-c.drop]
 				}
-				c.processINFO(arg)
+				c.processArg(arg)
 
 				c.drop = 0
 				c.position = i + 1
@@ -165,7 +165,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				} else {
 					arg = packet[c.position : i-c.drop]
 				}
-				c.processINFO(arg)
+				c.processArg(arg)
 
 				c.drop = 0
 				c.position = i + 1
@@ -193,7 +193,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				} else {
 					arg = packet[c.position : i-c.drop]
 				}
-				c.processINFO(arg)
+				c.processArg(arg)
 
 				c.drop = 0
 				c.position = i + 1
@@ -253,9 +253,9 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 
-			c.processMessage(c.msgBuf)
-
 			log.Println("final message --> ", string(c.msgBuf))
+
+			c.processMessage(c.msgBuf)
 
 			c.argBuf, c.msgBuf = nil, nil
 			c.ph.msgLength, c.ph.headerLength, c.ph.command, c.ph.version = 0, 0, 0, 0

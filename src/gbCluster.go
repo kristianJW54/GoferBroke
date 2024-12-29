@@ -117,7 +117,6 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
 // TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest
 
-// Thread safe and to be used when cached digest is nil or invalidated
 func (s *GBServer) generateDigest() ([]*fullDigest, error) {
 
 	s.clusterMapLock.RLock()

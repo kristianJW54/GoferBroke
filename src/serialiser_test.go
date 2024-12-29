@@ -186,38 +186,9 @@ func BenchmarkJSONSerialization(b *testing.B) {
 		"key20": &Delta{valueType: INTERNAL_D, version: 1640995218, value: []byte("Final key-value pair.")},
 	}
 
-	// Create a ClusterMap which maps a string to PBParticipant
-	clusterMap := make(map[string]*Participant)
-
-	// Create a Participant and map Delta values to the Participant
-	participant := &Participant{
-		keyValues: make(map[string]*Delta),
+	for i := 0; i < b.N; i++ {
+		_, _ = json.Marshal(keyValues)
 	}
-
-	// Map all key-values from `keyValues` to the participant's KeyValues
-	for key, delta := range keyValues {
-		participant.keyValues[key] = delta
-	}
-
-	// Add the participant to the ClusterMap with a key (e.g., "cluster1")
-	clusterMap["cluster1"] = participant
-
-	// Warm-up phase: Run once before the actual benchmarking to avoid initial overhead
-	_, _ = json.Marshal(clusterMap["cluster1"]) // Marshal the participant of "cluster1" to remove startup costs
-
-	// Run the benchmark
-	b.ResetTimer() // Exclude the time spent in setup (like key-value initialization)
-
-	// Run the serialization in parallel to test performance under load
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			// Serialize the entire ClusterMap entry (participant of "cluster1")
-			_, err := json.Marshal(clusterMap["cluster1"])
-			if err != nil {
-				b.Fatalf("Failed to marshal ClusterMap entry: %v", err)
-			}
-		}
-	})
 }
 
 func BenchmarkProtobufSerialization(b *testing.B) {
@@ -430,7 +401,7 @@ func TestMySerialization(t *testing.T) {
 
 }
 
-func TestSerialiseDelta(t *testing.T) {
+func TestSerialiseDeltaLiveServer(t *testing.T) {
 
 	lc := net.ListenConfig{}
 

@@ -142,28 +142,12 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	// Check if the server name exists in participants
 	participant, ok := s.clusterMap.participants[s.ServerName]
 	if !ok {
-		return nil, fmt.Errorf("no participant found for server %s", s.ServerName)
+		return nil, fmt.Errorf("no participant found for server %s", participant.name)
 	}
 
-	log.Println("STARTED PREPARING")
+	log.Printf("%s -- STARTED PREPARING", s.ServerName)
 
 	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
-
-	// Setup tmpCluster
-	tmpC := &clusterDelta{make(map[string]*tmpParticipant, 1)}
-
-	// Lock the participant for reading
-	participant.pm.RLock()
-	defer participant.pm.RUnlock() // Ensure the read lock is released even on errors
-
-	tmpP := &tmpParticipant{keyValues: make(map[string]*Delta, len(participant.keyValues)), vi: participant.valueIndex}
-
-	tmpC.delta[s.ServerName] = tmpP
-
-	for _, v := range participant.valueIndex {
-		// Copy keyValues into tmpParticipant
-		tmpP.keyValues[v] = participant.keyValues[v]
-	}
 
 	// Need to serialise the tmpCluster
 	cereal, err := s.serialiseClusterDelta(nil)
@@ -186,7 +170,6 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 		cereal,
 	}
 	pay1, err := packet.serialize()
-	log.Printf("pay1 %v", pay1)
 	if err != nil {
 		return nil, err
 	}
@@ -207,12 +190,12 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 // From there gossip will up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
 // for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
 
-func (c *gbClient) sendNewJoinerInfo() ([]byte, error) {
+func (c *gbClient) onboardNewJoiner() ([]byte, error) {
 
 	s := c.srv
 
-	s.clusterMapLock.RLock()
-	defer s.clusterMapLock.RUnlock()
+	//s.clusterMapLock.RLock()
+	//defer s.clusterMapLock.RUnlock()
 
 	if len(s.clusterMap.partIndex) > 100 {
 		log.Printf("lots of participants - may need more efficient snapshot transfer")
@@ -224,40 +207,9 @@ func (c *gbClient) sendNewJoinerInfo() ([]byte, error) {
 		// TODO If cluster too large - will need to stream data and use metadata to track progress
 	}
 
-	tmpC := &clusterDelta{make(map[string]*tmpParticipant, len(s.clusterMap.partIndex))}
 	log.Println("HERE ====================================================")
 
 	// TODO Need to serialise from the cluster map and not use tmp structs
-
-	for _, v := range s.clusterMap.partIndex {
-		participant := s.clusterMap.participants[v]
-
-		// Lock the participant for safe read access
-		participant.pm.RLock()
-
-		// Create and populate tmpParticipant
-		tmP := &tmpParticipant{
-			keyValues: make(map[string]*Delta, len(participant.valueIndex)),
-			vi:        append([]string{}, participant.valueIndex...), // Copy the slice
-		}
-
-		for _, key := range participant.valueIndex {
-			// Create a Delta for each key if not already initialized
-			originalDelta := participant.keyValues[key]
-			if originalDelta != nil {
-				tmP.keyValues[key] = &Delta{
-					valueType: originalDelta.valueType,
-					version:   originalDelta.version,
-					value:     append([]byte{}, originalDelta.value...), // Copy the value
-				}
-			}
-		}
-
-		// Assign the temporary participant to tmpC
-		tmpC.delta[v] = tmP
-
-		participant.pm.RUnlock()
-	}
 
 	msg, err := s.serialiseClusterDelta(nil)
 	if err != nil {
@@ -285,8 +237,10 @@ func (c *gbClient) sendNewJoinerInfo() ([]byte, error) {
 // Parser Header Processing
 //===================================================================================
 
-func (c *gbClient) processINFO(arg []byte) error {
+func (c *gbClient) processArg(arg []byte) error {
 	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
+
+	// TODO may need a arg dispatcher or different arg processors
 
 	if len(arg) >= 4 {
 		c.ph.version = arg[0]
@@ -298,7 +252,7 @@ func (c *gbClient) processINFO(arg []byte) error {
 		c.ph.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
 		// Log the result to verify
-		log.Printf("Extracted msgLength: %d\n", c.ph.msgLength)
+		//log.Printf("Extracted msgLength: %d\n", c.ph.msgLength)
 	} else {
 		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
 	}
@@ -325,7 +279,7 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 	case INFO:
 		c.processInfoMessage(message)
 	case INFO_ALL:
-		log.Printf("info all process step")
+		c.processInfoAll(message)
 	case GOSS_SYN:
 		c.processGossSyn(message)
 	case GOSS_SYN_ACK:
@@ -343,6 +297,38 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 }
 
 func (c *gbClient) processErrResp(message []byte) {
+
+}
+
+func (c *gbClient) processInfoAll(message []byte) {
+
+	d, err := deserialiseDelta(message)
+	if err != nil {
+		log.Printf("Error deserialising delta: %v", err)
+	}
+
+	for k, v := range d.delta {
+		log.Printf("%s", k)
+		for _, value := range v.keyValues {
+			log.Printf("%+v", value)
+		}
+	}
+
+	c.rm.Lock()
+	responseChan, exists := c.resp[int(c.argBuf[2])]
+	c.rm.Unlock()
+
+	if exists {
+
+		responseChan <- message
+
+		c.rm.Lock()
+		delete(c.resp, int(c.argBuf[0]))
+		c.rm.Unlock()
+
+	} else {
+		log.Printf("no response channel found")
+	}
 
 }
 
@@ -386,6 +372,9 @@ func (c *gbClient) processInfoMessage(message []byte) {
 		log.Printf("deserialiseDelta failed: %v", err)
 	}
 	for key, value := range tmpC.delta {
+
+		log.Printf("delta received from %s", key)
+
 		log.Printf("key = %s", key)
 		for k, v := range value.keyValues {
 			log.Printf("value[%v]: %v", k, v)
@@ -393,6 +382,8 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	}
 
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
+	// Allow for an error response or retry if this is not correct
+	// TODO - then use method to add to cluster
 
 	//cereal := []byte("OK +\r\n")
 	//
@@ -405,9 +396,9 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	//}
 	//pay1, _ := packet.serialize()
 
-	pay1, err := c.sendNewJoinerInfo()
+	//pay1, err := c.onboardNewJoiner()
 
-	c.qProto(pay1, true)
+	//c.qProto(pay1, true)
 
 	return
 
