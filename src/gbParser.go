@@ -26,6 +26,7 @@ const (
 
 	// Response types
 	OK
+	EOS
 	ERR_RESP
 )
 

@@ -1,0 +1,9 @@
+
+
+WHAT CONFIGURATIONS WILL WE HAVE:
+
+Seed Server IP & Port
+
+
+Number of sequence ID pool for responses
+Max number of nodes for the cluster

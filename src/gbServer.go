@@ -112,7 +112,8 @@ type GBServer struct {
 	numNodeConnections   uint8
 	numClientConnections uint16
 
-	//phoneBook      map[string]*gbClient
+	nodeStore   map[string]*gbClient
+	clientStore map[string]*gbClient
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response

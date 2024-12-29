@@ -190,12 +190,9 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 // From there gossip will up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
 // for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
 
-func (c *gbClient) onboardNewJoiner() ([]byte, error) {
+func (c *gbClient) onboardNewJoiner() error {
 
 	s := c.srv
-
-	//s.clusterMapLock.RLock()
-	//defer s.clusterMapLock.RUnlock()
 
 	if len(s.clusterMap.partIndex) > 100 {
 		log.Printf("lots of participants - may need more efficient snapshot transfer")
@@ -211,10 +208,12 @@ func (c *gbClient) onboardNewJoiner() ([]byte, error) {
 
 	// TODO Need to serialise from the cluster map and not use tmp structs
 
+	s.clusterMapLock.Lock()
 	msg, err := s.serialiseClusterDelta(nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	s.clusterMapLock.Unlock()
 
 	hdr := constructNodeHeader(1, INFO_ALL, c.ph.id, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
 	log.Printf("HEADER RESPONSE = %v", hdr)
@@ -226,10 +225,12 @@ func (c *gbClient) onboardNewJoiner() ([]byte, error) {
 
 	pay1, err := packet.serialize()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return pay1, nil
+	c.qProto(pay1, true)
+
+	return nil
 
 }
 
@@ -323,11 +324,12 @@ func (c *gbClient) processInfoAll(message []byte) {
 		responseChan <- message
 
 		c.rm.Lock()
-		delete(c.resp, int(c.argBuf[0]))
+		delete(c.resp, int(c.argBuf[2]))
 		c.rm.Unlock()
 
 	} else {
 		log.Printf("no response channel found")
+		// Else handle as normal command
 	}
 
 }
@@ -344,7 +346,7 @@ func (c *gbClient) processOK(message []byte) {
 		responseChan <- message
 
 		c.rm.Lock()
-		delete(c.resp, int(c.argBuf[0]))
+		delete(c.resp, int(c.argBuf[2]))
 		c.rm.Unlock()
 
 	} else {
@@ -369,36 +371,31 @@ func (c *gbClient) processInfoMessage(message []byte) {
 
 	tmpC, err := deserialiseDelta(message)
 	if err != nil {
-		log.Printf("deserialiseDelta failed: %v", err)
-	}
-	for key, value := range tmpC.delta {
-
-		log.Printf("delta received from %s", key)
-
-		log.Printf("key = %s", key)
-		for k, v := range value.keyValues {
-			log.Printf("value[%v]: %v", k, v)
-		}
+		log.Printf("deserialise Delta failed: %v", err)
+		// Send err response
 	}
 
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
 	// Allow for an error response or retry if this is not correct
-	// TODO - then use method to add to cluster
+	// TODO - then use method to add to cluster - must do check to see if it is in cluster already, if so we must call update instead
 
-	//cereal := []byte("OK +\r\n")
-	//
-	//// Construct header
-	//header := constructNodeHeader(1, OK, c.ph.id, uint16(len(cereal)), NODE_HEADER_SIZE_V1)
-	//// Create packet
-	//packet := &nodePacket{
-	//	header,
-	//	cereal,
-	//}
-	//pay1, _ := packet.serialize()
+	err = c.onboardNewJoiner()
+	if err != nil {
+		log.Printf("onboardNewJoiner failed: %v", err)
+	}
 
-	//pay1, err := c.onboardNewJoiner()
+	// If this is one participant consider accessing another way than loop
 
-	//c.qProto(pay1, true)
+	// We have to do this last because we will end up sending back the nodes own info
+	for key, value := range tmpC.delta {
+
+		err := c.srv.addParticipantFromTmp(key, value)
+		if err != nil {
+			log.Printf("AddParticipantFromTmp failed: %v", err)
+			//send err response
+		}
+
+	}
 
 	return
 

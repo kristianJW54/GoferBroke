@@ -3,6 +3,7 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -124,6 +125,7 @@ func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 	length := 7 + 2 //Including CLRF
 
 	pi := s.clusterMap.partIndex
+	log.Println("part index please ", pi)
 
 	for _, p := range pi {
 

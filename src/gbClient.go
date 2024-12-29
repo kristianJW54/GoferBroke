@@ -564,6 +564,8 @@ type responseHandler struct {
 	rm      sync.Mutex
 }
 
+// Maybe resp needs to be an embedded struct of response {type, id, chan}
+
 func (c *gbClient) addResponseChannel(seqID int) chan []byte {
 
 	respChan := make(chan []byte, 1)

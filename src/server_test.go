@@ -29,16 +29,13 @@ func TestServerRunningTwoNodes(t *testing.T) {
 		},
 	}
 
-	//log.Println(config)
-
 	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
 	gbs2 := NewServer("test-server-2", config, "localhost", "8082", "8083", lc)
-
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
 	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
-	log.Printf("p name = %v | values %v", gbs2.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
+	log.Printf("p name = %v | values %v", gbs2.selfInfo.name, gbs2.selfInfo.keyValues[_ADDRESS_])
 
 	// Current break is here
 
@@ -53,6 +50,15 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//time.Sleep(1 * time.Second)
 	go gbs.Shutdown()
 	time.Sleep(1 * time.Second)
+
+	// TODO Include test method for getting and logging cluster map
+	for _, v := range gbs.clusterMap.participants {
+		log.Printf("node name = %s", v.name)
+		for key, value := range v.keyValues {
+			log.Printf("key = %s, value = %s", key, value.value)
+		}
+	}
+
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
 

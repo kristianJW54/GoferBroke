@@ -2,6 +2,7 @@ package src
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -112,7 +113,27 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 //Add/Remove Participant
 
-//--
+// --
+// Thread safe
+func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) error {
+
+	s.clusterMapLock.Lock()
+
+	// First add to the cluster map
+	s.clusterMap.participants[name] = &Participant{
+		name:       name,
+		keyValues:  tmpP.keyValues,
+		valueIndex: tmpP.vi,
+	}
+
+	s.clusterMap.partIndex = append(s.clusterMap.partIndex, name)
+
+	log.Printf("added %s to participant map", name)
+
+	s.clusterMapLock.Unlock()
+
+	return nil
+}
 
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
 // TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest
