@@ -3,6 +3,7 @@ package src
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -96,8 +97,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // Connecting to seed server
 //-------------------------------
 
-// TODO This is where we will wait for a response in a non blocking way and use the req ID - upon response, we will release the ID back to the pool
-// will need a ID map for active request awaiting responses and handlers for when is done or timeout reached then auto release
 func (s *GBServer) connectToSeed() error {
 
 	//With this function - we reach out to seed - so in our connection handling we would need to check protocol version
@@ -120,7 +119,14 @@ func (s *GBServer) connectToSeed() error {
 
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 
-	client.qProtoWithResponse(pay1, false, true)
+	//TODO Need to wait here until we receive the OK from seed servers that we have been onboarded and can proceed
+	// the ok will be from a complete cluster info send with a OK + EOS message signalling we have got all the info to begin
+	ok, err := client.qProtoWithResponse(pay1, false, true)
+	if err != nil {
+		return err
+	}
+
+	log.Println("OK == ", ok)
 
 	// TODO should move to createNodeClient?
 	select {
@@ -303,17 +309,17 @@ func (c *gbClient) processErrResp(message []byte) {
 
 func (c *gbClient) processInfoAll(message []byte) {
 
-	d, err := deserialiseDelta(message)
+	_, err := deserialiseDelta(message)
 	if err != nil {
 		log.Printf("Error deserialising delta: %v", err)
 	}
 
-	for k, v := range d.delta {
-		log.Printf("%s", k)
-		for _, value := range v.keyValues {
-			log.Printf("%+v", value)
-		}
-	}
+	//for k, v := range d.delta {
+	//	log.Printf("%s", k)
+	//	for _, value := range v.keyValues {
+	//		log.Printf("%+v", value)
+	//	}
+	//}
 
 	c.rm.Lock()
 	responseChan, exists := c.resp[int(c.argBuf[2])]
@@ -321,7 +327,8 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 	if exists {
 
-		responseChan <- message
+		err := errors.New("this is an error response TEST")
+		responseChan.err <- err
 
 		c.rm.Lock()
 		delete(c.resp, int(c.argBuf[2]))
@@ -343,7 +350,7 @@ func (c *gbClient) processOK(message []byte) {
 
 	if exists {
 
-		responseChan <- message
+		responseChan.ch <- message
 
 		c.rm.Lock()
 		delete(c.resp, int(c.argBuf[2]))

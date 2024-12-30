@@ -191,7 +191,17 @@ func (c *gbClient) initClient() {
 	//Outbound setup
 	c.outbound.flushSignal = sync.NewCond(&(c.mu))
 
-	c.responseHandler.resp = make(map[int]chan []byte, 10) // Need to align with SeqID pool-size
+	//c.responseHandler.resp = make(map[int]chan []byte, 10) // Need to align with SeqID pool-size
+
+	c.responseHandler.resp = make(map[int]*response, 10) // Need to align with SeqID pool-size
+
+	for i := 0; i < 10; i++ {
+		c.responseHandler.resp[i] = &response{
+			ch:      make(chan []byte, 1),
+			timeout: 2 * time.Second, // Default timeout; can be overridden
+			err:     nil,
+		}
+	}
 
 }
 
@@ -558,66 +568,92 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 //---------------------------
 //Node Response Handling
 
-type responseHandler struct {
-	resp    map[int]chan []byte
+type response struct {
+	id      int
+	ch      chan []byte
 	timeout time.Duration
-	rm      sync.Mutex
+	err     chan error
+}
+
+type responseHandler struct {
+	resp map[int]*response
+	rm   sync.Mutex
 }
 
 // Maybe resp needs to be an embedded struct of response {type, id, chan}
 
-func (c *gbClient) addResponseChannel(seqID int) chan []byte {
+func (c *gbClient) addResponseChannel(seqID int) *response {
 
-	respChan := make(chan []byte, 1)
+	rsp := &response{
+		ch:  make(chan []byte, 1),
+		err: make(chan error, 1),
+		id:  seqID,
+	}
 
 	log.Printf("adding response channel %d", seqID)
 
 	c.rm.Lock()
-	c.resp[seqID] = respChan
+	c.resp[seqID] = rsp
 	c.rm.Unlock()
 
-	return respChan
+	return rsp
 }
 
-func (c *gbClient) waitForResponse(ctx context.Context, response chan []byte, respID byte, timeout time.Duration) {
+// TODO need to make a cleanup function to defer cleanup of resources and close channels and return hanging ID's
+
+func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID byte, timeout time.Duration) ([]byte, error) {
 
 	// Wait for the response with timeout
 	select {
 	case <-ctx.Done():
 		log.Printf("context cancelled waiting for response channel %d", respID)
-		close(response)
 		c.rm.Lock()
 		delete(c.responseHandler.resp, int(respID))
 		c.rm.Unlock()
 		log.Printf("deleting response channel %d", int(respID))
 		log.Printf("returning sequence to the pool")
 		c.srv.releaseReqID(respID)
-		return
-	case rsp := <-response:
+		close(rsp.ch)
+		close(rsp.err)
+		return nil, ctx.Err()
+	case msg := <-rsp.ch:
 		log.Printf("I got a response WOO!")
-		log.Printf("response = %v", string(rsp))
+		log.Printf("response = %v", string(msg))
 		c.rm.Lock()
 		delete(c.responseHandler.resp, int(respID))
 		c.rm.Unlock()
 		log.Printf("deleting response channel %d", int(respID))
 		log.Printf("returning sequence to the pool")
 		c.srv.releaseReqID(respID)
-		close(response)
-		return
+		close(rsp.ch)
+		close(rsp.err)
+		return msg, nil
+	case err := <-rsp.err:
+		log.Printf("Received error response for ID %d: %v", respID, err)
+		c.rm.Lock()
+		delete(c.responseHandler.resp, int(respID))
+		c.rm.Unlock()
+		log.Printf("deleting response channel %d", int(respID))
+		log.Printf("returning sequence to the pool")
+		c.srv.releaseReqID(respID)
+		close(rsp.ch)
+		close(rsp.err)
+		return nil, err
 	case <-time.After(timeout):
 		// Clean up the response channel on timeout
-		close(response)
+		close(rsp.ch)
+		close(rsp.err)
 		c.rm.Lock()
 		delete(c.responseHandler.resp, int(respID))
 		c.rm.Unlock()
 		log.Printf("timed out waiting for response channel %d", int(respID))
-		return
+		return nil, fmt.Errorf("timeout for response ID %d", rsp.id)
 	}
 
 }
 
 // Lock not held on entry
-func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
+func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) ([]byte, error) {
 
 	respID := proto[2]
 
@@ -632,8 +668,17 @@ func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) {
 		c.mu.Unlock()
 
 		// Wait for the response with timeout
-		go c.waitForResponse(c.srv.serverContext, responseChannel, respID, 2*time.Second)
+		// We have to block and wait until we get a signal to continue the process which requested a response
+		ok, err := c.waitForResponse(c.srv.serverContext, responseChannel, respID, 2*time.Second)
+
+		if err != nil {
+			log.Printf("error for response channel %d: %v", int(respID), err)
+			return nil, err
+		}
+		return ok, nil
 	}
+
+	return nil, nil
 }
 
 //===================================================================================
