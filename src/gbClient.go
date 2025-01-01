@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,17 +24,12 @@ type clientFlags uint16 // Inspired by NATS bit mask for flags
 // Flags
 const (
 	CONNECTED = 1 << iota
-	GOSSIPING
 	FLUSH_OUTBOUND
 	CLOSED
+	MARKED_CLOSED
+	NO_RECONNECT
 	WRITE_LOOP_STARTED
 	READ_LOOP_STARTED
-	GOSS_SYN_SENT
-	GOSS_SYN_REC
-	GOSS_SYN_ACK_SENT
-	GOSS_SYN_ACK_REC
-	GOSS_ACK_SENT
-	GOSS_ACK_REC
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -59,6 +56,16 @@ func (cf *clientFlags) setIfNotSet(c clientFlags) bool {
 	return false
 }
 
+type ClosedState int
+
+const (
+	ClientClosed = ClosedState(iota + 1)
+	WriteError
+	ReadError
+	ParseError
+	ServerShutdown
+)
+
 //===================================================================================
 // Client | Node
 //===================================================================================
@@ -66,6 +73,7 @@ func (cf *clientFlags) setIfNotSet(c clientFlags) bool {
 type gbClient struct {
 	Name    string
 	created time.Time
+	cid     uint64
 
 	srv *GBServer
 
@@ -96,7 +104,8 @@ type gbClient struct {
 	responseHandler
 
 	//Syncing
-	mu sync.Mutex
+	mu       sync.Mutex
+	refCount byte //Uint8
 }
 
 //===================================================================================
@@ -188,6 +197,10 @@ func nbPoolPut(b []byte) {
 
 func (c *gbClient) initClient() {
 
+	s := c.srv
+
+	//Setup id for tracking in server map
+	c.cid = atomic.AddUint64(&s.gcid, 1) // Assign unique ID
 	//Outbound setup
 	c.outbound.flushSignal = sync.NewCond(&(c.mu))
 
@@ -199,7 +212,7 @@ func (c *gbClient) initClient() {
 		c.responseHandler.resp[i] = &response{
 			ch:      make(chan []byte, 1),
 			timeout: 2 * time.Second, // Default timeout; can be overridden
-			err:     nil,
+			err:     make(chan error, 1),
 		}
 	}
 
@@ -228,7 +241,9 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// This is important for fault detection as when a node/client goes down we won't know to close the connection unless
 	// we detect it or us as a server shuts down
 	//We also only get a read error once we close the connection - so we need to handle our connections in a robust way
-	s.tmpClientStore["1"] = client
+
+	s.tmpClientStore[client.cid] = client
+	fmt.Printf("creating client %s", client.Name)
 
 	//TODO before starting the loops - handle TLS Handshake if needed
 	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
@@ -254,6 +269,28 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	}
 
 	return client
+
+}
+
+func (s *GBServer) moveToConnected(cid uint64) error {
+
+	client, ok := s.tmpClientStore[cid]
+	if !ok {
+		return errors.New("client not found")
+	}
+
+	switch client.cType {
+	case NODE:
+		s.nodeStore[cid] = client
+		client.flags.set(CONNECTED)
+		delete(s.tmpClientStore, client.cid)
+	case CLIENT:
+		s.clientStore[cid] = client
+		client.flags.set(CONNECTED)
+		delete(s.tmpClientStore, client.cid)
+	}
+
+	return nil
 
 }
 
@@ -303,6 +340,8 @@ func (c *gbClient) readLoop() {
 				return
 			}
 			log.Printf("read error: %s", err)
+			//TODO Handle client closures more effectively - based on type
+			// if client may want to reconnect and retry - if node we will want to use the phi accrual
 			return
 		}
 
@@ -483,31 +522,6 @@ func (c *gbClient) flushWriteOutbound() bool {
 // met
 // https://pkg.go.dev/context#example-AfterFunc-Cond
 
-func waitOnCond(ctx context.Context, cond *sync.Cond, conditionMet func() bool) error {
-
-	stopCondition := context.AfterFunc(ctx, func() {
-
-		cond.L.Lock()
-		defer cond.L.Unlock()
-
-		cond.Broadcast()
-
-	})
-
-	defer stopCondition()
-
-	for !conditionMet() {
-		cond.Wait()
-		if ctx.Err() != nil {
-			log.Printf("exiting write loop")
-			return ctx.Err()
-		}
-	}
-
-	return nil
-
-}
-
 func (c *gbClient) writeLoop() {
 
 	c.mu.Lock()
@@ -530,24 +544,16 @@ func (c *gbClient) writeLoop() {
 	for {
 		c.mu.Lock()
 		if waitOk {
-			//err := waitOnCond(c.srv.serverContext, c.outbound.flushSignal, func() bool {
-			//	return !waitOk
-			//})
-			//if err != nil {
-			//	c.mu.Unlock()
-			//	return
-			//}
-			log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
+			//log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
 			//// Can I add a broadcast here instead
 			c.outbound.flushSignal.Wait()
-			log.Println("Flush signal awakened.")
+			//log.Println("Flush signal awakened.")
 			if c.srv.serverContext.Err() != nil {
 				log.Printf("exiting write loop")
 				return
 			}
 		}
 		waitOk = c.flushWriteOutbound()
-		log.Printf("flushWriteOutbound result: %v", waitOk)
 
 		c.mu.Unlock()
 
@@ -567,6 +573,8 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 
 //---------------------------
 //Node Response Handling
+
+// TODO Create standard response errors and protocol errors to return on the channel
 
 type response struct {
 	id      int
@@ -599,59 +607,38 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 	return rsp
 }
 
+func (c *gbClient) responseCleanup(rsp *response, respID byte) {
+
+	c.rm.Lock()
+	defer c.rm.Unlock()
+	delete(c.responseHandler.resp, int(respID))
+	c.srv.releaseReqID(respID)
+	close(rsp.ch)
+	close(rsp.err)
+
+}
+
 // TODO need to make a cleanup function to defer cleanup of resources and close channels and return hanging ID's
 
 func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID byte, timeout time.Duration) ([]byte, error) {
 
-	// Wait for the response with timeout
+	defer c.responseCleanup(rsp, respID)
+
 	select {
 	case <-ctx.Done():
-		log.Printf("context cancelled waiting for response channel %d", respID)
-		c.rm.Lock()
-		delete(c.responseHandler.resp, int(respID))
-		c.rm.Unlock()
-		log.Printf("deleting response channel %d", int(respID))
-		log.Printf("returning sequence to the pool")
-		c.srv.releaseReqID(respID)
-		close(rsp.ch)
-		close(rsp.err)
 		return nil, ctx.Err()
 	case msg := <-rsp.ch:
-		log.Printf("I got a response WOO!")
-		log.Printf("response = %v", string(msg))
-		c.rm.Lock()
-		delete(c.responseHandler.resp, int(respID))
-		c.rm.Unlock()
-		log.Printf("deleting response channel %d", int(respID))
-		log.Printf("returning sequence to the pool")
-		c.srv.releaseReqID(respID)
-		close(rsp.ch)
-		close(rsp.err)
 		return msg, nil
 	case err := <-rsp.err:
-		log.Printf("Received error response for ID %d: %v", respID, err)
-		c.rm.Lock()
-		delete(c.responseHandler.resp, int(respID))
-		c.rm.Unlock()
-		log.Printf("deleting response channel %d", int(respID))
-		log.Printf("returning sequence to the pool")
-		c.srv.releaseReqID(respID)
-		close(rsp.ch)
-		close(rsp.err)
 		return nil, err
 	case <-time.After(timeout):
-		// Clean up the response channel on timeout
-		close(rsp.ch)
-		close(rsp.err)
-		c.rm.Lock()
-		delete(c.responseHandler.resp, int(respID))
-		c.rm.Unlock()
 		log.Printf("timed out waiting for response channel %d", int(respID))
 		return nil, fmt.Errorf("timeout for response ID %d", rsp.id)
 	}
 
 }
 
+// Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
 func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) ([]byte, error) {
 
@@ -672,9 +659,9 @@ func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) ([
 		ok, err := c.waitForResponse(c.srv.serverContext, responseChannel, respID, 2*time.Second)
 
 		if err != nil {
-			log.Printf("error for response channel %d: %v", int(respID), err)
 			return nil, err
 		}
+		// If no error we may want to run the callback function here??
 		return ok, nil
 	}
 
@@ -701,10 +688,6 @@ func (c *gbClient) processDeltaHdr(arg []byte) error {
 //===================================================================================
 // Dispatcher
 //===================================================================================
-
-//TODO Need a process message + command dispatcher
-// use switch case for client type
-// if node - use switch case for command type
 
 func (c *gbClient) processMessage(message []byte) {
 	if c.cType == NODE {

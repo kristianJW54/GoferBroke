@@ -24,11 +24,49 @@ type node struct {
 	// Info
 	tcpAddr   *net.TCPAddr
 	direction string
+
+	gossipFlags gossipFlags
 }
 
 //===================================================================================
 // Node Connection
 //===================================================================================
+
+type gossipFlags int
+
+// Flags
+const (
+	GOSS_SYN_SENT = 1 << iota
+	GOSS_SYN_REC
+	GOSS_SYN_ACK_SENT
+	GOSS_SYN_ACK_REC
+	GOSS_ACK_SENT
+	GOSS_ACK_REC
+)
+
+//goland:noinspection GoMixedReceiverTypes
+func (gf *gossipFlags) set(g gossipFlags) {
+	*gf |= g
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (gf *gossipFlags) clear(g gossipFlags) {
+	*gf &= ^g
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (gf gossipFlags) isSet(g gossipFlags) bool {
+	return gf&g != 0
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (gf *gossipFlags) setIfNotSet(g gossipFlags) bool {
+	if *gf&g == 0 {
+		*gf |= g
+		return true
+	}
+	return false
+}
 
 //-------------------------------
 // Creating a node as a client from a connection
@@ -52,16 +90,17 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		cType:   clientType,
 	}
 
-	//Server Lock?
+	s.serverLock.Lock()
 	s.numNodeConnections++
+	s.serverLock.Unlock()
 
 	client.mu.Lock()
-	defer client.mu.Unlock()
-
 	client.initClient()
+	client.mu.Unlock()
 
-	//log.Println(s.ServerName + ": storing " + client.Name)
-	s.tmpClientStore["1"] = client
+	s.serverLock.Lock()
+	s.tmpClientStore[client.cid] = client
+	s.serverLock.Unlock()
 
 	//May want to update some node connection  metrics which will probably need a write lock from here
 	// Node count + connection map
@@ -97,10 +136,12 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // Connecting to seed server
 //-------------------------------
 
-func (s *GBServer) connectToSeed() error {
+// TODO Think about reconnection here - do we want to handle that in this method? Or have a reconnectToSeed() method?
 
-	//With this function - we reach out to seed - so in our connection handling we would need to check protocol version
-	//To understand how this connection is communicating ...
+// connectToSeed is called by the server in a go-routine. It blocks on response to wait for the seed server to respond with a signal
+// that it has completed INFO exchange. If an error occurs through context, or response error from seed server, then connectToSeed
+// will return that error and trigger logic to either retry or exit the process
+func (s *GBServer) connectToSeed() error {
 
 	ctx, cancel := context.WithTimeout(s.serverContext, 10*time.Second)
 	defer cancel()
@@ -121,14 +162,34 @@ func (s *GBServer) connectToSeed() error {
 
 	//TODO Need to wait here until we receive the OK from seed servers that we have been onboarded and can proceed
 	// the ok will be from a complete cluster info send with a OK + EOS message signalling we have got all the info to begin
-	ok, err := client.qProtoWithResponse(pay1, false, true)
+	rsp, err := client.qProtoWithResponse(pay1, false, true)
+	if err != nil {
+		return err
+	}
+	// If we receive no error we can assume the response was received and continue
+
+	delta, err := deserialiseDelta(rsp)
 	if err != nil {
 		return err
 	}
 
-	log.Println("OK == ", ok)
+	// Now we add the delta to our cluster map
 
-	// TODO should move to createNodeClient?
+	for name, participant := range delta.delta {
+		err := s.addParticipantFromTmp(name, participant)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Now we can remove from tmp map and add to client store including connected flag
+	s.serverLock.Lock()
+	err = s.moveToConnected(client.cid)
+	if err != nil {
+		return err
+	}
+	s.serverLock.Unlock()
+
 	select {
 	case <-ctx.Done():
 		log.Println("connect to seed cancelled because of context")
@@ -140,6 +201,7 @@ func (s *GBServer) connectToSeed() error {
 
 }
 
+// Thread safe
 func (s *GBServer) prepareInfoSend() ([]byte, error) {
 
 	s.clusterMapLock.Lock()
@@ -151,8 +213,6 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 		return nil, fmt.Errorf("no participant found for server %s", participant.name)
 	}
 
-	log.Printf("%s -- STARTED PREPARING", s.ServerName)
-
 	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
 
 	// Need to serialise the tmpCluster
@@ -163,7 +223,6 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 
 	// Acquire sequence ID
 	seq, err := s.acquireReqID()
-	log.Printf("seq ID = %d", seq)
 	if err != nil {
 		return nil, err
 	}
@@ -210,10 +269,6 @@ func (c *gbClient) onboardNewJoiner() error {
 		// TODO If cluster too large - will need to stream data and use metadata to track progress
 	}
 
-	log.Println("HERE ====================================================")
-
-	// TODO Need to serialise from the cluster map and not use tmp structs
-
 	s.clusterMapLock.Lock()
 	msg, err := s.serialiseClusterDelta(nil)
 	if err != nil {
@@ -222,7 +277,6 @@ func (c *gbClient) onboardNewJoiner() error {
 	s.clusterMapLock.Unlock()
 
 	hdr := constructNodeHeader(1, INFO_ALL, c.ph.id, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
-	log.Printf("HEADER RESPONSE = %v", hdr)
 
 	packet := &nodePacket{
 		hdr,
@@ -309,26 +363,14 @@ func (c *gbClient) processErrResp(message []byte) {
 
 func (c *gbClient) processInfoAll(message []byte) {
 
-	_, err := deserialiseDelta(message)
-	if err != nil {
-		log.Printf("Error deserialising delta: %v", err)
-	}
-
-	//for k, v := range d.delta {
-	//	log.Printf("%s", k)
-	//	for _, value := range v.keyValues {
-	//		log.Printf("%+v", value)
-	//	}
-	//}
-
 	c.rm.Lock()
 	responseChan, exists := c.resp[int(c.argBuf[2])]
 	c.rm.Unlock()
 
 	if exists {
 
-		err := errors.New("this is an error response TEST")
-		responseChan.err <- err
+		// We just send the message and allow the caller to specify what they do with it
+		responseChan.ch <- message
 
 		c.rm.Lock()
 		delete(c.resp, int(c.argBuf[2]))
@@ -343,14 +385,14 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 func (c *gbClient) processOK(message []byte) {
 
-	//log.Printf("returned message = %s", string(message))
 	c.rm.Lock()
 	responseChan, exists := c.resp[int(c.argBuf[2])]
 	c.rm.Unlock()
 
 	if exists {
 
-		responseChan.ch <- message
+		err := errors.New("this is an error response TEST")
+		responseChan.err <- err
 
 		c.rm.Lock()
 		delete(c.resp, int(c.argBuf[2]))
@@ -400,6 +442,12 @@ func (c *gbClient) processInfoMessage(message []byte) {
 		if err != nil {
 			log.Printf("AddParticipantFromTmp failed: %v", err)
 			//send err response
+		}
+
+		// Move the tmpClient to connected as it has provided its info which we have now stored
+		err = c.srv.moveToConnected(c.cid)
+		if err != nil {
+			log.Printf("MoveToConnected failed: %v", err)
 		}
 
 	}

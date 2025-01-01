@@ -107,13 +107,14 @@ type GBServer struct {
 	// Other Use Cases such as shard assignment, state, config changes etc, all should be gossiped
 
 	//Connection Handling
+	gcid uint64 // Global client ID counter
 	// May need one for client and one for node as we will treat them differently
-	tmpClientStore       map[string]*gbClient
-	numNodeConnections   uint8
+	numNodeConnections   uint16
 	numClientConnections uint16
 
-	nodeStore   map[string]*gbClient
-	clientStore map[string]*gbClient
+	tmpClientStore map[uint64]*gbClient
+	nodeStore      map[uint64]*gbClient
+	clientStore    map[uint64]*gbClient
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response
@@ -172,7 +173,9 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 		gbConfig:       gbConfig,
 		seedAddr:       make([]*net.TCPAddr, 0),
-		tmpClientStore: make(map[string]*gbClient),
+		tmpClientStore: make(map[uint64]*gbClient),
+		nodeStore:      make(map[uint64]*gbClient),
+		clientStore:    make(map[uint64]*gbClient),
 
 		selfInfo:   selfInfo,
 		clusterMap: *initClusterMap(serverName, nodeTCPAddr, selfInfo),
@@ -226,11 +229,13 @@ func (s *GBServer) StartServer() {
 
 	//s.serverLock.Unlock()
 
+	// TODO Maybe use sync.Once to ensure that necessary startup routines start before beginning the accept loops
+
 	//---------------- Node Accept Loop ----------------//
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
-	s.AcceptLoop("client-test")
+	//s.AcceptLoop("client-test")
 
 	//TODO add monitoring routines to keep internal state up to date
 	// CPU Metrics using an aggregate or significant change metric - how to signal?
@@ -259,7 +264,7 @@ func (s *GBServer) StartServer() {
 // TODO Shutdown flag set - and for go-routines and processes to be signalled to terminate once shutdown signalled
 
 func (s *GBServer) Shutdown() {
-	log.Printf("%s -- shut down initiated\n", s.ServerName)
+	//log.Printf("%s -- shut down initiated\n", s.ServerName)
 	s.flags.set(SHUTTING_DOWN)
 
 	//log.Println("context called")
@@ -277,17 +282,17 @@ func (s *GBServer) Shutdown() {
 	}
 
 	//Close connections
-	for name, client := range s.tmpClientStore {
-		log.Printf("%s closing client %s\n", s.ServerName, name)
+	for name, client := range s.nodeStore {
+		log.Printf("%s closing client %d\n", s.ServerName, name)
 		client.gbc.Close()
-		delete(s.tmpClientStore, name)
+		delete(s.nodeStore, name)
 	}
 
-	log.Println("waiting...")
+	//log.Println("waiting...")
 	s.grWg.Wait()
-	log.Println("done")
+	//log.Println("done")
 
-	log.Println("Server shutdown complete")
+	//log.Println("Server shutdown complete")
 }
 
 //=======================================================
@@ -482,7 +487,10 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
 		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {
-			s.connectToSeed()
+			err := s.connectToSeed()
+			if err != nil {
+				log.Printf("Error connecting to seed: %v", err)
+			}
 		})
 	}
 

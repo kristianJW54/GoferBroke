@@ -12,7 +12,7 @@ import (
 	"os/signal"
 )
 
-func run(ctx context.Context, w io.Writer, nodeIp, nodePort string) error {
+func run(ctx context.Context, w io.Writer, name, nodeIp, nodePort string) error {
 	// Create a new context that listens for interrupt signals
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
@@ -35,7 +35,7 @@ func run(ctx context.Context, w io.Writer, nodeIp, nodePort string) error {
 	log.Println("Config initialized:", config)
 
 	// Create and start the server
-	gbs := src.NewServer("test-server", config, nodeIp, nodePort, "8080", lc)
+	gbs := src.NewServer(name, config, nodeIp, nodePort, "8080", lc)
 
 	go func() {
 		log.Println("Starting server...")
@@ -59,15 +59,16 @@ func main() {
 
 	//==============================================================
 
-	ipFlag := flag.String("node-ip", "", "ip address for node")
-	portFlag := flag.String("node-port", "", "port number for node")
+	nameFlag := flag.String("name", "", "name to use")
+	ipFlag := flag.String("nodeIP", "", "ip address for node")
+	portFlag := flag.String("nodePort", "", "port number for node")
 
 	flag.Parse()
 
 	ctx := context.Background()
 
 	// Call run and check for any errors
-	if err := run(ctx, os.Stdout, *ipFlag, *portFlag); err != nil {
+	if err := run(ctx, os.Stdout, *nameFlag, *ipFlag, *portFlag); err != nil {
 		log.Fatalf("Error running server: %v\n", err)
 	}
 

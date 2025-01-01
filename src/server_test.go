@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-//TODO refactor test to update the status only while the server is accepting connections
-// if the server connects but closes then the status needs to be closed
+//TODO need test to help with node reconnect to seed
 
 func TestServerRunningTwoNodes(t *testing.T) {
 
@@ -34,8 +33,6 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
-	log.Printf("p name = %v | values %v", gbs2.selfInfo.name, gbs2.selfInfo.keyValues[_ADDRESS_])
 
 	// Current break is here
 
@@ -50,14 +47,6 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//time.Sleep(1 * time.Second)
 	go gbs.Shutdown()
 	time.Sleep(1 * time.Second)
-
-	// TODO Include test method for getting and logging cluster map
-	for _, v := range gbs.clusterMap.participants {
-		log.Printf("node name = %s", v.name)
-		for key, value := range v.keyValues {
-			log.Printf("key = %s, value = %s", key, value.value)
-		}
-	}
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()

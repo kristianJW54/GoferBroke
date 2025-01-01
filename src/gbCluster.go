@@ -2,7 +2,6 @@ package src
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -127,8 +126,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	}
 
 	s.clusterMap.partIndex = append(s.clusterMap.partIndex, name)
-
-	log.Printf("added %s to participant map", name)
 
 	s.clusterMapLock.Unlock()
 
