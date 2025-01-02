@@ -115,6 +115,7 @@ type GBServer struct {
 	tmpClientStore map[uint64]*gbClient
 	nodeStore      map[uint64]*gbClient
 	clientStore    map[uint64]*gbClient
+	portMap        map[int]uint64
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response
@@ -176,6 +177,7 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		tmpClientStore: make(map[uint64]*gbClient),
 		nodeStore:      make(map[uint64]*gbClient),
 		clientStore:    make(map[uint64]*gbClient),
+		portMap:        make(map[int]uint64),
 
 		selfInfo:   selfInfo,
 		clusterMap: *initClusterMap(serverName, nodeTCPAddr, selfInfo),
@@ -270,6 +272,7 @@ func (s *GBServer) StartServer() {
 
 func (s *GBServer) Shutdown() {
 	//log.Printf("%s -- shut down initiated\n", s.ServerName)
+	s.serverLock.Lock()
 	s.flags.set(SHUTTING_DOWN)
 
 	//log.Println("context called")
@@ -288,15 +291,18 @@ func (s *GBServer) Shutdown() {
 
 	//Close connections
 	for name, client := range s.nodeStore {
-		log.Printf("%s closing client %d\n", s.ServerName, name)
+		log.Printf("%s closing client from Node Store %d\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.nodeStore, name)
 	}
+
 	for name, client := range s.tmpClientStore {
-		log.Printf("%s closing client %d\n", s.ServerName, name)
+		log.Printf("%s closing client from TmpStore %d\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.nodeStore, name)
 	}
+
+	s.serverLock.Unlock()
 
 	//s.nodeReqPool.reqPool.Put(1)
 

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -216,6 +215,8 @@ func (c *gbClient) initClient() {
 		}
 	}
 
+	return
+
 }
 
 // TODO Think about the locks we may need in this method
@@ -233,6 +234,13 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
+
+	tcp, err := net.ResolveTCPAddr(client.gbc.RemoteAddr().Network(), client.gbc.RemoteAddr().String())
+	if err != nil {
+		log.Printf("error resolving addr: %v", err)
+	}
+
+	client.tcpAddr = tcp
 
 	client.initClient()
 
@@ -276,12 +284,13 @@ func (s *GBServer) moveToConnected(cid uint64) error {
 
 	client, ok := s.tmpClientStore[cid]
 	if !ok {
-		return errors.New("client not found")
+		return fmt.Errorf("client %v not found", cid)
 	}
 
 	switch client.cType {
 	case NODE:
 		s.nodeStore[cid] = client
+		log.Printf("%s adding client %v to node store %v", s.ServerName, cid, client)
 		client.flags.set(CONNECTED)
 		delete(s.tmpClientStore, client.cid)
 	case CLIENT:
@@ -338,6 +347,10 @@ func (c *gbClient) readLoop() {
 			if err == io.EOF {
 				log.Printf("%s -- connection closed", c.srv.ServerName)
 				// TODO need to do further check to see if our connection has dropped and implement reconnect strategy
+				// Maybe it reaches out to another node?
+				// Maybe it exits and then applies it's own reconnect with backoff retries
+				// Will then need to log monitoring for full restart
+				buff = nil
 				return
 			}
 			log.Printf("%s -- read error: %s", c.srv.ServerName, err)
@@ -346,6 +359,8 @@ func (c *gbClient) readLoop() {
 
 			return
 		}
+
+		c.inbound.buffer = nil
 
 		c.mu.Lock()
 
@@ -392,8 +407,8 @@ func (c *gbClient) readLoop() {
 
 		c.mu.Unlock()
 
-		//log.Printf("bytes read --> %d", n)
-		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
+		log.Printf("bytes read --> %d", n)
+		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
 		// TODO Think about flushing and writing and any clean up after the read
 

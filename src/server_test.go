@@ -77,6 +77,8 @@ func (s *GBServer) simulateConnectionLoss() {
 	log.Println("All existing connections have been closed to simulate network loss")
 }
 
+// TODO After node 2 reconnects - node 1 duplicates serialisation and adding to cluster causing move to connected failure
+
 func TestReconnectOfNode(t *testing.T) {
 
 	lc := net.ListenConfig{}
@@ -100,7 +102,8 @@ func TestReconnectOfNode(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
 	time.Sleep(2 * time.Second)
-	gbs.simulateConnectionLoss()
+	//gbs.simulateConnectionLoss()
+	gbs2.Shutdown()
 	// Current break is here
 	time.Sleep(2 * time.Second)
 	go gbs2.StartServer()
@@ -115,6 +118,13 @@ func TestReconnectOfNode(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	gbs.Shutdown()
 	time.Sleep(1 * time.Second)
+
+	for k, v := range gbs.clusterMap.participants {
+		log.Printf("name = %s", k)
+		for _, value := range v.keyValues {
+			log.Printf("value = %+s", value.value)
+		}
+	}
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()

@@ -90,17 +90,18 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		cType:   clientType,
 	}
 
-	//s.serverLock.Lock()
+	s.serverLock.Lock()
 	s.numNodeConnections++
-	//s.serverLock.Unlock()
+	s.serverLock.Unlock()
 
 	client.mu.Lock()
 	client.initClient()
 	client.mu.Unlock()
 
-	//s.serverLock.Lock()
+	s.serverLock.Lock()
 	s.tmpClientStore[client.cid] = client
-	//s.serverLock.Unlock()
+	log.Printf("adding client to tmp store %v\n", s.tmpClientStore[client.cid])
+	s.serverLock.Unlock()
 
 	//May want to update some node connection  metrics which will probably need a write lock from here
 	// Node count + connection map
@@ -217,11 +218,20 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 
 	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
 
-	// Need to serialise the tmpCluster
+	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseClusterDelta(nil)
 	if err != nil {
 		return nil, err
 	}
+
+	//for k, v := range s.clusterMap.participants {
+	//	log.Printf("name === %s", k)
+	//	for _, value := range v.keyValues {
+	//		log.Printf("value === %s", value.value)
+	//	}
+	//}
+
+	//cereal := []byte("HELLLOOOOOOOOOO\r\n")
 
 	// Acquire sequence ID
 	seq, err := s.acquireReqID()
@@ -430,10 +440,12 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	// Allow for an error response or retry if this is not correct
 	// TODO - then use method to add to cluster - must do check to see if it is in cluster already, if so we must call update instead
 
-	//err = c.onboardNewJoiner()
-	//if err != nil {
-	//	log.Printf("onboardNewJoiner failed: %v", err)
-	//}
+	err = c.onboardNewJoiner()
+	if err != nil {
+		log.Printf("onboardNewJoiner failed: %v", err)
+	}
+
+	// TODO Fix de-serialise delta - must reset state
 
 	// If this is one participant consider accessing another way than loop
 
@@ -449,7 +461,7 @@ func (c *gbClient) processInfoMessage(message []byte) {
 		// Move the tmpClient to connected as it has provided its info which we have now stored
 		err = c.srv.moveToConnected(c.cid)
 		if err != nil {
-			log.Printf("MoveToConnected failed: %v", err)
+			log.Printf("MoveToConnected failed in process info message: %v", err)
 		}
 
 	}

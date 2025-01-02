@@ -2,6 +2,7 @@ package src
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -125,12 +126,18 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		valueIndex: tmpP.vi,
 	}
 
+	log.Println("VI ----------> ", tmpP.vi)
+
 	s.clusterMap.partIndex = append(s.clusterMap.partIndex, name)
 
 	s.clusterMapLock.Unlock()
 
 	return nil
 }
+
+//=======================================================
+// Delta Comparisons
+//=======================================================
 
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
 // TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest

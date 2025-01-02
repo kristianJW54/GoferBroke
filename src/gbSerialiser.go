@@ -3,6 +3,7 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -138,7 +139,6 @@ func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 
 		for _, key := range keysToSerialize {
 			if valueData, exists := participant.keyValues[key]; exists && valueData != nil {
-				//log.Printf("Found key: %s with value data: %+v\n", key, valueData)
 				length += 14 + len(key) + len(valueData.value) // Calculate size for this key
 			} else {
 				// Log missing key and continue
@@ -260,8 +260,9 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 		cDelta.delta[name] = &tmpParticipant{
 			make(map[string]*Delta, deltaSize),
-			nil,
+			make([]string, 0, deltaSize),
 		}
+		log.Println("length of vi array ", len(cDelta.delta[name].vi))
 
 		offset += 2
 
@@ -279,6 +280,9 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 			d := cDelta.delta[name]
 			d.keyValues[key] = &Delta{}
+
+			// Add key to the vi array
+			d.vi = append(d.vi, key)
 
 			// Version
 			v := binary.BigEndian.Uint64(delta[offset : offset+8])
