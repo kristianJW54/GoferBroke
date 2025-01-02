@@ -204,6 +204,11 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 
 func (s *GBServer) StartServer() {
 
+	// Reset the context to handle reconnect scenarios
+	s.resetContext()
+
+	// TODO need to do checks to see if this is a reconnect - if so then will need to handle listener creation
+
 	//s.serverLock.Lock()
 
 	fmt.Printf("Server starting: %s\n", s.ServerName)
@@ -287,6 +292,13 @@ func (s *GBServer) Shutdown() {
 		client.gbc.Close()
 		delete(s.nodeStore, name)
 	}
+	for name, client := range s.tmpClientStore {
+		log.Printf("%s closing client %d\n", s.ServerName, name)
+		client.gbc.Close()
+		delete(s.nodeStore, name)
+	}
+
+	//s.nodeReqPool.reqPool.Put(1)
 
 	//log.Println("waiting...")
 	s.grWg.Wait()
@@ -298,6 +310,20 @@ func (s *GBServer) Shutdown() {
 //=======================================================
 
 //=======================================================
+
+// resetContext if Server was Shutdown, then the context has been depleted and starting the server again will cause the old context
+// to be used, therefore, a new context check must be done to provide a new one.
+func (s *GBServer) resetContext() {
+	// Cancel the old context if it exists
+	if s.serverContextCancel != nil {
+		s.serverContextCancel()
+	}
+
+	// Create a new context and cancel function
+	ctx, cancel := context.WithCancel(context.Background())
+	s.serverContext = ctx
+	s.serverContextCancel = cancel
+}
 
 // TODO Resolver URL's also - to IPs and addr that can be stored as TCPAddr
 
@@ -471,6 +497,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 				select {
 				case <-ctx.Done():
 					//log.Println("accept loop context canceled -- exiting loop")
+					log.Println("Context canceled, exiting accept loop")
 					return true
 				default:
 					//log.Printf("accept loop context error -- %s\n", err)
@@ -487,9 +514,10 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
 		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {
-			err := s.connectToSeed()
+			s.connectToSeed()
 			if err != nil {
 				log.Printf("Error connecting to seed: %v", err)
+				return
 			}
 		})
 	}

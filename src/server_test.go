@@ -43,9 +43,77 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.Name, client2.directionType)
 
 	time.Sleep(3 * time.Second)
-	go gbs2.Shutdown()
+	gbs2.Shutdown()
 	//time.Sleep(1 * time.Second)
-	go gbs.Shutdown()
+	gbs.Shutdown()
+	time.Sleep(1 * time.Second)
+
+	gbs.logActiveGoRoutines()
+	gbs2.logActiveGoRoutines()
+
+}
+
+// Simulate Network Loss by Closing Existing Connections
+func (s *GBServer) simulateConnectionLoss() {
+	s.serverLock.Lock() // Lock to prevent changes to the connection map during operation
+	defer s.serverLock.Unlock()
+
+	// Close all active client connections
+	for _, client := range s.tmpClientStore {
+		err := client.gbc.Close() // Assuming client.conn is of type net.Conn
+		if err != nil {
+			log.Printf("Failed to close client connection: %v", err)
+		}
+	}
+
+	// Close all active node connections
+	for _, node := range s.nodeStore {
+		err := node.gbc.Close() // Assuming node.conn is of type net.Conn
+		if err != nil {
+			log.Printf("Failed to close node connection: %v", err)
+		}
+	}
+
+	log.Println("All existing connections have been closed to simulate network loss")
+}
+
+func TestReconnectOfNode(t *testing.T) {
+
+	lc := net.ListenConfig{}
+
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
+			},
+		},
+	}
+
+	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+	gbs2 := NewServer("test-server-2", config, "localhost", "8082", "8083", lc)
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	go gbs2.StartServer()
+	time.Sleep(2 * time.Second)
+	gbs.simulateConnectionLoss()
+	// Current break is here
+	time.Sleep(2 * time.Second)
+	go gbs2.StartServer()
+	//client := gbs.tmpClientStore["1"]
+	//client2 := gbs2.tmpClientStore["1"]
+
+	//log.Printf("%s --> temp client is %s --> direction %s", gbs.ServerName, client.Name, client.directionType)
+	//log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.Name, client2.directionType)
+
+	time.Sleep(2 * time.Second)
+	gbs2.Shutdown()
+	time.Sleep(1 * time.Second)
+	gbs.Shutdown()
 	time.Sleep(1 * time.Second)
 
 	gbs.logActiveGoRoutines()

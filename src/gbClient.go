@@ -336,12 +336,14 @@ func (c *gbClient) readLoop() {
 		n, err := reader.Read(buff)
 		if err != nil {
 			if err == io.EOF {
-				log.Println("connection closed")
+				log.Printf("%s -- connection closed", c.srv.ServerName)
+				// TODO need to do further check to see if our connection has dropped and implement reconnect strategy
 				return
 			}
-			log.Printf("read error: %s", err)
+			log.Printf("%s -- read error: %s", c.srv.ServerName, err)
 			//TODO Handle client closures more effectively - based on type
 			// if client may want to reconnect and retry - if node we will want to use the phi accrual
+
 			return
 		}
 
@@ -612,7 +614,6 @@ func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 	c.rm.Lock()
 	defer c.rm.Unlock()
 	delete(c.responseHandler.resp, int(respID))
-	c.srv.releaseReqID(respID)
 	close(rsp.ch)
 	close(rsp.err)
 
@@ -626,6 +627,8 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID by
 
 	select {
 	case <-ctx.Done():
+		c.srv.releaseReqID(respID)
+		log.Println("context has been CALLED on RESPONSE")
 		return nil, ctx.Err()
 	case msg := <-rsp.ch:
 		return msg, nil

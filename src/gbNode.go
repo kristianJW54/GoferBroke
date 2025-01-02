@@ -90,17 +90,17 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		cType:   clientType,
 	}
 
-	s.serverLock.Lock()
+	//s.serverLock.Lock()
 	s.numNodeConnections++
-	s.serverLock.Unlock()
+	//s.serverLock.Unlock()
 
 	client.mu.Lock()
 	client.initClient()
 	client.mu.Unlock()
 
-	s.serverLock.Lock()
+	//s.serverLock.Lock()
 	s.tmpClientStore[client.cid] = client
-	s.serverLock.Unlock()
+	//s.serverLock.Unlock()
 
 	//May want to update some node connection  metrics which will probably need a write lock from here
 	// Node count + connection map
@@ -157,6 +157,7 @@ func (s *GBServer) connectToSeed() error {
 	if err != nil {
 		return err
 	}
+	log.Printf("cluster info prepared")
 
 	client := s.createNodeClient(conn, "whaaaat", true, NODE)
 
@@ -166,6 +167,7 @@ func (s *GBServer) connectToSeed() error {
 	if err != nil {
 		return err
 	}
+	log.Printf("no response - moving on")
 	// If we receive no error we can assume the response was received and continue
 
 	delta, err := deserialiseDelta(rsp)
@@ -428,10 +430,10 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	// Allow for an error response or retry if this is not correct
 	// TODO - then use method to add to cluster - must do check to see if it is in cluster already, if so we must call update instead
 
-	err = c.onboardNewJoiner()
-	if err != nil {
-		log.Printf("onboardNewJoiner failed: %v", err)
-	}
+	//err = c.onboardNewJoiner()
+	//if err != nil {
+	//	log.Printf("onboardNewJoiner failed: %v", err)
+	//}
 
 	// If this is one participant consider accessing another way than loop
 

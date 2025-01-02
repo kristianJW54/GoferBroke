@@ -265,6 +265,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 			c.drop = 0
 
 			c.rounds = 0
+
+			log.Printf("PARSE INDEX = %v-%v", i, c.position)
 		}
 	}
 
