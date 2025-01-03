@@ -176,9 +176,15 @@ func (s *GBServer) connectToSeed() error {
 		return err
 	}
 
-	// Now we add the delta to our cluster map
+	var firstKey string
 
+	// Now we add the delta to our cluster map
 	for name, participant := range delta.delta {
+
+		if firstKey == "" {
+			firstKey = name
+		}
+
 		err := s.addParticipantFromTmp(name, participant)
 		if err != nil {
 			return err
@@ -187,7 +193,7 @@ func (s *GBServer) connectToSeed() error {
 
 	// Now we can remove from tmp map and add to client store including connected flag
 	s.serverLock.Lock()
-	err = s.moveToConnected(client.cid)
+	err = s.moveToConnected(client.cid, firstKey)
 	if err != nil {
 		return err
 	}
@@ -210,11 +216,15 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	s.clusterMapLock.Lock()
 	defer s.clusterMapLock.Unlock()
 
-	// Check if the server name exists in participants
-	participant, ok := s.clusterMap.participants[s.ServerName]
-	if !ok {
-		return nil, fmt.Errorf("no participant found for server %s", participant.name)
-	}
+	//Check if the server name exists in participants
+	//participant, ok := s.clusterMap.participants[s.ServerName]
+	//if !ok {
+	//	return nil, fmt.Errorf("no participant found for server %s", participant.name)
+	//}
+
+	//if s.ServerName != s.selfInfo.name || s.selfInfo == nil {
+	//	return nil, fmt.Errorf("participant not in self info for server %s", s.ServerName)
+	//}
 
 	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
 
@@ -450,7 +460,14 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	// If this is one participant consider accessing another way than loop
 
 	// We have to do this last because we will end up sending back the nodes own info
+
+	var firstKey string
+
 	for key, value := range tmpC.delta {
+
+		if firstKey == "" {
+			firstKey = key
+		}
 
 		err := c.srv.addParticipantFromTmp(key, value)
 		if err != nil {
@@ -458,12 +475,12 @@ func (c *gbClient) processInfoMessage(message []byte) {
 			//send err response
 		}
 
-		// Move the tmpClient to connected as it has provided its info which we have now stored
-		err = c.srv.moveToConnected(c.cid)
-		if err != nil {
-			log.Printf("MoveToConnected failed in process info message: %v", err)
-		}
-
+	}
+	// TODO Fix this - trying to move twice as it was within the loop - now need to have a comparison method call for checks
+	// Move the tmpClient to connected as it has provided its info which we have now stored
+	err = c.srv.moveToConnected(c.cid, firstKey)
+	if err != nil {
+		log.Printf("MoveToConnected failed in process info message: %v", err)
 	}
 
 	return

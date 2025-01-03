@@ -420,7 +420,7 @@ func TestSerialiseDeltaLiveServer(t *testing.T) {
 
 	//log.Println(config)
 
-	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)

@@ -28,8 +28,8 @@ func TestServerRunningTwoNodes(t *testing.T) {
 		},
 	}
 
-	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server-2", config, "localhost", "8082", "8083", lc)
+	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2 := NewServer("test-server-2", 2, config, "localhost", "8082", "8083", lc)
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
@@ -66,14 +66,6 @@ func (s *GBServer) simulateConnectionLoss() {
 		}
 	}
 
-	// Close all active node connections
-	for _, node := range s.nodeStore {
-		err := node.gbc.Close() // Assuming node.conn is of type net.Conn
-		if err != nil {
-			log.Printf("Failed to close node connection: %v", err)
-		}
-	}
-
 	log.Println("All existing connections have been closed to simulate network loss")
 }
 
@@ -96,8 +88,8 @@ func TestReconnectOfNode(t *testing.T) {
 		},
 	}
 
-	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server-2", config, "localhost", "8082", "8083", lc)
+	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2 := NewServer("test-server-2", 1, config, "localhost", "8082", "8083", lc)
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
@@ -150,7 +142,7 @@ func TestServerRunningOneNodes(t *testing.T) {
 
 	log.Println(config)
 
-	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
+	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 
 	go gbs.StartServer()
 
@@ -196,8 +188,8 @@ func TestInfoSend(t *testing.T) {
 
 	//log.Println(config)
 
-	gbs := NewServer("test-server", config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server 2", config, "localhost", "8082", "8083", lc)
+	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2 := NewServer("test-server 2", 1, config, "localhost", "8082", "8083", lc)
 	go gbs.StartServer()
 	//time.Sleep(1 * time.Second)
 	go gbs2.StartServer()

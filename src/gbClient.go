@@ -280,7 +280,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 }
 
-func (s *GBServer) moveToConnected(cid uint64) error {
+func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 	client, ok := s.tmpClientStore[cid]
 	if !ok {
@@ -289,8 +289,8 @@ func (s *GBServer) moveToConnected(cid uint64) error {
 
 	switch client.cType {
 	case NODE:
-		s.nodeStore[cid] = client
-		log.Printf("%s adding client %v to node store %v", s.ServerName, cid, client)
+		s.nodeStore[name] = client
+		log.Printf("%s adding client %s to node store %v", s.ServerName, name, client)
 		client.flags.set(CONNECTED)
 		delete(s.tmpClientStore, client.cid)
 	case CLIENT:

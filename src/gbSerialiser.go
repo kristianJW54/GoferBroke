@@ -114,6 +114,9 @@ type clusterDelta struct {
 
 // TODO Should be able to pass size and skip loop step if we have it - if not, calc size ourselves in here
 
+// TODO NEED --> A serialise self-info delta
+// TODO NEED --> To add senders name into the packet at beginning for ID purposes as maps in go are not inherently ordered
+
 // Lock should be held on entry
 func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 

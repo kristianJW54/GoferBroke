@@ -30,7 +30,7 @@ import (
 // Maybe want to declare some global const names for contexts -- seedServerContext -- nodeContext etc
 
 //===================================================================================
-// Main Server
+// Server Flags
 //===================================================================================
 
 type serverFlags uint16
@@ -69,8 +69,35 @@ func (sf *serverFlags) setIfNotSet(s serverFlags) bool {
 	return false
 }
 
+//===================================================================================
+// Main Server
+//===================================================================================
+
+type ServerID struct {
+	name     string
+	uuid     int
+	timeUnix uint64
+}
+
+func NewServerID(name string, uuid int) *ServerID {
+
+	return &ServerID{
+		name:     name,
+		uuid:     uuid,
+		timeUnix: uint64(time.Now().Unix()),
+	}
+
+}
+
+func (sf *ServerID) String() string {
+
+	return fmt.Sprintf("%s-%v@%v", sf.name, sf.uuid, sf.timeUnix)
+
+}
+
 type GBServer struct {
 	//Server Info - can add separate info struct later
+	ServerID      *ServerID
 	ServerName    string //Set by config or flags
 	BroadcastName string //ID and timestamp
 	initialised   int64  //time of server creation
@@ -113,7 +140,7 @@ type GBServer struct {
 	numClientConnections uint16
 
 	tmpClientStore map[uint64]*gbClient
-	nodeStore      map[uint64]*gbClient
+	nodeStore      map[string]*gbClient // TODO May want to possibly embed this into the clusterMap?
 	clientStore    map[uint64]*gbClient
 	portMap        map[int]uint64
 
@@ -133,7 +160,7 @@ type GBServer struct {
 
 //TODO Add a node listener config + also client and node addr
 
-func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) *GBServer {
+func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) *GBServer {
 
 	addr := net.JoinHostPort(nodeHost, nodePort)
 	nodeTCPAddr, err := net.ResolveTCPAddr("tcp", addr)
@@ -147,6 +174,9 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	serverID := NewServerID(serverName, uuid)
+	srvName := serverID.String()
 
 	// Creation steps
 	// Gather server metrics
@@ -162,7 +192,8 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
-		ServerName:          serverName,
+		ServerID:            serverID,
+		ServerName:          srvName,
 		BroadcastName:       broadCastName,
 		initialised:         createdAt.Unix(),
 		addr:                addr,
@@ -175,7 +206,7 @@ func NewServer(serverName string, gbConfig *GbConfig, nodeHost string, nodePort,
 		gbConfig:       gbConfig,
 		seedAddr:       make([]*net.TCPAddr, 0),
 		tmpClientStore: make(map[uint64]*gbClient),
-		nodeStore:      make(map[uint64]*gbClient),
+		nodeStore:      make(map[string]*gbClient),
 		clientStore:    make(map[uint64]*gbClient),
 		portMap:        make(map[int]uint64),
 
@@ -291,7 +322,7 @@ func (s *GBServer) Shutdown() {
 
 	//Close connections
 	for name, client := range s.nodeStore {
-		log.Printf("%s closing client from Node Store %d\n", s.ServerName, name)
+		log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.nodeStore, name)
 	}
@@ -299,7 +330,7 @@ func (s *GBServer) Shutdown() {
 	for name, client := range s.tmpClientStore {
 		log.Printf("%s closing client from TmpStore %d\n", s.ServerName, name)
 		client.gbc.Close()
-		delete(s.nodeStore, name)
+		delete(s.tmpClientStore, name)
 	}
 
 	s.serverLock.Unlock()

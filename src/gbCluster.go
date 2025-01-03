@@ -52,7 +52,8 @@ type Participant struct {
 	keyValues  map[string]*Delta
 	valueIndex []string
 	maxVersion int64
-	paValue    float64 // Not to be gossiped
+	paValue    float64   // Not to be gossiped
+	conn       *gbClient // Not to be gossiped
 	pm         sync.RWMutex
 }
 
