@@ -138,7 +138,6 @@ func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 	length += 1 + len(self.name) + 2 // 1 byte for name length + name length + size of delta key-values
 
 	for _, key := range self.valueIndex {
-		log.Println("key == ", key)
 		if valueData, exists := self.keyValues[key]; exists && valueData != nil {
 			length += 14 + len(key) + len(valueData.value) // Calculate size for this key
 		} else {
@@ -345,7 +344,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 	// Extract senders name
 	senderLen := int(delta[offset])
-	senderName := delta[offset+1 : offset+senderLen]
+	senderName := delta[offset+1 : offset+1+senderLen]
 
 	offset++
 	offset += senderLen
@@ -377,7 +376,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			make(map[string]*Delta, deltaSize),
 			make([]string, 0, deltaSize),
 		}
-		log.Println("length of vi array ", len(cDelta.delta[name].vi))
 
 		offset += 2
 

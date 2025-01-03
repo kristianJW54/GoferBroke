@@ -80,24 +80,28 @@ type ServerID struct {
 }
 
 func NewServerID(name string, uuid int) *ServerID {
-
 	return &ServerID{
 		name:     name,
 		uuid:     uuid,
 		timeUnix: uint64(time.Now().Unix()),
 	}
-
 }
 
 func (sf *ServerID) String() string {
-
 	return fmt.Sprintf("%s-%v@%v", sf.name, sf.uuid, sf.timeUnix)
+}
 
+func (sf *ServerID) getID() string {
+	return fmt.Sprintf("%s-%v", sf.name, sf.uuid)
+}
+
+func (sf *ServerID) updateTime() {
+	sf.timeUnix = uint64(time.Now().Unix())
 }
 
 type GBServer struct {
 	//Server Info - can add separate info struct later
-	ServerID      *ServerID
+	ServerID
 	ServerName    string //ID and timestamp
 	initialised   int64  //time of server creation
 	addr          string
@@ -141,7 +145,6 @@ type GBServer struct {
 	tmpClientStore map[uint64]*gbClient
 	nodeStore      map[string]*gbClient // TODO May want to possibly embed this into the clusterMap?
 	clientStore    map[uint64]*gbClient
-	portMap        map[int]uint64
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response
@@ -176,6 +179,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 
 	serverID := NewServerID(serverName, uuid)
 	srvName := serverID.String()
+	log.Printf("srvName = %s", srvName)
 
 	// Creation steps
 	// Gather server metrics
@@ -189,7 +193,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
-		ServerID:            serverID,
+		ServerID:            *serverID,
 		ServerName:          srvName,
 		initialised:         createdAt.Unix(),
 		addr:                addr,
@@ -204,7 +208,6 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		tmpClientStore: make(map[uint64]*gbClient),
 		nodeStore:      make(map[string]*gbClient),
 		clientStore:    make(map[uint64]*gbClient),
-		portMap:        make(map[int]uint64),
 
 		selfInfo:   selfInfo,
 		clusterMap: *initClusterMap(srvName, nodeTCPAddr, selfInfo),
@@ -235,6 +238,10 @@ func (s *GBServer) StartServer() {
 
 	// Reset the context to handle reconnect scenarios
 	s.resetContext()
+
+	s.updateTime()
+	srvName := s.String()
+	s.ServerName = srvName
 
 	// TODO need to do checks to see if this is a reconnect - if so then will need to handle listener creation
 

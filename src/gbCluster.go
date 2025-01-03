@@ -2,10 +2,8 @@ package src
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
-	"time"
 )
 
 //===================================================================================
@@ -52,8 +50,7 @@ type Participant struct {
 	keyValues  map[string]*Delta
 	valueIndex []string
 	maxVersion int64
-	paValue    float64   // Not to be gossiped
-	conn       *gbClient // Not to be gossiped
+	paValue    float64 // Not to be gossiped
 	pm         sync.RWMutex
 }
 
@@ -114,7 +111,7 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 //Add/Remove Participant
 
-// --
+// -- TODO do we need to think about comparisons here?
 // Thread safe
 func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) error {
 
@@ -126,8 +123,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		keyValues:  tmpP.keyValues,
 		valueIndex: tmpP.vi,
 	}
-
-	log.Println("VI ----------> ", tmpP.vi)
 
 	s.clusterMap.partIndex = append(s.clusterMap.partIndex, name)
 
@@ -185,32 +180,3 @@ func (s *GBServer) generateDigest() ([]*fullDigest, error) {
 //=======================================================
 // Delta Parsing, Handling and Changes
 //=======================================================
-
-func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) (int, error) {
-
-	switch delta[0] {
-	case 'V':
-
-		s.clusterMapLock.Lock()
-		defer s.clusterMapLock.Unlock()
-
-		// TODO Need error checks here + correct locking
-
-		key := delta[3 : 3+keyLen]
-
-		value := delta[3+keyLen+1 : 2+keyLen+valueLen]
-
-		now := time.Now().Unix()
-
-		s.selfInfo.keyValues[string(key)] = &Delta{
-			valueType: CLIENT_D,
-			version:   now,
-			value:     value,
-		}
-
-		s.selfInfo.valueIndex = append(s.selfInfo.valueIndex, string(key))
-
-	}
-
-	return 0, nil
-}

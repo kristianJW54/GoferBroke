@@ -100,7 +100,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 
 	s.serverLock.Lock()
 	s.tmpClientStore[client.cid] = client
-	log.Printf("adding client to tmp store %v\n", s.tmpClientStore[client.cid])
+	//log.Printf("adding client to tmp store %v\n", s.tmpClientStore[client.cid])
 	s.serverLock.Unlock()
 
 	//May want to update some node connection  metrics which will probably need a write lock from here
@@ -154,16 +154,13 @@ func (s *GBServer) connectToSeed() error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	pay1, err := s.prepareInfoSend()
+	pay1, err := s.prepareSelfInfoSend()
 	if err != nil {
 		return err
 	}
-	log.Printf("cluster info prepared")
 
-	client := s.createNodeClient(conn, "whaaaat", true, NODE)
+	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	//TODO Need to wait here until we receive the OK from seed servers that we have been onboarded and can proceed
-	// the ok will be from a complete cluster info send with a OK + EOS message signalling we have got all the info to begin
 	rsp, err := client.qProtoWithResponse(pay1, false, true)
 	if err != nil {
 		return err
@@ -186,10 +183,16 @@ func (s *GBServer) connectToSeed() error {
 
 	// Now we can remove from tmp map and add to client store including connected flag
 	s.serverLock.Lock()
+	log.Printf("upgrading client connection...")
 	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
 		return err
 	}
+
+	client.mu.Lock()
+	client.Name = delta.sender
+	log.Printf("changed client name to %s", delta.sender)
+	client.mu.Unlock()
 	s.serverLock.Unlock()
 
 	select {
@@ -204,7 +207,7 @@ func (s *GBServer) connectToSeed() error {
 }
 
 // Thread safe
-func (s *GBServer) prepareInfoSend() ([]byte, error) {
+func (s *GBServer) prepareSelfInfoSend() ([]byte, error) {
 
 	s.clusterMapLock.Lock()
 	defer s.clusterMapLock.Unlock()
@@ -218,8 +221,6 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	//if s.ServerName != s.selfInfo.name || s.selfInfo == nil {
 	//	return nil, fmt.Errorf("participant not in self info for server %s", s.ServerName)
 	//}
-
-	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
 
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo()

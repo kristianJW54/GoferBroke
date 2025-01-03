@@ -288,10 +288,9 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 	}
 
 	if existingClient, exists := s.nodeStore[name]; exists {
-		log.Printf("Client %s already exists in nodeStore: %+v", name, existingClient)
+		log.Printf("Client %s already exists in nodeStore: %+v -- continuing...", name, existingClient)
 	}
 
-	// TODO - is because the NewServer is adding the time NOT the Start Server routine
 	// TODO --> change this and then include the logic for comparing existing stored clients
 
 	// If client not found we must check our cluster map for both server ID + Addr
@@ -299,10 +298,7 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 	switch client.cType {
 	case NODE:
-		log.Printf("%s !before! node store count %v", s.ServerName, len(s.nodeStore))
 		s.nodeStore[name] = client
-		log.Printf("%s adding client %s to node store %v", s.ServerName, name, client)
-		log.Printf("%s node store count %v", s.ServerName, len(s.nodeStore))
 		client.flags.set(CONNECTED)
 		delete(s.tmpClientStore, client.cid)
 	case CLIENT:
@@ -419,8 +415,8 @@ func (c *gbClient) readLoop() {
 
 		c.mu.Unlock()
 
-		log.Printf("bytes read --> %d", n)
-		log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
+		//log.Printf("bytes read --> %d", n)
+		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
 		// TODO Think about flushing and writing and any clean up after the read
 
@@ -778,4 +774,33 @@ func (c *gbClient) processDelta(message []byte) error {
 
 	return nil
 
+}
+
+func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) (int, error) {
+
+	switch delta[0] {
+	case 'V':
+
+		s.clusterMapLock.Lock()
+		defer s.clusterMapLock.Unlock()
+
+		// TODO Need error checks here + correct locking
+
+		key := delta[3 : 3+keyLen]
+
+		value := delta[3+keyLen+1 : 2+keyLen+valueLen]
+
+		now := time.Now().Unix()
+
+		s.selfInfo.keyValues[string(key)] = &Delta{
+			valueType: CLIENT_D,
+			version:   now,
+			value:     value,
+		}
+
+		s.selfInfo.valueIndex = append(s.selfInfo.valueIndex, string(key))
+
+	}
+
+	return 0, nil
 }
