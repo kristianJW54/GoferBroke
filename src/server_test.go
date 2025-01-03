@@ -48,6 +48,13 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	gbs.Shutdown()
 	time.Sleep(1 * time.Second)
 
+	for k, v := range gbs.clusterMap.participants {
+		log.Printf("name = %s", k)
+		for _, value := range v.keyValues {
+			log.Printf("value = %+s", value.value)
+		}
+	}
+
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
 

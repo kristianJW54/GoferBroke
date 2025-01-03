@@ -168,7 +168,6 @@ func (s *GBServer) connectToSeed() error {
 	if err != nil {
 		return err
 	}
-	log.Printf("no response - moving on")
 	// If we receive no error we can assume the response was received and continue
 
 	delta, err := deserialiseDelta(rsp)
@@ -176,14 +175,8 @@ func (s *GBServer) connectToSeed() error {
 		return err
 	}
 
-	var firstKey string
-
 	// Now we add the delta to our cluster map
 	for name, participant := range delta.delta {
-
-		if firstKey == "" {
-			firstKey = name
-		}
 
 		err := s.addParticipantFromTmp(name, participant)
 		if err != nil {
@@ -193,7 +186,7 @@ func (s *GBServer) connectToSeed() error {
 
 	// Now we can remove from tmp map and add to client store including connected flag
 	s.serverLock.Lock()
-	err = s.moveToConnected(client.cid, firstKey)
+	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
 		return err
 	}
@@ -229,19 +222,10 @@ func (s *GBServer) prepareInfoSend() ([]byte, error) {
 	// TODO Can we serialise straight from self info and avoid creating temp structures? let the receiver do it
 
 	//Need to serialise the tmpCluster
-	cereal, err := s.serialiseClusterDelta(nil)
+	cereal, err := s.serialiseSelfInfo()
 	if err != nil {
 		return nil, err
 	}
-
-	//for k, v := range s.clusterMap.participants {
-	//	log.Printf("name === %s", k)
-	//	for _, value := range v.keyValues {
-	//		log.Printf("value === %s", value.value)
-	//	}
-	//}
-
-	//cereal := []byte("HELLLOOOOOOOOOO\r\n")
 
 	// Acquire sequence ID
 	seq, err := s.acquireReqID()
@@ -461,13 +445,7 @@ func (c *gbClient) processInfoMessage(message []byte) {
 
 	// We have to do this last because we will end up sending back the nodes own info
 
-	var firstKey string
-
 	for key, value := range tmpC.delta {
-
-		if firstKey == "" {
-			firstKey = key
-		}
 
 		err := c.srv.addParticipantFromTmp(key, value)
 		if err != nil {
@@ -478,7 +456,7 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	}
 	// TODO Fix this - trying to move twice as it was within the loop - now need to have a comparison method call for checks
 	// Move the tmpClient to connected as it has provided its info which we have now stored
-	err = c.srv.moveToConnected(c.cid, firstKey)
+	err = c.srv.moveToConnected(c.cid, tmpC.sender)
 	if err != nil {
 		log.Printf("MoveToConnected failed in process info message: %v", err)
 	}

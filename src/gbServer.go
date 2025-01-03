@@ -98,8 +98,7 @@ func (sf *ServerID) String() string {
 type GBServer struct {
 	//Server Info - can add separate info struct later
 	ServerID      *ServerID
-	ServerName    string //Set by config or flags
-	BroadcastName string //ID and timestamp
+	ServerName    string //ID and timestamp
 	initialised   int64  //time of server creation
 	addr          string
 	nodeTCPAddr   *net.TCPAddr
@@ -183,18 +182,15 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 
 	createdAt := time.Now()
 
-	broadCastName := fmt.Sprintf("%s_%s", serverName, createdAt.Format("20060102150405"))
-
 	seq := newSeqReqPool(10)
 
-	selfInfo := initSelfParticipant(serverName, addr)
+	selfInfo := initSelfParticipant(srvName, addr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
 		ServerID:            serverID,
 		ServerName:          srvName,
-		BroadcastName:       broadCastName,
 		initialised:         createdAt.Unix(),
 		addr:                addr,
 		nodeTCPAddr:         nodeTCPAddr,
@@ -211,7 +207,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		portMap:        make(map[int]uint64),
 
 		selfInfo:   selfInfo,
-		clusterMap: *initClusterMap(serverName, nodeTCPAddr, selfInfo),
+		clusterMap: *initClusterMap(srvName, nodeTCPAddr, selfInfo),
 
 		isOriginal:           false,
 		numNodeConnections:   0,
@@ -320,6 +316,8 @@ func (s *GBServer) Shutdown() {
 		s.nodeListener = nil
 	}
 
+	log.Printf("%s number of clients in node store %v", s.ServerName, len(s.nodeStore))
+
 	//Close connections
 	for name, client := range s.nodeStore {
 		log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
@@ -420,6 +418,8 @@ func (s *GBServer) seedCheck() int {
 // TODO This needs to be a carefully considered initialisation which takes into account the server configurations
 // And environment + users use case
 func initSelfParticipant(name, addr string) *Participant {
+
+	log.Println("initialised name = ", name)
 
 	t := time.Now().Unix()
 

@@ -287,10 +287,22 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 		return fmt.Errorf("client %v not found", cid)
 	}
 
+	if existingClient, exists := s.nodeStore[name]; exists {
+		log.Printf("Client %s already exists in nodeStore: %+v", name, existingClient)
+	}
+
+	// TODO - is because the NewServer is adding the time NOT the Start Server routine
+	// TODO --> change this and then include the logic for comparing existing stored clients
+
+	// If client not found we must check our cluster map for both server ID + Addr
+	// If it's in there then we must decide on what to do - gossip and update - remove old entry
+
 	switch client.cType {
 	case NODE:
+		log.Printf("%s !before! node store count %v", s.ServerName, len(s.nodeStore))
 		s.nodeStore[name] = client
 		log.Printf("%s adding client %s to node store %v", s.ServerName, name, client)
+		log.Printf("%s node store count %v", s.ServerName, len(s.nodeStore))
 		client.flags.set(CONNECTED)
 		delete(s.tmpClientStore, client.cid)
 	case CLIENT:

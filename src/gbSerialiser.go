@@ -103,7 +103,8 @@ type tmpParticipant struct {
 }
 
 type clusterDelta struct {
-	delta map[string]*tmpParticipant
+	sender string
+	delta  map[string]*tmpParticipant
 }
 
 // TODO Look at flattening or refining the data structure passed to the serialiser for faster performance
@@ -117,6 +118,98 @@ type clusterDelta struct {
 // TODO NEED --> A serialise self-info delta
 // TODO NEED --> To add senders name into the packet at beginning for ID purposes as maps in go are not inherently ordered
 
+func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
+
+	// Type = Delta - 1 byte Uint8
+	// Length of payload - 4 byte uint32
+	// Size of Delta - 2 byte uint16
+	// Total metadata for digest byte array = --> 7 <--
+
+	length := 7 + 2 //Including CLRF at the end
+
+	// Include sender's name
+	length += 1
+	length += len(s.ServerName)
+
+	self := s.selfInfo
+
+	// This seems like a duplication - but the same deserialise delta method will be used to deconstruct into a tmpClusterDelta
+	// For that a sender name field is populated and a tmpParticipant
+	length += 1 + len(self.name) + 2 // 1 byte for name length + name length + size of delta key-values
+
+	for _, key := range self.valueIndex {
+		log.Println("key == ", key)
+		if valueData, exists := self.keyValues[key]; exists && valueData != nil {
+			length += 14 + len(key) + len(valueData.value) // Calculate size for this key
+		} else {
+			// Log missing key and continue
+			fmt.Printf("Warning: key %s not found or valueData is nil for participant %s\n", key, self.name)
+		}
+	}
+
+	// Allocate buffer
+	deltaBuf := make([]byte, length)
+
+	// Write metadata header directly
+	deltaBuf[0] = byte(DELTA_TYPE)
+	binary.BigEndian.PutUint32(deltaBuf[1:5], uint32(length))
+	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(1)) // As is selfInfo - will only be 1 participant
+
+	offset := 7
+
+	deltaBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(deltaBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	// Write participant name length and name
+	deltaBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(deltaBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	// Write the number of key-value pairs for the participant
+	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(self.valueIndex)))
+	offset += 2
+
+	for _, value := range self.valueIndex {
+		valueData := self.keyValues[value]
+
+		v := value
+		// Write key (which is similar to how we handle name)
+		deltaBuf[offset] = uint8(len(v))
+		offset++
+		copy(deltaBuf[offset:], v)
+		offset += len(v)
+
+		// Write version (8 bytes, uint64)
+		binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(valueData.version))
+		offset += 8
+
+		// Write valueType (1 byte, uint8)
+		deltaBuf[offset] = uint8(valueData.valueType)
+		offset++
+		// Write value length (4 bytes, uint32) and the value itself
+		binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(valueData.value)))
+		offset += 4
+		copy(deltaBuf[offset:], valueData.value)
+		offset += len(valueData.value)
+
+	}
+
+	// Append CRLF
+	copy(deltaBuf[offset:], CLRF) // Assuming CLRF is defined as []byte{13, 10}
+	offset += 2
+
+	// Validate buffer usage
+	if offset != length {
+		return nil, fmt.Errorf("buffer mismatch: calculated length %d, written offset %d", length, offset)
+	}
+
+	return deltaBuf, nil
+
+}
+
 // Lock should be held on entry
 func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 
@@ -125,7 +218,11 @@ func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 	// Size of Delta - 2 byte uint16
 	// Total metadata for digest byte array = --> 7 <--
 
-	length := 7 + 2 //Including CLRF
+	length := 7 + 2 //Including CLRF at the end
+
+	// Include senders name
+	length += 1
+	length += len(s.ServerName)
 
 	pi := s.clusterMap.partIndex
 
@@ -160,6 +257,11 @@ func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(pi)))
 
 	offset := 7
+
+	deltaBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(deltaBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
 
 	// Serialize participants
 	for _, p := range pi {
@@ -239,11 +341,21 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 	// Use header to allocate cluster map capacity
 	size := binary.BigEndian.Uint16(delta[5:7])
 
+	offset := 7
+
+	// Extract senders name
+	senderLen := int(delta[offset])
+	senderName := delta[offset+1 : offset+senderLen]
+
+	offset++
+	offset += senderLen
+
 	cDelta := &clusterDelta{
+		string(senderName),
 		make(map[string]*tmpParticipant, size),
 	}
 
-	offset := 7
+	log.Println("Sender Name from deserialise == ", cDelta.sender)
 
 	// Looping through each participant
 	for i := 0; i < int(size); i++ {
