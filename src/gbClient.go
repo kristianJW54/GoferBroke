@@ -230,7 +230,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	}
 
 	// Server lock here?
-	s.numClientConnections++
+	s.numClientConnections.Add(1)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -291,7 +291,8 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 		log.Printf("Client %s already exists in nodeStore: %+v -- continuing...", name, existingClient)
 	}
 
-	// TODO --> change this and then include the logic for comparing existing stored clients
+	//TODO --> use server ID without timestamp to detect whether a node as restarted if so, check addr to verify and then
+	// gossip digest to bring up to date, allow background node deleter to remove previous store when dead
 
 	// If client not found we must check our cluster map for both server ID + Addr
 	// If it's in there then we must decide on what to do - gossip and update - remove old entry

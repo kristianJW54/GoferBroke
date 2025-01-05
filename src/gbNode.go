@@ -91,7 +91,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	}
 
 	s.serverLock.Lock()
-	s.numNodeConnections++
+	s.numNodeConnections.Add(1) // TODO Need to add to connections only when connect is complete
 	s.serverLock.Unlock()
 
 	client.mu.Lock()
@@ -194,6 +194,8 @@ func (s *GBServer) connectToSeed() error {
 	log.Printf("changed client name to %s", delta.sender)
 	client.mu.Unlock()
 	s.serverLock.Unlock()
+
+	// TODO Add to connections here + add in check here for num connections if 0 then we need to signal to start gossip process
 
 	select {
 	case <-ctx.Done():
@@ -440,10 +442,6 @@ func (c *gbClient) processInfoMessage(message []byte) {
 		log.Printf("onboardNewJoiner failed: %v", err)
 	}
 
-	// TODO Fix de-serialise delta - must reset state
-
-	// If this is one participant consider accessing another way than loop
-
 	// We have to do this last because we will end up sending back the nodes own info
 
 	for key, value := range tmpC.delta {
@@ -455,7 +453,7 @@ func (c *gbClient) processInfoMessage(message []byte) {
 		}
 
 	}
-	// TODO Fix this - trying to move twice as it was within the loop - now need to have a comparison method call for checks
+
 	// Move the tmpClient to connected as it has provided its info which we have now stored
 	err = c.srv.moveToConnected(c.cid, tmpC.sender)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -41,8 +42,7 @@ const (
 	ACCEPT_LOOP_STARTED
 	ACCEPT_NODE_LOOP_STARTED
 	CONNECTED_TO_CLUSTER
-	IS_GOSSIPING
-	JOINING
+	GOSSIP_SIGNALLED
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -139,8 +139,8 @@ type GBServer struct {
 	//Connection Handling
 	gcid uint64 // Global client ID counter
 	// May need one for client and one for node as we will treat them differently
-	numNodeConnections   uint16
-	numClientConnections uint16
+	numNodeConnections   atomic.Int64
+	numClientConnections atomic.Int64
 
 	tmpClientStore map[uint64]*gbClient
 	nodeStore      map[string]*gbClient // TODO May want to possibly embed this into the clusterMap?
@@ -155,6 +155,7 @@ type GBServer struct {
 	clusterMapLock sync.RWMutex
 
 	//serverWg *sync.WaitGroup
+	startupSync *sync.WaitGroup
 
 	//go-routine tracking
 	grTracking
@@ -212,11 +213,13 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		selfInfo:   selfInfo,
 		clusterMap: *initClusterMap(srvName, nodeTCPAddr, selfInfo),
 
-		isOriginal:           false,
-		numNodeConnections:   0,
-		numClientConnections: 0,
+		isOriginal: false,
+		//numNodeConnections:   0,
+		//numClientConnections: 0,
 
 		nodeReqPool: *seq,
+
+		startupSync: &sync.WaitGroup{},
 
 		// TODO Create init method and point to it here on server initialisation
 		grTracking: grTracking{
@@ -273,6 +276,7 @@ func (s *GBServer) StartServer() {
 	// TODO Maybe use sync.Once to ensure that necessary startup routines start before beginning the accept loops
 
 	//---------------- Node Accept Loop ----------------//
+	s.startupSync.Add(1)
 	s.AcceptNodeLoop("node-test")
 
 	//---------------- Client Accept Loop ----------------//
@@ -298,6 +302,15 @@ func (s *GBServer) StartServer() {
 	// - Routing??
 
 	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
+
+	log.Printf("%s - waiting for startup...", s.name)
+	s.startupSync.Wait()
+	log.Printf("startup done...")
+	// Gossip process
+	// Num Connections monitor process
+
+	// Gossip Process
+
 }
 
 //=======================================================
@@ -566,6 +579,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 		})
 	}
 
+	s.startupSync.Done()
 	s.serverLock.Unlock()
 
 }
