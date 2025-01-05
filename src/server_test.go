@@ -76,6 +76,43 @@ func (s *GBServer) simulateConnectionLoss() {
 	log.Println("All existing connections have been closed to simulate network loss")
 }
 
+func TestGossipSignal(t *testing.T) {
+
+	lc := net.ListenConfig{}
+
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
+			},
+		},
+	}
+
+	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2 := NewServer("test-server-2", 2, config, "localhost", "8082", "8083", lc)
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	go gbs2.StartServer()
+
+	time.Sleep(5 * time.Second) // Allow for time for gossip to test
+	gbs2.decrementNodeConnCount()
+	time.Sleep(5 * time.Second) // Allow for time for gossip to test
+
+	gbs2.Shutdown()
+	//time.Sleep(1 * time.Second)
+	gbs.Shutdown()
+	time.Sleep(1 * time.Second)
+
+	gbs.logActiveGoRoutines()
+	gbs2.logActiveGoRoutines()
+
+}
+
 // TODO After node 2 reconnects - node 1 duplicates serialisation and adding to cluster causing move to connected failure
 
 func TestReconnectOfNode(t *testing.T) {

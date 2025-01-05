@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 )
@@ -353,8 +352,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 		string(senderName),
 		make(map[string]*tmpParticipant, size),
 	}
-
-	log.Println("Sender Name from deserialise == ", cDelta.sender)
 
 	// Looping through each participant
 	for i := 0; i < int(size); i++ {

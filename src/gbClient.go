@@ -229,9 +229,6 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 		cType: clientType,
 	}
 
-	// Server lock here?
-	s.numClientConnections.Add(1)
-
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
@@ -251,7 +248,6 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	//We also only get a read error once we close the connection - so we need to handle our connections in a robust way
 
 	s.tmpClientStore[client.cid] = client
-	fmt.Printf("creating client %s", client.Name)
 
 	//TODO before starting the loops - handle TLS Handshake if needed
 	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
@@ -354,15 +350,15 @@ func (c *gbClient) readLoop() {
 		n, err := reader.Read(buff)
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("%s -- connection closed", c.srv.ServerName)
+				//log.Printf("%s -- connection closed", c.srv.ServerName)
 				// TODO need to do further check to see if our connection has dropped and implement reconnect strategy
 				// Maybe it reaches out to another node?
 				// Maybe it exits and then applies it's own reconnect with backoff retries
 				// Will then need to log monitoring for full restart
-				buff = nil
+				//buff = nil
 				return
 			}
-			log.Printf("%s -- read error: %s", c.srv.ServerName, err)
+			//log.Printf("%s -- read error: %s", c.srv.ServerName, err)
 			//TODO Handle client closures more effectively - based on type
 			// if client may want to reconnect and retry - if node we will want to use the phi accrual
 
@@ -575,7 +571,7 @@ func (c *gbClient) writeLoop() {
 			c.outbound.flushSignal.Wait()
 			//log.Println("Flush signal awakened.")
 			if c.srv.serverContext.Err() != nil {
-				log.Printf("exiting write loop")
+				//log.Printf("exiting write loop")
 				return
 			}
 		}
@@ -624,8 +620,6 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 		id:  seqID,
 	}
 
-	log.Printf("adding response channel %d", seqID)
-
 	c.rm.Lock()
 	c.resp[seqID] = rsp
 	c.rm.Unlock()
@@ -652,14 +646,14 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID by
 	select {
 	case <-ctx.Done():
 		c.srv.releaseReqID(respID)
-		log.Println("context has been CALLED on RESPONSE")
+		//log.Println("context has been CALLED on RESPONSE")
 		return nil, ctx.Err()
 	case msg := <-rsp.ch:
 		return msg, nil
 	case err := <-rsp.err:
 		return nil, err
 	case <-time.After(timeout):
-		log.Printf("timed out waiting for response channel %d", int(respID))
+		//log.Printf("timed out waiting for response channel %d", int(respID))
 		return nil, fmt.Errorf("timeout for response ID %d", rsp.id)
 	}
 

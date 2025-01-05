@@ -43,6 +43,7 @@ const (
 	ACCEPT_NODE_LOOP_STARTED
 	CONNECTED_TO_CLUSTER
 	GOSSIP_SIGNALLED
+	GOSSIP_PAUSED
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -130,6 +131,7 @@ type GBServer struct {
 
 	// Configurations and extensibility should be handled in Options which will be embedded here
 	//Distributed Info
+	gossip     *gossip
 	isOriginal bool
 	// Metrics or values for gossip
 	// CPU Load
@@ -139,8 +141,8 @@ type GBServer struct {
 	//Connection Handling
 	gcid uint64 // Global client ID counter
 	// May need one for client and one for node as we will treat them differently
-	numNodeConnections   atomic.Int64
-	numClientConnections atomic.Int64
+	numNodeConnections   int64 //Atomically incremented
+	numClientConnections int64 //Atomically incremented
 
 	tmpClientStore map[uint64]*gbClient
 	nodeStore      map[string]*gbClient // TODO May want to possibly embed this into the clusterMap?
@@ -180,10 +182,12 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 
 	serverID := NewServerID(serverName, uuid)
 	srvName := serverID.String()
-	log.Printf("srvName = %s", srvName)
 
 	// Creation steps
 	// Gather server metrics
+
+	// Init gossip
+	goss := initGossipSettings(1*time.Second, 1)
 
 	createdAt := time.Now()
 
@@ -213,6 +217,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		selfInfo:   selfInfo,
 		clusterMap: *initClusterMap(srvName, nodeTCPAddr, selfInfo),
 
+		gossip:     goss,
 		isOriginal: false,
 		//numNodeConnections:   0,
 		//numClientConnections: 0,
@@ -301,12 +306,12 @@ func (s *GBServer) StartServer() {
 	// - Handlers added
 	// - Routing??
 
-	fmt.Printf("%s %v\n", s.ServerName, s.isOriginal)
-
-	log.Printf("%s - waiting for startup...", s.name)
 	s.startupSync.Wait()
-	log.Printf("startup done...")
 	// Gossip process
+	s.startGoRoutine(s.ServerName, "gossip-process",
+		func() {
+			s.gossipProcess()
+		})
 	// Num Connections monitor process
 
 	// Gossip Process
@@ -336,17 +341,15 @@ func (s *GBServer) Shutdown() {
 		s.nodeListener = nil
 	}
 
-	log.Printf("%s number of clients in node store %v", s.ServerName, len(s.nodeStore))
-
 	//Close connections
 	for name, client := range s.nodeStore {
-		log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
+		//log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.nodeStore, name)
 	}
 
 	for name, client := range s.tmpClientStore {
-		log.Printf("%s closing client from TmpStore %d\n", s.ServerName, name)
+		//log.Printf("%s closing client from TmpStore %d\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.tmpClientStore, name)
 	}
@@ -438,8 +441,6 @@ func (s *GBServer) seedCheck() int {
 // TODO This needs to be a carefully considered initialisation which takes into account the server configurations
 // And environment + users use case
 func initSelfParticipant(name, addr string) *Participant {
-
-	log.Println("initialised name = ", name)
 
 	t := time.Now().Unix()
 
@@ -676,7 +677,91 @@ func (s *GBServer) releaseReqID(id uint8) {
 }
 
 //=======================================================
-// Internal Monitoring
+// Gossip Signalling + Process
 //=======================================================
 
 //----------------
+//Gossip Signalling
+
+func (s *GBServer) checkGossipCondition() {
+	nodes := atomic.LoadInt64(&s.numNodeConnections)
+
+	if nodes >= 1 {
+		s.gossip.gossipControlChannel <- true
+		s.gossip.gossSignal.Broadcast()
+	} else {
+		s.gossip.gossipControlChannel <- false
+	}
+
+}
+
+func (s *GBServer) gossipProcess() {
+	stopCondition := context.AfterFunc(s.serverContext, func() {
+		// Notify all waiting goroutines to proceed if needed.
+		s.gossip.gossSignal.L.Lock()
+		defer s.gossip.gossSignal.L.Unlock()
+		s.gossip.gossSignal.Broadcast()
+	})
+	defer stopCondition()
+
+	for {
+		s.gossip.gossMu.Lock()
+
+		// Wait for gossipOK to become true, or until serverContext is canceled.
+		if !s.gossip.gossipOK {
+			log.Printf("waiting for node to join...")
+			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
+
+			if s.serverContext.Err() != nil {
+				log.Printf("gossip process exiting due to context cancellation")
+				s.gossip.gossMu.Unlock()
+				return
+			}
+		}
+		s.gossip.gossipOK = s.startGossipProcess()
+
+		s.gossip.gossMu.Unlock()
+
+	}
+}
+
+func (s *GBServer) startGossipProcess() bool {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	log.Printf("Gossip process started")
+	for {
+		select {
+		case <-s.serverContext.Done():
+			log.Printf("Gossip process stopped due to context cancellation")
+			return false
+		case <-ticker.C:
+			// Perform gossiping tasks here
+			log.Printf("Gossip processing at %s", time.Now())
+		case gossipState := <-s.gossip.gossipControlChannel:
+			if !gossipState {
+				// If gossipControlChannel sends 'false', stop the gossiping process
+				log.Printf("Gossip control received false, stopping gossip process")
+				return false
+			}
+		}
+	}
+}
+
+//----------------
+// Connection Count
+
+func (s *GBServer) incrementNodeConnCount() {
+	// Atomically increment node connections
+	atomic.AddInt64(&s.numNodeConnections, 1)
+	// Check and update gossip condition
+	s.checkGossipCondition()
+}
+
+func (s *GBServer) decrementNodeConnCount() {
+	log.Printf("removing conn count by 1")
+	// Atomically decrement node connections
+	atomic.AddInt64(&s.numNodeConnections, -1)
+	// Check and update gossip condition
+	s.checkGossipCondition()
+}

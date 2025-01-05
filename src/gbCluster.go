@@ -12,8 +12,28 @@ import (
 //===================================================================================
 
 type gossip struct {
-	gossInterval  time.Duration
-	nodeSelection uint8
+	gossInterval         time.Duration
+	nodeSelection        uint8
+	gossipControlChannel chan bool
+	gossipOK             bool
+	gossSignal           *sync.Cond
+	gossMu               sync.Mutex
+}
+
+func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *gossip {
+
+	// TODO Will need to carefully incorporate with config or flags
+
+	goss := &gossip{
+		gossInterval:         gossipInterval,
+		nodeSelection:        nodeSelection,
+		gossipControlChannel: make(chan bool, 1),
+		gossipOK:             false,
+	}
+
+	goss.gossSignal = sync.NewCond(&goss.gossMu)
+
+	return goss
 }
 
 //===================================================================================

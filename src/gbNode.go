@@ -90,10 +90,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		cType:   clientType,
 	}
 
-	s.serverLock.Lock()
-	s.numNodeConnections.Add(1) // TODO Need to add to connections only when connect is complete
-	s.serverLock.Unlock()
-
 	client.mu.Lock()
 	client.initClient()
 	client.mu.Unlock()
@@ -183,7 +179,6 @@ func (s *GBServer) connectToSeed() error {
 
 	// Now we can remove from tmp map and add to client store including connected flag
 	s.serverLock.Lock()
-	log.Printf("upgrading client connection...")
 	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
 		return err
@@ -191,11 +186,12 @@ func (s *GBServer) connectToSeed() error {
 
 	client.mu.Lock()
 	client.Name = delta.sender
-	log.Printf("changed client name to %s", delta.sender)
 	client.mu.Unlock()
-	s.serverLock.Unlock()
 
 	// TODO Add to connections here + add in check here for num connections if 0 then we need to signal to start gossip process
+	s.incrementNodeConnCount()
+
+	s.serverLock.Unlock()
 
 	select {
 	case <-ctx.Done():
