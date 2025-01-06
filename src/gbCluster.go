@@ -1,9 +1,12 @@
 package src
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +37,82 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 	goss.gossSignal = sync.NewCond(&goss.gossMu)
 
 	return goss
+}
+
+//=======================================================
+// Gossip Signalling + Process
+//=======================================================
+
+//----------------
+//Gossip Signalling
+
+func (s *GBServer) checkGossipCondition() {
+	nodes := atomic.LoadInt64(&s.numNodeConnections)
+
+	if nodes >= 1 && !s.flags.isSet(GOSSIP_SIGNALLED) {
+		s.flags.set(GOSSIP_SIGNALLED)
+		s.gossip.gossipControlChannel <- true
+		log.Println("signalling gossip")
+		s.gossip.gossSignal.Broadcast()
+
+	} else if nodes < 1 && s.flags.isSet(GOSSIP_SIGNALLED) {
+		s.gossip.gossipControlChannel <- false
+		s.flags.clear(GOSSIP_SIGNALLED)
+	}
+
+}
+
+func (s *GBServer) gossipProcess() {
+	stopCondition := context.AfterFunc(s.serverContext, func() {
+		// Notify all waiting goroutines to proceed if needed.
+		s.gossip.gossSignal.L.Lock()
+		defer s.gossip.gossSignal.L.Unlock()
+		s.gossip.gossSignal.Broadcast()
+	})
+	defer stopCondition()
+
+	for {
+		s.gossip.gossMu.Lock()
+
+		// Wait for gossipOK to become true, or until serverContext is canceled.
+		if !s.gossip.gossipOK {
+			log.Printf("waiting for node to join...")
+			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
+
+			if s.serverContext.Err() != nil {
+				log.Printf("gossip process exiting due to context cancellation")
+				s.gossip.gossMu.Unlock()
+				return
+			}
+		}
+		s.gossip.gossipOK = s.startGossipProcess()
+
+		s.gossip.gossMu.Unlock()
+
+	}
+}
+
+func (s *GBServer) startGossipProcess() bool {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	log.Printf("Gossip process started")
+	for {
+		select {
+		case <-s.serverContext.Done():
+			log.Printf("Gossip process stopped due to context cancellation")
+			return false
+		case <-ticker.C:
+			// Perform gossiping tasks here
+			log.Printf("Gossip processing at %s", time.Now())
+		case gossipState := <-s.gossip.gossipControlChannel:
+			if !gossipState {
+				// If gossipControlChannel sends 'false', stop the gossiping process
+				log.Printf("Gossip control received false, stopping gossip process")
+				return false
+			}
+		}
+	}
 }
 
 //===================================================================================

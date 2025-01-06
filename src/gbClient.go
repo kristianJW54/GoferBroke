@@ -207,13 +207,13 @@ func (c *gbClient) initClient() {
 
 	c.responseHandler.resp = make(map[int]*response, 10) // Need to align with SeqID pool-size
 
-	for i := 0; i < 10; i++ {
-		c.responseHandler.resp[i] = &response{
-			ch:      make(chan []byte, 1),
-			timeout: 2 * time.Second, // Default timeout; can be overridden
-			err:     make(chan error, 1),
-		}
-	}
+	//for i := 0; i < 10; i++ {
+	//	c.responseHandler.resp[i] = &response{
+	//		ch:      make(chan []byte, 1),
+	//		timeout: 2 * time.Second, // Default timeout; can be overridden
+	//		err:     make(chan error, 1),
+	//	}
+	//}
 
 	return
 
