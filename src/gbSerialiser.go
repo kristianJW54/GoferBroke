@@ -88,6 +88,7 @@ type summaryDigest struct {
 }
 
 type fullDigest struct {
+	senderName  string
 	nodeName    string
 	maxVersion  int64
 	keyVersions map[string]int64
@@ -427,6 +428,95 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 }
 
+func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
+
+	// TODO Needs to have efficient allocations
+	// Node name - max version - [value key - version, value key - version ...]
+	//node1: 10 [user123: 5, user456: 8, user789: 4, ]
+	//node2: 12 [user123: 6, user456: 10, user789: 7, ]
+	//node3: 9 [user123: 5, user456: 9, user789: 6, ]
+
+	// Need type = Digest - 1 byte Uint8
+	// Need length of payload - 4 byte uint32
+	// Need size of digest - 2 byte uint16
+	// Total metadata for digest byte array = 7
+
+	length := 7 + 2 //Including CLRF at the end
+
+	// Include sender's name
+	length += 1
+	length += len(s.ServerName)
+
+	for _, v := range s.clusterMap.partIndex {
+		value := s.clusterMap.participants[v]
+
+		length += 1
+		length += len(value.name)
+		length += 8 + 2 // Time unix which is int64 --> 8 Bytes plus 2 for the number of delta key/versions in array
+
+		for _, v := range value.valueIndex {
+
+			length += 1
+			length += len(v)
+			length += 8
+
+		}
+
+	}
+
+	digestBuf := make([]byte, length)
+
+	offset := 0
+
+	digestBuf[0] = DIGEST_TYPE
+	offset++
+	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
+	offset += 4
+	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(s.clusterMap.partIndex))) // Number of participants
+	offset += 2
+
+	digestBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(digestBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	for _, v := range s.clusterMap.partIndex {
+
+		value := s.clusterMap.participants[v]
+
+		if len(value.name) > 255 {
+			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.name)
+		}
+		nameLen := len(value.name)
+		digestBuf[offset] = uint8(nameLen)
+		offset++
+		copy(digestBuf[offset:], value.name)
+		offset += nameLen
+		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(value.maxVersion))
+		offset += 8
+
+		binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(value.keyValues)))
+		offset += 2
+
+		for _, v := range value.valueIndex {
+			version := value.keyValues[v].version
+			keyLen := len(v)
+			digestBuf[offset] = uint8(keyLen)
+			offset++
+			copy(digestBuf[offset:], v)
+			offset += keyLen
+			binary.BigEndian.PutUint64(digestBuf[offset:], uint64(version))
+			offset += 8
+		}
+
+	}
+	copy(digestBuf[offset:], CLRF)
+	offset += len(CLRF)
+
+	return digestBuf, nil
+
+}
+
 // Need to trust that we are being given a digest slice from the packet and message length checks have happened before
 // being handed to this method
 func serialiseDigest(digest []*fullDigest) ([]byte, error) {
@@ -524,8 +614,17 @@ func deSerialiseDigest(digest []byte) ([]*fullDigest, error) {
 
 	offset := 7
 
+	// Extract senders name
+	senderLen := int(digest[offset])
+	senderName := digest[offset+1 : offset+1+senderLen]
+
+	offset++
+	offset += senderLen
+
 	for i := 0; i < int(sizeMeta); i++ {
-		fd := &fullDigest{}
+		fd := &fullDigest{
+			senderName: string(senderName),
+		}
 
 		nameLen := int(digest[offset])
 

@@ -43,6 +43,9 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 // Gossip Signalling + Process
 //=======================================================
 
+//TODO to avoid bouncing gossip between two nodes - server should flag what node it is gossiping with
+// If it selects a node to gossip with and it is the one it is currently gossiping with then it should pick another or wait
+
 //----------------
 //Gossip Signalling
 
@@ -258,11 +261,14 @@ func (s *GBServer) generateDigest() ([]*fullDigest, error) {
 
 	td := make([]*fullDigest, len(s.clusterMap.participants))
 
-	cm := s.clusterMap.participants
+	cm := s.clusterMap.partIndex
+	parts := s.clusterMap.participants
 
 	idx := 0
-	for _, value := range cm {
+	for _, v := range cm {
 		// Lock the participant to safely read the data
+		value := parts[v]
+
 		value.pm.RLock()
 		// Initialize the map entry for each participant
 		td[idx] = &fullDigest{

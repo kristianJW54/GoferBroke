@@ -11,73 +11,71 @@ import (
 
 func TestSerialiseDigest(t *testing.T) {
 
-	// Creating node names
-	timeCode := time.Now().Unix()
-	nodeAName := fmt.Sprintf("node-a%d", timeCode)
-	nodeBName := fmt.Sprintf("node-b%d", timeCode)
-
-	nodeA := &fullDigest{
-		nodeName:    nodeAName,
-		maxVersion:  1733134288,
-		keyVersions: make(map[string]int64, 4),
+	// Create keyValues with PBDelta messages
+	keyValues := map[string]*Delta{
+		"key1":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("hello world")},
+		"key2":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
+		"key3":  &Delta{valueType: INTERNAL_D, version: 1640995201, value: []byte("short")},
+		"key4":  &Delta{valueType: INTERNAL_D, version: 1640995202, value: []byte("This is a slightly longer string to test serialization.")},
+		"key5":  &Delta{valueType: INTERNAL_D, version: 1640995203, value: []byte("1234567890")},
+		"key6":  &Delta{valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  &Delta{valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+		"key8":  &Delta{valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  &Delta{valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"key10": &Delta{valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+		"key11": &Delta{valueType: INTERNAL_D, version: 1640995209, value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
+		"key12": &Delta{valueType: INTERNAL_D, version: 1640995210, value: []byte("abcdefghijklmnopqrstuvwxyz")},
+		"key13": &Delta{valueType: INTERNAL_D, version: 1640995211, value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
+		"key14": &Delta{valueType: INTERNAL_D, version: 1640995212, value: []byte("Yet another string, this one a bit longer than the previous.")},
+		"key15": &Delta{valueType: INTERNAL_D, version: 1640995213, value: []byte("Small string.")},
+		"key16": &Delta{valueType: INTERNAL_D, version: 1640995214, value: []byte("A moderately sized string for testing.")},
+		"key17": &Delta{valueType: INTERNAL_D, version: 1640995215, value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
+		"key18": &Delta{valueType: INTERNAL_D, version: 1640995216, value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
+		"key19": &Delta{valueType: INTERNAL_D, version: 1640995217, value: []byte("Medium length string for benchmarking purposes.")},
+		"key20": &Delta{valueType: INTERNAL_D, version: 1640995218, value: []byte("Final key-value pair.")},
 	}
 
-	nodeA.keyVersions["key1"] = time.Now().Unix() - 100
-	nodeA.keyVersions["key2"] = time.Now().Unix() - 200
-	nodeA.keyVersions["key3"] = time.Now().Unix() - 300
-	nodeA.keyVersions["key4"] = time.Now().Unix() - 400
-
-	nodeA.vi = make([]string, 4)
-	nodeA.vi[0] = "key1"
-	nodeA.vi[1] = "key2"
-	nodeA.vi[2] = "key3"
-	nodeA.vi[3] = "key4"
-
-	nodeB := &fullDigest{
-		nodeName:    nodeBName,
-		maxVersion:  1733134288,
-		keyVersions: make(map[string]int64, 4),
+	// Mock server setup
+	gbs := &GBServer{
+		ServerName: "test-server",
+		selfInfo:   &Participant{},
+		clusterMap: ClusterMap{
+			participants: make(map[string]*Participant, 1),
+			partIndex:    []string{"node1"}, // Manually entering participants
+		},
 	}
 
-	nodeB.keyVersions["key1"] = time.Now().Unix() - 500
-	nodeB.keyVersions["key2"] = time.Now().Unix() - 600
-	nodeB.keyVersions["key3"] = time.Now().Unix() - 700
-	nodeB.keyVersions["key4"] = time.Now().Unix() - 800
+	// Create a participant
+	participant := &Participant{
+		name:       "node1",
+		keyValues:  make(map[string]*Delta),
+		valueIndex: []string{},
+	}
 
-	nodeB.vi = make([]string, 4)
-	nodeB.vi[0] = "key1"
-	nodeB.vi[1] = "key2"
-	nodeB.vi[2] = "key3"
-	nodeB.vi[3] = "key4"
+	// Populate participant's keyValues and valueIndex
+	for key, delta := range keyValues {
+		participant.keyValues[key] = delta
+		participant.valueIndex = append(participant.valueIndex, key)
+		if delta.version > participant.maxVersion {
+			participant.maxVersion = delta.version
+		}
+	}
 
-	t.Logf("%s:%d", nodeA.nodeName, nodeA.maxVersion)
-	t.Logf("%s:%d", nodeB.nodeName, nodeB.maxVersion)
+	// Add participant to the ClusterMap
+	gbs.clusterMap.participants["node1"] = participant
 
-	// Serialise will create wrapper array specifying type, length, size of digest
-	// And also serialise elements within the digest
-
-	// Create digest slice
-	digest := []*fullDigest{nodeA, nodeB}
-
-	// Call the serialiseDigest method
-	serialized, err := serialiseDigest(digest)
+	cereal, err := gbs.serialiseClusterDigest()
 	if err != nil {
-		t.Fatalf("Failed to serialize digest: %v", err)
+		log.Println("error ", err)
 	}
 
-	// Log the serialized data for inspection
-	t.Logf("Serialized Digest: %v", serialized)
-	t.Logf("lenght of serialized digest: %d", len(serialized))
+	digest, err := deSerialiseDigest(cereal)
 
-	deserialized, err := deSerialiseDigest(serialized)
-	if err != nil {
-		t.Fatalf("Failed to deserialize digest: %v", err)
-	}
-
-	for _, value := range deserialized {
-		t.Logf("%s:%v", value.nodeName, value.maxVersion)
-		for k, v := range value.keyVersions {
-			t.Logf("%s:%v", k, v)
+	for _, value := range digest {
+		log.Printf("senders name = %s", value.senderName)
+		log.Printf("name = %s", value.nodeName)
+		for key, v := range value.keyVersions {
+			log.Printf("key = %s - version = %v", key, v)
 		}
 	}
 
