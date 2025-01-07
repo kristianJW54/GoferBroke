@@ -83,7 +83,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	clientName := fmt.Sprintf("%s_%d", name, now.Unix())
 
 	client := &gbClient{
-		Name:    clientName,
+		name:    clientName,
 		created: now,
 		srv:     s,
 		gbc:     conn,
@@ -116,12 +116,12 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.LocalAddr())
 		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
 
 	} else {
 		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
+		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.RemoteAddr())
 
 	}
 
@@ -185,7 +185,7 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	client.mu.Lock()
-	client.Name = delta.sender
+	client.name = delta.sender
 	client.mu.Unlock()
 
 	// TODO Add to connections here + add in check here for num connections if 0 then we need to signal to start gossip process

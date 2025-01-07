@@ -49,6 +49,8 @@ Built for developers and system architects, GoferBroke simplifies the complexiti
 
 - Internal Monitoring + Tracing
 
+- TLS Encryption with Windows Cert Store
+
 - Custom Configuration Parsing
 
 - Cloud Platform Testing

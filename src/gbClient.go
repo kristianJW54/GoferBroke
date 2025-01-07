@@ -70,7 +70,7 @@ const (
 //===================================================================================
 
 type gbClient struct {
-	Name    string
+	name    string
 	created time.Time
 	cid     uint64
 
@@ -223,7 +223,7 @@ func (c *gbClient) initClient() {
 func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
 	client := &gbClient{
-		Name:  name,
+		name:  name,
 		srv:   s,
 		gbc:   conn,
 		cType: clientType,
