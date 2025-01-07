@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -20,7 +21,7 @@ type gossip struct {
 	gossipControlChannel chan bool
 	gossipOK             bool
 	gossSignal           *sync.Cond
-	gossMu               sync.Mutex
+	gossMu               sync.RWMutex
 }
 
 func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *gossip {
@@ -106,6 +107,10 @@ func (s *GBServer) startGossipProcess() bool {
 			log.Printf("Gossip process stopped due to context cancellation")
 			return false
 		case <-ticker.C:
+			err := s.selectNodeForGossip()
+			if err != nil {
+				log.Printf("select node error: %v", err)
+			}
 			// Perform gossiping tasks here
 			log.Printf("Gossip processing at %s", time.Now())
 		case gossipState := <-s.gossip.gossipControlChannel:
@@ -116,6 +121,40 @@ func (s *GBServer) startGossipProcess() bool {
 			}
 		}
 	}
+}
+
+//--------------------
+// Gossip Selection
+
+func (s *GBServer) selectNodeForGossip() error {
+
+	// TODO Need a fail safe check so that we don't gossip with ourselves - check name against our own?
+
+	// We need to select a node and check we are not already gossiping with them.
+	s.clusterMapLock.RLock()
+	defer s.clusterMapLock.RUnlock()
+
+	ns := s.gossip.nodeSelection
+	pl := len(s.clusterMap.partIndex) - 1
+	log.Println("part index = ", s.clusterMap.partIndex)
+
+	if int(ns) > pl {
+		// Or pl = 1
+		return fmt.Errorf("gossip process stopped not enough nodes to select")
+	}
+
+	for i := 0; i < int(ns); i++ {
+
+		num := rand.Intn(pl) + 1
+		log.Printf("num selected = %d", num)
+		node := s.clusterMap.partIndex[num]
+
+		log.Printf("gossiping with %s", s.clusterMap.participants[node].name)
+	}
+
+	// Then we need to access their connection
+
+	return nil
 }
 
 //===================================================================================

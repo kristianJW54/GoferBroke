@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-//TODO need test to help with node reconnect to seed
-
 func TestServerRunningTwoNodes(t *testing.T) {
 
 	lc := net.ListenConfig{}
@@ -95,9 +93,12 @@ func TestGossipSignal(t *testing.T) {
 
 	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 	gbs2 := NewServer("test-server-2", 2, config, "localhost", "8082", "8083", lc)
+	gbs3 := NewServer("test-server-3", 3, config, "localhost", "8084", "8083", lc)
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
+	time.Sleep(1 * time.Second)
+	go gbs3.StartServer()
 
 	time.Sleep(5 * time.Second) // Allow for time for gossip to test
 	gbs2.decrementNodeConnCount()
@@ -108,6 +109,7 @@ func TestGossipSignal(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	gbs2.Shutdown()
+	gbs3.Shutdown()
 	//time.Sleep(1 * time.Second)
 	gbs.Shutdown()
 	time.Sleep(1 * time.Second)

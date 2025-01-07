@@ -84,7 +84,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	clientName := fmt.Sprintf("%s_%d", name, now.Unix())
 
 	client := &gbClient{
-		Name:    clientName,
+		name:    clientName,
 		created: now,
 		srv:     s,
 		gbc:     conn,
@@ -185,7 +185,7 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	client.mu.Lock()
-	client.Name = delta.sender
+	client.name = delta.sender
 	client.mu.Unlock()
 
 	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
@@ -458,6 +458,8 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	if err != nil {
 		log.Printf("MoveToConnected failed in process info message: %v", err)
 	}
+
+	c.srv.incrementNodeConnCount()
 
 	return
 
