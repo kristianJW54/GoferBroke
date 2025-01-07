@@ -4,6 +4,14 @@ WHAT CONFIGURATIONS WILL WE HAVE:
 
 Seed Server IP & Port
 
-
+Cluster:
 Number of sequence ID pool for responses
 Max number of nodes for the cluster
+
+Seed:
+Seed name
+Seed Address
+Seed Certs
+
+Gossip:
+Number of nodes to select for gossip
