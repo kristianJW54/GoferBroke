@@ -76,7 +76,8 @@ func (gf *gossipFlags) setIfNotSet(g gossipFlags) bool {
 // createNode will have a read write loop
 // createNode lives inside the node accept loop
 
-// createNodeClient method belongs to the server which receives the connection from the connecting server
+// createNodeClient method belongs to the server which receives the connection from the connecting server.
+// createNodeClient is passed as a callback function to the acceptConnection method within the AcceptLoop.
 func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
 	now := time.Now()
@@ -95,6 +96,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	client.mu.Unlock()
 
 	s.serverLock.Lock()
+	// We temporarily store the client connection here until we have completed the info exchange and recieved a response.
 	s.tmpClientStore[client.cid] = client
 	//log.Printf("adding client to tmp store %v\n", s.tmpClientStore[client.cid])
 	s.serverLock.Unlock()
@@ -102,7 +104,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	//May want to update some node connection  metrics which will probably need a write lock from here
 	// Node count + connection map
 
-	// Initialise read caches and any buffers and store info
 	// Track the goroutine for the read loop using startGoRoutine
 	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
 		client.readLoop()
@@ -117,7 +118,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	if initiated {
 		client.directionType = INITIATED
 		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
-		// TODO if the client initiated the connection and is a new NODE then it must send info on first message
 
 	} else {
 		client.directionType = RECEIVED
@@ -188,7 +188,7 @@ func (s *GBServer) connectToSeed() error {
 	client.Name = delta.sender
 	client.mu.Unlock()
 
-	// TODO Add to connections here + add in check here for num connections if 0 then we need to signal to start gossip process
+	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
 	s.incrementNodeConnCount()
 
 	s.serverLock.Unlock()
@@ -205,6 +205,9 @@ func (s *GBServer) connectToSeed() error {
 }
 
 // Thread safe
+// prepareSelfInfoSend gathers the servers deltas into a participant to send over the network. We only send our self info under the assumption that we are a new node
+// and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the recieving node will detect this by
+// running a check on our ServerID + address
 func (s *GBServer) prepareSelfInfoSend() ([]byte, error) {
 
 	s.clusterMapLock.Lock()
