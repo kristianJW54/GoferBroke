@@ -11,24 +11,7 @@ import (
 	"time"
 )
 
-//TODO -- STEPS FOR TCP ACCEPT LOOP SERVER CONTROL
-// - 2) Server Context and signals to control the server instance
-
-//=================================
-
-//TODO -- 151124 !! -- Now server node can connect to seed will need -->
-// 1) Server info and metrics and connection map
-// 2) Signals for syncing
-// 3) Seed server needs to reply with its info and make connection
-// 4) Protocol reading and parsing
-
-// CONSIDERATIONS //
-// - TCP Keep-Alives default to no less than two hours which means that using anti-entropy with direct and in-direct
-//		heartbeats along with gossip exchanges, the TCP connection will be kept alive unless detected otherwise by the
-//		algorithm
-//------------------------
-
-// Maybe want to declare some global const names for contexts -- seedServerContext -- nodeContext etc
+//Server runs the core program and logic for a node and is the entry point to the system. Every node is a server.
 
 //===================================================================================
 // Server Flags
@@ -74,6 +57,7 @@ func (sf *serverFlags) setIfNotSet(s serverFlags) bool {
 // Main Server
 //===================================================================================
 
+// ServerID combines a server name, uuid and creation time into a broadcast name for other nodes to identify other nodes with
 type ServerID struct {
 	name     string
 	uuid     int
@@ -100,11 +84,12 @@ func (sf *ServerID) updateTime() {
 	sf.timeUnix = uint64(time.Now().Unix())
 }
 
+// GBServer is the main server struct
 type GBServer struct {
 	//Server Info - can add separate info struct later
 	ServerID
 	ServerName    string //ID and timestamp
-	initialised   int64  //time of server creation
+	initialised   int64  //time of server creation - can point to ServerID timestamp
 	addr          string
 	nodeTCPAddr   *net.TCPAddr
 	clientTCPAddr *net.TCPAddr
@@ -162,8 +147,6 @@ type GBServer struct {
 	//go-routine tracking
 	grTracking
 }
-
-//TODO Add a node listener config + also client and node addr
 
 func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) *GBServer {
 
@@ -237,11 +220,8 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 	return s
 }
 
-// Start server will be a go routine alongside this, the server will have to perform connection dials to other servers
-// to maintain persistent connections and perform reconciliation of cluster map
-
-// TODO Need to have a signal channel for startup to have accept connection routines wait until the rest is ready
-
+// StartServer should be run in a go-routine. Upon start, the server will check it's state and launch both internal and gossip processes once accept connection routines
+// have successfully launched
 func (s *GBServer) StartServer() {
 
 	// Reset the context to handle reconnect scenarios
@@ -250,8 +230,6 @@ func (s *GBServer) StartServer() {
 	s.updateTime()
 	srvName := s.String()
 	s.ServerName = srvName
-
-	// TODO need to do checks to see if this is a reconnect - if so then will need to handle listener creation
 
 	//s.serverLock.Lock()
 
@@ -266,7 +244,6 @@ func (s *GBServer) StartServer() {
 	}
 
 	// Move this seed logic elsewhere
-	// TODO if we are not seed then we need to reach out - set a flag for this (initiator)
 	if s.seedCheck() == 1 {
 		s.isOriginal = true
 	} else {
@@ -277,8 +254,6 @@ func (s *GBServer) StartServer() {
 	s.grTracking.trackingFlag.Store(true)
 
 	//s.serverLock.Unlock()
-
-	// TODO Maybe use sync.Once to ensure that necessary startup routines start before beginning the accept loops
 
 	//---------------- Node Accept Loop ----------------//
 	s.startupSync.Add(1)
@@ -306,22 +281,22 @@ func (s *GBServer) StartServer() {
 	// - Handlers added
 	// - Routing??
 
+	// We wait for start up to complete here
 	s.startupSync.Wait()
-	// Gossip process
+	
+	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	s.startGoRoutine(s.ServerName, "gossip-process",
 		func() {
 			s.gossipProcess()
 		})
-	// Num Connections monitor process
-
-	// Gossip Process
 
 }
 
 //=======================================================
+//---------------------
+// Server Shutdown
 
-// TODO Shutdown flag set - and for go-routines and processes to be signalled to terminate once shutdown signalled
-
+// Shutdown attempts to gracefully shutdown the server and terminate any running processes and go-routines. It will close listeners and client connections.
 func (s *GBServer) Shutdown() {
 	//log.Printf("%s -- shut down initiated\n", s.ServerName)
 	s.serverLock.Lock()
@@ -384,7 +359,8 @@ func (s *GBServer) resetContext() {
 }
 
 // TODO Resolver URL's also - to IPs and addr that can be stored as TCPAddr
-
+// TODO Revisit when config parsing is complete
+// TODO Think about different environments and addresses
 func (s *GBServer) resolveConfigSeedAddr() error {
 
 	// Check if no seed servers are configured
@@ -418,8 +394,7 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 	return nil
 }
 
-// Seed Check
-
+// seedCheck does a basic check to see if this server's address matches a configured seed server address.
 func (s *GBServer) seedCheck() int {
 
 	if len(s.seedAddr) >= 1 {
@@ -487,6 +462,7 @@ func initSelfParticipant(name, addr string) *Participant {
 // Accept Loops
 //=======================================================
 
+// AcceptLoop sets up a context and listener and then calls an internal acceptConnections method
 func (s *GBServer) AcceptLoop(name string) {
 
 	s.serverLock.Lock()
@@ -527,6 +503,7 @@ func (s *GBServer) AcceptLoop(name string) {
 
 //TODO Figure out how to manage routines and shutdown signals
 
+// AcceptNodeLoop sets up a context and listener and then calls an internal acceptConnection method
 func (s *GBServer) AcceptNodeLoop(name string) {
 
 	s.serverLock.Lock()
@@ -545,7 +522,6 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	s.nodeListener = nl
 
-	//go s.acceptConnection(nl, "node-test", func(conn net.Conn) { s.createNodeClient(conn, "node-client", false, NODE) })
 	s.startGoRoutine(s.ServerName, "accept-connection routine", func() {
 		s.acceptConnection(nl, "node-test",
 			func(conn net.Conn) {
@@ -567,7 +543,8 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	//time.Sleep(1 * time.Second)
 
 	//---------------- Seed Dial ----------------//
-	//This is essentially a solicit
+	// This is essentially a solicit. If we are not a seed server then we must be the one to initiate a connection with the seed in order to join the cluster
+	// A connectToSeed routine will be launched and blocks on a response. Once a response is given by the seed, we can move to connected state.
 	if !s.isOriginal {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
@@ -592,6 +569,9 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 // TODO add a callback error function for any read errors to signal client closures?
 // TODO consider adding client connection scoped context...?
 
+// acceptConnection takes a listener and uses two callback functions to create a client from the connection and kick out of the accept loop on error.
+// As io.Reader read method blocks, we must exit on either read error or custom error from callback to successfully exit.
+// createConnFunc creates a client we can manage and store as a connection.
 func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc func(conn net.Conn), customErr func(err error) bool) {
 
 	s.flags.set(ACCEPT_NODE_LOOP_STARTED)
@@ -631,6 +611,9 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 // Sync Pool for Server-Server Request cycles
 //=======================================================
 
+// seqReqPool is a configurable number of request pools to create ID's for request-response cycles. When a node queues a message with an expected response, it will
+// draw an ID from the pool and create a response handler to recieve the response on a channel. The responding node will echo back the ID which will be matched to a
+// handler and used to complete the request-response.
 type seqReqPool struct {
 	reqPool *sync.Pool
 }
@@ -679,6 +662,8 @@ func (s *GBServer) releaseReqID(id uint8) {
 //----------------
 // Connection Count
 
+// incrementNodeCount atomically adds to the number of node connections. Once it does, it will call a check to take place to see if the change in conn count
+// should signal the gossip process to either start or pause.
 func (s *GBServer) incrementNodeConnCount() {
 	// Atomically increment node connections
 	atomic.AddInt64(&s.numNodeConnections, 1)
@@ -686,6 +671,7 @@ func (s *GBServer) incrementNodeConnCount() {
 	s.checkGossipCondition()
 }
 
+// decrementNodeCount works the same as incrementNodeCount but by decrementing the node count and calling a check.
 func (s *GBServer) decrementNodeConnCount() {
 	log.Printf("removing conn count by 1")
 	// Atomically decrement node connections
