@@ -26,7 +26,7 @@ const (
 	ACCEPT_NODE_LOOP_STARTED
 	CONNECTED_TO_CLUSTER
 	GOSSIP_SIGNALLED
-	GOSSIP_PAUSED
+	IS_GOSSIPING
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -283,7 +283,7 @@ func (s *GBServer) StartServer() {
 
 	// We wait for start up to complete here
 	s.startupSync.Wait()
-	
+
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	s.startGoRoutine(s.ServerName, "gossip-process",
 		func() {
@@ -662,6 +662,7 @@ func (s *GBServer) releaseReqID(id uint8) {
 //----------------
 // Connection Count
 
+// Lock should be held on entry
 // incrementNodeCount atomically adds to the number of node connections. Once it does, it will call a check to take place to see if the change in conn count
 // should signal the gossip process to either start or pause.
 func (s *GBServer) incrementNodeConnCount() {

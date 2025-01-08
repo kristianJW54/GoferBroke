@@ -100,7 +100,7 @@ type gbClient struct {
 	flags clientFlags
 
 	//Responses
-	responseHandler
+	rh *responseHandler
 
 	//Syncing
 	mu       sync.Mutex
@@ -205,7 +205,11 @@ func (c *gbClient) initClient() {
 
 	//c.responseHandler.resp = make(map[int]chan []byte, 10) // Need to align with SeqID pool-size
 
-	c.responseHandler.resp = make(map[int]*response, 10) // Need to align with SeqID pool-size
+	respHanlder := &responseHandler{
+		resp: make(map[int]*response, 10),
+	}
+
+	c.rh = respHanlder // Need to align with SeqID pool-size
 
 	//for i := 0; i < 10; i++ {
 	//	c.responseHandler.resp[i] = &response{
@@ -230,7 +234,6 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	}
 
 	client.mu.Lock()
-	defer client.mu.Unlock()
 
 	tcp, err := net.ResolveTCPAddr(client.gbc.RemoteAddr().Network(), client.gbc.RemoteAddr().String())
 	if err != nil {
@@ -248,6 +251,8 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	//We also only get a read error once we close the connection - so we need to handle our connections in a robust way
 
 	s.tmpClientStore[client.cid] = client
+
+	client.mu.Unlock()
 
 	//TODO before starting the loops - handle TLS Handshake if needed
 	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
@@ -401,6 +406,8 @@ func (c *gbClient) readLoop() {
 		// Update offset
 		c.inbound.offset = n
 
+		c.mu.Unlock()
+
 		//-----------------------------
 		// Parsing the packet
 
@@ -410,8 +417,7 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		c.mu.Unlock()
-
+		//log.Printf("%s -- read -- %v", c.srv.ServerName, buff)
 		//log.Printf("bytes read --> %d", n)
 		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
@@ -620,18 +626,18 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 		id:  seqID,
 	}
 
-	c.rm.Lock()
-	c.resp[seqID] = rsp
-	c.rm.Unlock()
+	c.rh.rm.Lock()
+	c.rh.resp[seqID] = rsp
+	c.rh.rm.Unlock()
 
 	return rsp
 }
 
 func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
-	c.rm.Lock()
-	defer c.rm.Unlock()
-	delete(c.responseHandler.resp, int(respID))
+	//c.rm.Lock()
+	//defer c.rm.Unlock()
+	delete(c.rh.resp, int(respID))
 	close(rsp.ch)
 	close(rsp.err)
 
@@ -649,11 +655,12 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID by
 		//log.Println("context has been CALLED on RESPONSE")
 		return nil, ctx.Err()
 	case msg := <-rsp.ch:
+		//log.Printf("%s got response", c.srv.ServerName)
 		return msg, nil
 	case err := <-rsp.err:
 		return nil, err
 	case <-time.After(timeout):
-		//log.Printf("timed out waiting for response channel %d", int(respID))
+		//log.Printf("%s timed out waiting for response channel %d", c.srv.ServerName, int(respID))
 		return nil, fmt.Errorf("timeout for response ID %d", rsp.id)
 	}
 

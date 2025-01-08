@@ -291,12 +291,17 @@ func (c *gbClient) onboardNewJoiner() error {
 		msg,
 	}
 
+	//log.Printf("packet == %s", packet.data)
+	//log.Printf("header == %v", packet.nodePacketHeader)
+
 	pay1, err := packet.serialize()
 	if err != nil {
 		return err
 	}
 
+	c.mu.Lock()
 	c.qProto(pay1, true)
+	c.mu.Unlock()
 
 	return nil
 
@@ -371,18 +376,18 @@ func (c *gbClient) processErrResp(message []byte) {
 
 func (c *gbClient) processInfoAll(message []byte) {
 
-	c.rm.Lock()
-	responseChan, exists := c.resp[int(c.argBuf[2])]
-	c.rm.Unlock()
+	c.rh.rm.Lock()
+	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	c.rh.rm.Unlock()
 
 	if exists {
 
 		// We just send the message and allow the caller to specify what they do with it
 		responseChan.ch <- message
 
-		c.rm.Lock()
-		delete(c.resp, int(c.argBuf[2]))
-		c.rm.Unlock()
+		c.rh.rm.Lock()
+		delete(c.rh.resp, int(c.argBuf[2]))
+		c.rh.rm.Unlock()
 
 	} else {
 		log.Printf("no response channel found")
@@ -393,18 +398,18 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 func (c *gbClient) processOK(message []byte) {
 
-	c.rm.Lock()
-	responseChan, exists := c.resp[int(c.argBuf[2])]
-	c.rm.Unlock()
+	c.rh.rm.Lock()
+	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	c.rh.rm.Unlock()
 
 	if exists {
 
 		err := errors.New("this is an error response TEST")
 		responseChan.err <- err
 
-		c.rm.Lock()
-		delete(c.resp, int(c.argBuf[2]))
-		c.rm.Unlock()
+		c.rh.rm.Lock()
+		delete(c.rh.resp, int(c.argBuf[2]))
+		c.rh.rm.Unlock()
 
 	} else {
 		log.Printf("no response channel found")
@@ -459,7 +464,10 @@ func (c *gbClient) processInfoMessage(message []byte) {
 		log.Printf("MoveToConnected failed in process info message: %v", err)
 	}
 
+	// TODO Monitor the server lock here and be mindful
+	c.srv.serverLock.Lock()
 	c.srv.incrementNodeConnCount()
+	c.srv.serverLock.Unlock()
 
 	return
 

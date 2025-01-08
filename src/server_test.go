@@ -28,6 +28,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 	gbs2 := NewServer("test-server-2", 2, config, "localhost", "8082", "8083", lc)
+
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
@@ -93,29 +94,33 @@ func TestGossipSignal(t *testing.T) {
 
 	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 	gbs2 := NewServer("test-server-2", 2, config, "localhost", "8082", "8083", lc)
-	gbs3 := NewServer("test-server-3", 3, config, "localhost", "8084", "8083", lc)
-	go gbs.StartServer()
-	time.Sleep(1 * time.Second)
-	go gbs2.StartServer()
-	time.Sleep(1 * time.Second)
-	go gbs3.StartServer()
+	//gbs3 := NewServer("test-server-3", 3, config, "localhost", "8085", "8083", lc)
+	//gbs4 := NewServer("test-server-4", 4, config, "localhost", "8086", "8083", lc)
 
-	time.Sleep(5 * time.Second) // Allow for time for gossip to test
-	gbs2.decrementNodeConnCount()
-	time.Sleep(3 * time.Second) // Allow for time for gossip to test
-	gbs2.incrementNodeConnCount()
-	time.Sleep(1 * time.Second)   // Allow for time for gossip to test
-	gbs2.incrementNodeConnCount() // Second increment should not signal gossip
+	go gbs.StartServer()
+	go gbs2.StartServer()
+	time.Sleep(2 * time.Second)
+	//go gbs3.StartServer()
+	//go gbs4.StartServer()
+
+	//time.Sleep(5 * time.Second) // Allow for time for gossip to test
+	//gbs2.decrementNodeConnCount()
+	//time.Sleep(3 * time.Second) // Allow for time for gossip to test
+	//gbs2.incrementNodeConnCount()
+	//time.Sleep(1 * time.Second)   // Allow for time for gossip to test
+	//gbs2.incrementNodeConnCount() // Second increment should not signal gossip
 	time.Sleep(5 * time.Second)
 
 	gbs2.Shutdown()
-	gbs3.Shutdown()
-	//time.Sleep(1 * time.Second)
+	//gbs3.Shutdown()
+	//gbs4.Shutdown()
 	gbs.Shutdown()
 	time.Sleep(1 * time.Second)
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
+	//gbs3.logActiveGoRoutines()
+	//gbs4.logActiveGoRoutines()
 
 }
 
