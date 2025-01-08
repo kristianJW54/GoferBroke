@@ -76,6 +76,10 @@ Start a second node in another terminal
   go run goferMQ -name=test2 -ID=1 -nodeIP=localhost -nodePort=8082
 ```
 
+## Video Demo - Update
+
+[![Update 1](https://github.com/kristianJW54/GoferBroke/blob/main/Video%20Demo/1%20cover.png)](https://youtu.be/MscMA-A9y7Y)
+
 ## Contributing
 
 Contributions are welcome and appreciated.Whether you're fixing a bug, adding a feature, or improving documentation, your efforts help make this project better for everyone.
