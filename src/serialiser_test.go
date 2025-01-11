@@ -18,16 +18,13 @@ func TestSerialiseDigestMTU(t *testing.T) {
 		selfInfo:   &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
-			partIndex:    []string{"node1"}, // Manually entering participants
 		},
 	}
 
 	// Create a participant
 	participant := &Participant{
-		name:       "node1",
-		keyValues:  make(map[string]*Delta),
-		valueIndex: []string{},
-		maxVersion: 1640995206,
+		name:      "node1",
+		keyValues: make(map[string]*Delta),
 	}
 
 	// Add participant to the ClusterMap
@@ -49,56 +46,48 @@ func TestSerialiseDigest(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
 	keyValues := map[string]*Delta{
-		"key1":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("hello world")},
-		"key2":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
-		"key3":  &Delta{valueType: INTERNAL_D, version: 1640995201, value: []byte("short")},
-		"key4":  &Delta{valueType: INTERNAL_D, version: 1640995202, value: []byte("This is a slightly longer string to test serialization.")},
-		"key5":  &Delta{valueType: INTERNAL_D, version: 1640995203, value: []byte("1234567890")},
-		"key6":  &Delta{valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  &Delta{valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-		"key8":  &Delta{valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  &Delta{valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-		"key10": &Delta{valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
-		"key11": &Delta{valueType: INTERNAL_D, version: 1640995209, value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
-		"key12": &Delta{valueType: INTERNAL_D, version: 1640995210, value: []byte("abcdefghijklmnopqrstuvwxyz")},
-		"key13": &Delta{valueType: INTERNAL_D, version: 1640995211, value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
-		"key14": &Delta{valueType: INTERNAL_D, version: 1640995212, value: []byte("Yet another string, this one a bit longer than the previous.")},
-		"key15": &Delta{valueType: INTERNAL_D, version: 1640995213, value: []byte("Small string.")},
-		"key16": &Delta{valueType: INTERNAL_D, version: 1640995214, value: []byte("A moderately sized string for testing.")},
-		"key17": &Delta{valueType: INTERNAL_D, version: 1640995215, value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
-		"key18": &Delta{valueType: INTERNAL_D, version: 1640995216, value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
-		"key19": &Delta{valueType: INTERNAL_D, version: 1640995217, value: []byte("Medium length string for benchmarking purposes.")},
-		"key20": &Delta{valueType: INTERNAL_D, version: 1640995218, value: []byte("Final key-value pair.")},
+		"key1": &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("hello world")},
+		"key2": &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
 	}
 
 	// Mock server setup
 	gbs := &GBServer{
-		ServerName: "test-server",
-		selfInfo:   &Participant{},
+		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
-			participants: make(map[string]*Participant, 1),
-			partIndex:    []string{"node1"}, // Manually entering participants
+			participants: make(map[string]*Participant, 5), // 5 Participants for the test
+			participantQ: make(participantHeap, 0),
 		},
 	}
 
-	// Create a participant
-	participant := &Participant{
-		name:       "node1",
-		keyValues:  make(map[string]*Delta),
-		valueIndex: []string{},
-	}
+	// Add 5 mock participants to the cluster
+	for i := 1; i <= 5; i++ {
+		participantName := fmt.Sprintf("node%d", i)
 
-	// Populate participant's keyValues and valueIndex
-	for key, delta := range keyValues {
-		participant.keyValues[key] = delta
-		participant.valueIndex = append(participant.valueIndex, key)
-		if delta.version > participant.maxVersion {
-			participant.maxVersion = delta.version
+		// Create a participant
+		participant := &Participant{
+			name:      participantName,
+			keyValues: make(map[string]*Delta),
+			deltaQ:    make(deltaHeap, 0),
 		}
-	}
 
-	// Add participant to the ClusterMap
-	gbs.clusterMap.participants["node1"] = participant
+		// Populate participant's keyValues and deltaQ
+		for key, delta := range keyValues {
+			participant.keyValues[key] = delta
+			delta.key = key
+			heap.Push(&participant.deltaQ, delta)
+		}
+
+		// Add participant to the ClusterMap
+		gbs.clusterMap.participants[participantName] = participant
+
+		// Add participant to the participantHeap
+		pq := &participantQueue{
+			name:            participantName,
+			availableDeltas: len(participant.keyValues), // Mock availableDeltas
+			maxVersion:      time.Now().Unix(),
+		}
+		heap.Push(&gbs.clusterMap.participantQ, pq)
+	}
 
 	cereal, err := gbs.serialiseClusterDigest()
 	if err != nil {
@@ -108,55 +97,9 @@ func TestSerialiseDigest(t *testing.T) {
 	digest, err := deSerialiseDigest(cereal)
 
 	for _, value := range digest {
-		log.Printf("senders name = %s", value.senderName)
-		log.Printf("%+v", value)
+		log.Printf("%v:%v", value.nodeName, value.maxVersion)
 	}
 
-}
-
-func BenchmarkSerialiseAndDeserialiseDigest(b *testing.B) {
-	// Setup: Create example digests
-	timeCode := time.Now().Unix()
-	nodeAName := fmt.Sprintf("node-a%d", timeCode)
-	nodeBName := fmt.Sprintf("node-b%d", timeCode)
-
-	nodeA := &fullDigest{
-		nodeName:   nodeAName,
-		maxVersion: 1733134288,
-	}
-
-	nodeB := &fullDigest{
-		nodeName:   nodeBName,
-		maxVersion: 1733134288,
-	}
-
-	digest := []*fullDigest{nodeA, nodeB}
-
-	// Benchmark serialization
-	b.Run("SerializeDigest", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, err := serialiseDigest(digest)
-			if err != nil {
-				b.Fatalf("Failed to serialize digest: %v", err)
-			}
-		}
-	})
-
-	// Prepare serialized data for deserialization benchmark
-	serialized, err := serialiseDigest(digest)
-	if err != nil {
-		b.Fatalf("Failed to serialize digest: %v", err)
-	}
-
-	// Benchmark deserialization
-	b.Run("DeserializeDigest", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, err := deSerialiseDigest(serialized)
-			if err != nil {
-				b.Fatalf("Failed to deserialize digest: %v", err)
-			}
-		}
-	})
 }
 
 // Helper function to create a Delta
@@ -286,7 +229,6 @@ func BenchmarkMySerialization(b *testing.B) {
 		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
-			partIndex:    []string{"node1"}, // Manually entering participants
 		},
 	}
 
@@ -372,7 +314,6 @@ func TestMySerialization(t *testing.T) {
 		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
-			partIndex:    []string{"node1"}, // Manually entering participants
 		},
 	}
 

@@ -421,11 +421,9 @@ func initSelfParticipant(name, addr string) *Participant {
 	t := time.Now().Unix()
 
 	p := &Participant{
-		name:       name,
-		keyValues:  make(map[string]*Delta),
-		deltaQ:     make(deltaHeap, 0), // Initialize an empty heap
-		valueIndex: make([]string, 3),
-		maxVersion: t,
+		name:      name,
+		keyValues: make(map[string]*Delta),
+		deltaQ:    make(deltaHeap, 0), // Initialize an empty heap
 	}
 
 	// Add the _ADDRESS_ delta

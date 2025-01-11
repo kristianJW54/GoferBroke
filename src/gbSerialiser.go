@@ -162,7 +162,7 @@ func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 	offset += len(s.ServerName)
 
 	// Write the number of key-value pairs for the participant
-	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(self.valueIndex)))
+	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(self.deltaQ)))
 	offset += 2
 
 	for _, value := range self.deltaQ {
@@ -216,12 +216,12 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 	length += 1
 	length += len(s.ServerName)
 
-	pi := s.clusterMap.partIndex
+	pi := s.clusterMap.participantQ
 
 	for _, p := range pi {
 
-		participant := s.clusterMap.participants[p]
-		length += 1 + len(p) + 2 // 1 byte for name length + name length + size of delta key-values
+		participant := s.clusterMap.participants[p.name]
+		length += 1 + len(p.name) + 2 // 1 byte for name length + name length + size of delta key-values
 
 		for _, delta := range participant.deltaQ {
 			if delta != nil {
@@ -253,12 +253,12 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 	// Serialize participants
 	for _, p := range pi {
 		// Get the participant's data (avoiding repeated map lookups)
-		participant := s.clusterMap.participants[p]
+		participant := s.clusterMap.participants[p.name]
 		// Write participant name length and name
-		deltaBuf[offset] = uint8(len(p))
+		deltaBuf[offset] = uint8(len(p.name))
 		offset++
-		copy(deltaBuf[offset:], p)
-		offset += len(p)
+		copy(deltaBuf[offset:], p.name)
+		offset += len(p.name)
 
 		// Write the number of key-value pairs for the participant
 		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(participant.keyValues)))
@@ -424,20 +424,11 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	length += 1
 	length += len(s.ServerName)
 
-	for _, v := range s.clusterMap.partIndex {
-		value := s.clusterMap.participants[v]
+	for _, v := range s.clusterMap.participantQ {
 
 		length += 1
-		length += len(value.name)
+		length += len(v.name)
 		length += 8 + 2 // Time unix which is int64 --> 8 Bytes plus 2 for the number of delta key/versions in array
-
-		for _, v := range value.valueIndex {
-
-			length += 1
-			length += len(v)
-			length += 8
-
-		}
 
 	}
 
@@ -449,7 +440,7 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	offset++
 	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
 	offset += 4
-	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(s.clusterMap.partIndex))) // Number of participants
+	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(s.clusterMap.participantQ))) // Number of participants
 	offset += 2
 
 	digestBuf[offset] = uint8(len(s.ServerName))
@@ -457,88 +448,19 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	copy(digestBuf[offset:], s.ServerName)
 	offset += len(s.ServerName)
 
-	for _, v := range s.clusterMap.partIndex {
+	for _, v := range s.clusterMap.participantQ {
 
-		value := s.clusterMap.participants[v]
+		value := s.clusterMap.participants[v.name]
 
 		if len(value.name) > 255 {
 			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.name)
 		}
-		nameLen := len(value.name)
+		nameLen := len(v.name)
 		digestBuf[offset] = uint8(nameLen)
 		offset++
-		copy(digestBuf[offset:], value.name)
+		copy(digestBuf[offset:], v.name)
 		offset += nameLen
-		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(value.maxVersion))
-		offset += 8
-
-		binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(value.keyValues)))
-		offset += 2
-
-		for _, v := range value.valueIndex {
-			version := value.keyValues[v].version
-			keyLen := len(v)
-			digestBuf[offset] = uint8(keyLen)
-			offset++
-			copy(digestBuf[offset:], v)
-			offset += keyLen
-			binary.BigEndian.PutUint64(digestBuf[offset:], uint64(version))
-			offset += 8
-		}
-
-	}
-	copy(digestBuf[offset:], CLRF)
-	offset += len(CLRF)
-
-	return digestBuf, nil
-
-}
-
-// Need to trust that we are being given a digest slice from the packet and message length checks have happened before
-// being handed to this method
-func serialiseDigest(digest []*fullDigest) ([]byte, error) {
-
-	// TODO Needs to have efficient allocations
-
-	// Node1: maxVersion
-	// Node2: maxVersion
-
-	// Need type = Digest - 1 byte Uint8
-	// Need length of payload - 4 byte uint32
-	// Need size of digest - 2 byte uint16
-	// Total metadata for digest byte array = 7
-
-	length := 7
-
-	for _, value := range digest {
-		length += 1
-		length += len(value.nodeName)
-		length += 8 + 2 // Time unix which is int64 --> 8 Bytes plus 2 for the number of delta versions
-
-	}
-
-	length += 2 // Adding CLRF at the end
-
-	digestBuf := make([]byte, length)
-
-	offset := 0
-
-	digestBuf[0] = DIGEST_TYPE
-	offset++
-	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
-	offset += 4
-	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(digest))) // Number of participants
-	offset += 2
-	for _, value := range digest {
-		if len(value.nodeName) > 255 {
-			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.nodeName)
-		}
-		nameLen := len(value.nodeName)
-		digestBuf[offset] = uint8(nameLen)
-		offset++
-		copy(digestBuf[offset:], value.nodeName)
-		offset += nameLen
-		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(value.maxVersion))
+		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(v.maxVersion))
 		offset += 8
 
 	}
@@ -546,6 +468,7 @@ func serialiseDigest(digest []*fullDigest) ([]byte, error) {
 	offset += len(CLRF)
 
 	return digestBuf, nil
+
 }
 
 // This is still in the read-loop where the parser has called a handler for a specific command

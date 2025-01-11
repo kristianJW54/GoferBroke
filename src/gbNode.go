@@ -267,7 +267,7 @@ func (c *gbClient) onboardNewJoiner() error {
 
 	s := c.srv
 
-	if len(s.clusterMap.partIndex) > 100 {
+	if len(s.clusterMap.participantQ) > 100 {
 		log.Printf("lots of participants - may need more efficient snapshot transfer")
 		// In this case we would send an INFO_ACK to tell the joining node that more info will come
 		// The joining node can then reach out to other seed servers or send another request to this seed server

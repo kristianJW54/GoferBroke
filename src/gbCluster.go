@@ -1,6 +1,7 @@
 package src
 
 import (
+	"container/heap"
 	"context"
 	"fmt"
 	"log"
@@ -182,7 +183,7 @@ func (s *GBServer) selectNodeAndGossip() error {
 	defer s.clusterMapLock.RUnlock()
 
 	ns := s.gossip.nodeSelection
-	pl := len(s.clusterMap.partIndex) - 1
+	pl := len(s.clusterMap.participantQ) - 1
 
 	if int(ns) > pl {
 		// Or pl = 1
@@ -192,7 +193,7 @@ func (s *GBServer) selectNodeAndGossip() error {
 	for i := 0; i < int(ns); i++ {
 
 		num := rand.Intn(pl) + 1
-		node := s.clusterMap.partIndex[num]
+		node := s.clusterMap.participantQ[num]
 
 		// Increment before starting a new gossip operation
 		s.incrementGossip()
@@ -200,7 +201,7 @@ func (s *GBServer) selectNodeAndGossip() error {
 		//go s.gossipWithNode(ctx, node)
 		s.startGoRoutine(s.ServerName, "gossip-round", func() {
 			defer s.decrementGossip() // Decrement after gossip with the node completes
-			s.gossipWithNode(node)
+			s.gossipWithNode(node.name)
 		})
 	}
 
@@ -266,31 +267,30 @@ type Delta struct {
 type deltaHeap []*Delta
 
 type Participant struct {
-	name       string // Possibly can remove
-	keyValues  map[string]*Delta
-	deltaQ     deltaHeap // This should be kept sorted to the highest version
-	valueIndex []string
-	maxVersion int64   // This can be removed
-	paValue    float64 // Not to be gossiped
-	pm         sync.RWMutex
+	name      string // Possibly can remove
+	keyValues map[string]*Delta
+	deltaQ    deltaHeap // This should be kept sorted to the highest version
+	paValue   float64   // Not to be gossiped
+	pm        sync.RWMutex
 }
 
 type ClusterMap struct {
 	seedServer   *Seed
 	participants map[string]*Participant
-	priorityQ    []*participantQueue
-	partIndex    []string
+	participantQ participantHeap
 	phiAccMap    map[string]*phiAccrual
 }
 
 type participantQueue struct {
-	name           string
-	outDatedDeltas int
-	maxVersion     int64 // Simply pop from deltaQ as maxVersion
+	name            string
+	availableDeltas int
+	maxVersion      int64 // Simply pop from deltaQ as maxVersion
 }
 
+type participantHeap []*participantQueue
+
 //-------------------
-//Heartbeat Monitoring
+//Heartbeat Monitoring + Failure Detection
 
 type phiAccrual struct {
 	threshold   int
@@ -309,6 +309,39 @@ type phiAccrual struct {
 // once response given - it will be syn-ack, which we will need to call the ack handler and process etc
 
 // if syn received - need to call syn-ack handler which will generate a digest and a delta to queue, response will be an ack
+
+//=======================================================
+// Participant Heap
+//=======================================================
+
+//goland:noinspection GoMixedReceiverTypes
+func (ph participantHeap) Len() int {
+	return len(ph)
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (ph participantHeap) Less(i, j int) bool {
+	return ph[i].availableDeltas > ph[j].availableDeltas
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (ph participantHeap) Swap(i, j int) {
+	ph[i], ph[j] = ph[j], ph[i]
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (ph *participantHeap) Push(x interface{}) {
+	*ph = append(*ph, x.(*participantQueue))
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (ph *participantHeap) Pop() interface{} {
+	old := *ph
+	n := len(old)
+	x := old[n-1]
+	*ph = old[0 : n-1]
+	return x
+}
 
 //=======================================================
 // Delta Heap
@@ -344,6 +377,22 @@ func (dh *deltaHeap) Pop() interface{} {
 }
 
 //=======================================================
+// Delta Handling
+//=======================================================
+
+// Lock must be held on entry
+func (s *GBServer) getMaxVersion(p *Participant) (int64, error) {
+
+	maxVersion := p.deltaQ[0]
+	if maxVersion == nil {
+		return 0, nil
+	}
+
+	return maxVersion.version, nil
+
+}
+
+//=======================================================
 // Cluster Map Handling
 //=======================================================
 
@@ -352,15 +401,21 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
-		make([]*participantQueue, 0),
-		make([]string, 0),
+		make(participantHeap, 0),
 		make(map[string]*phiAccrual),
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
+	// Create a participantQueue entry and push it to the heap
+	pq := &participantQueue{
+		name:            name,
+		availableDeltas: 0, // Initialize to 0
+		maxVersion:      0, // Initialize to 0
+	}
+	heap.Push(&cm.participantQ, pq)
+
 	cm.participants[name] = participant
-	cm.partIndex = append(cm.partIndex, name)
 
 	return cm
 
@@ -379,14 +434,35 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	s.clusterMapLock.Lock()
 
-	// First add to the cluster map
-	s.clusterMap.participants[name] = &Participant{
-		name:       name,
-		keyValues:  tmpP.keyValues,
-		valueIndex: tmpP.vi,
+	// Step 1: Add participant to the participants map
+	newParticipant := &Participant{
+		name:      name,
+		keyValues: tmpP.keyValues,
+		deltaQ:    make(deltaHeap, 0), // Initialize delta heap
 	}
 
-	s.clusterMap.partIndex = append(s.clusterMap.partIndex, name)
+	// Populate the delta heap
+	for key, delta := range tmpP.keyValues {
+		delta.key = key // Ensure the delta knows its key
+		heap.Push(&newParticipant.deltaQ, delta)
+	}
+
+	// Add the participant to the map
+	s.clusterMap.participants[name] = newParticipant
+
+	mv, err := s.getMaxVersion(newParticipant)
+	if err != nil {
+		return err
+	}
+
+	// Add to the participant heap
+	s.clusterMap.participantQ.Push(&participantQueue{
+		name:            name,
+		availableDeltas: 0,
+		maxVersion:      mv,
+	})
+
+	//s.clusterMap.partIndex = append(s.clusterMap.partIndex, name)
 
 	s.clusterMapLock.Unlock()
 
@@ -408,7 +484,7 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 	// First we need to determine if the Digest fits within MTU
 
 	// Check how many participants first - anymore than 40 will definitely exceed MTU
-	if len(s.clusterMap.partIndex) > 40 {
+	if len(s.clusterMap.participantQ) > 40 {
 		return nil, fmt.Errorf("too many participants")
 		// TODO Implement overfill strategy for digest
 	}
