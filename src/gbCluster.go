@@ -253,18 +253,24 @@ type Seed struct {
 //-------------------
 // Main cluster map for gossiping
 
+// TODO Need to majorly optimise cluster map for reduced memory - fast lookup and sorted storing
+
 type Delta struct {
+	key       string
 	valueType byte // Type could be internal, config, state, client
 	version   int64
 	value     []byte // Value should go last for easier de-serialisation
 	// Could add user defined metadata later on??
 }
 
+type deltaHeap []*Delta
+
 type Participant struct {
 	name       string // Possibly can remove
 	keyValues  map[string]*Delta
+	deltaQ     deltaHeap // This should be kept sorted to the highest version
 	valueIndex []string
-	maxVersion int64
+	maxVersion int64   // This can be removed
 	paValue    float64 // Not to be gossiped
 	pm         sync.RWMutex
 }
@@ -272,8 +278,15 @@ type Participant struct {
 type ClusterMap struct {
 	seedServer   *Seed
 	participants map[string]*Participant
+	priorityQ    []*participantQueue
 	partIndex    []string
 	phiAccMap    map[string]*phiAccrual
+}
+
+type participantQueue struct {
+	name           string
+	outDatedDeltas int
+	maxVersion     int64 // Simply pop from deltaQ as maxVersion
 }
 
 //-------------------
@@ -298,6 +311,39 @@ type phiAccrual struct {
 // if syn received - need to call syn-ack handler which will generate a digest and a delta to queue, response will be an ack
 
 //=======================================================
+// Delta Heap
+//=======================================================
+
+//goland:noinspection GoMixedReceiverTypes
+func (dh deltaHeap) Len() int {
+	return len(dh)
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (dh deltaHeap) Less(i, j int) bool {
+	return dh[i].version > dh[j].version
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (dh deltaHeap) Swap(i, j int) {
+	dh[i], dh[j] = dh[j], dh[i]
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (dh *deltaHeap) Push(x interface{}) {
+	*dh = append(*dh, x.(*Delta))
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (dh *deltaHeap) Pop() interface{} {
+	old := *dh
+	n := len(old)
+	x := old[n-1]
+	*dh = old[0 : n-1]
+	return x
+}
+
+//=======================================================
 // Cluster Map Handling
 //=======================================================
 
@@ -306,6 +352,7 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
+		make([]*participantQueue, 0),
 		make([]string, 0),
 		make(map[string]*phiAccrual),
 	}
@@ -353,43 +400,33 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
 // TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest
 
-func (s *GBServer) generateDigest() ([]*fullDigest, error) {
+func (s *GBServer) generateDigest() ([]byte, error) {
 
 	s.clusterMapLock.RLock()
 	defer s.clusterMapLock.RUnlock()
 
-	if s.clusterMap.participants == nil {
-		return nil, fmt.Errorf("cluster map is empty")
+	// First we need to determine if the Digest fits within MTU
+
+	// Check how many participants first - anymore than 40 will definitely exceed MTU
+	if len(s.clusterMap.partIndex) > 40 {
+		return nil, fmt.Errorf("too many participants")
+		// TODO Implement overfill strategy for digest
 	}
 
-	td := make([]*fullDigest, len(s.clusterMap.participants))
-
-	cm := s.clusterMap.partIndex
-	parts := s.clusterMap.participants
-
-	idx := 0
-	for _, v := range cm {
-		// Lock the participant to safely read the data
-		value := parts[v]
-
-		value.pm.RLock()
-		// Initialize the map entry for each participant
-		td[idx] = &fullDigest{
-			nodeName:    value.name,
-			maxVersion:  value.maxVersion,
-			keyVersions: make(map[string]int64, len(value.keyValues)),
-			vi:          value.valueIndex,
-		}
-
-		for _, v := range value.valueIndex {
-			td[idx].keyVersions[v] = value.keyValues[v].version
-		}
-
-		idx++
-		value.pm.RUnlock() // Release the participant lock
+	b, err := s.serialiseClusterDigest()
+	if err != nil {
+		return nil, err
 	}
 
-	return td, nil
+	// Check len against MTU
+	if len(b) > MTU {
+		return nil, fmt.Errorf("MTU exceeded")
+		// TODO Implement overfill strategy for digest
+	}
+
+	// If not, we need to decide if we will stream or do a random subset of participants (increasing propagation time)
+
+	return b, nil
 }
 
 //--------

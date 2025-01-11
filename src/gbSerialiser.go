@@ -82,17 +82,10 @@ func cerealPoolPut(b []byte) {
 //-------------------
 //Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
 
-type summaryDigest struct {
-	name       string
-	maxVersion int64
-}
-
 type fullDigest struct {
-	senderName  string
-	nodeName    string
-	maxVersion  int64
-	keyVersions map[string]int64
-	vi          []string
+	senderName string
+	nodeName   string
+	maxVersion int64
 }
 
 //-------------------
@@ -137,12 +130,13 @@ func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 	// For that a sender name field is populated and a tmpParticipant
 	length += 1 + len(self.name) + 2 // 1 byte for name length + name length + size of delta key-values
 
-	for _, key := range self.valueIndex {
-		if valueData, exists := self.keyValues[key]; exists && valueData != nil {
-			length += 14 + len(key) + len(valueData.value) // Calculate size for this key
+	for _, delta := range self.deltaQ {
+		if delta != nil {
+			// Calculate the size for this delta
+			length += 14 + +len(delta.key) + len(delta.value) // 14 bytes for metadata + value length
 		} else {
-			// Log missing key and continue
-			fmt.Printf("Warning: key %s not found or valueData is nil for participant %s\n", key, self.name)
+			// Log missing delta and continue
+			fmt.Printf("Warning: Delta is nil for participant %s\n", self.name)
 		}
 	}
 
@@ -171,28 +165,27 @@ func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(self.valueIndex)))
 	offset += 2
 
-	for _, value := range self.valueIndex {
-		valueData := self.keyValues[value]
+	for _, value := range self.deltaQ {
 
-		v := value
+		key := value.key
 		// Write key (which is similar to how we handle name)
-		deltaBuf[offset] = uint8(len(v))
+		deltaBuf[offset] = uint8(len(key))
 		offset++
-		copy(deltaBuf[offset:], v)
-		offset += len(v)
+		copy(deltaBuf[offset:], key)
+		offset += len(key)
 
 		// Write version (8 bytes, uint64)
-		binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(valueData.version))
+		binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(value.version))
 		offset += 8
 
 		// Write valueType (1 byte, uint8)
-		deltaBuf[offset] = uint8(valueData.valueType)
+		deltaBuf[offset] = uint8(value.valueType)
 		offset++
 		// Write value length (4 bytes, uint32) and the value itself
-		binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(valueData.value)))
+		binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(value.value)))
 		offset += 4
-		copy(deltaBuf[offset:], valueData.value)
-		offset += len(valueData.value)
+		copy(deltaBuf[offset:], value.value)
+		offset += len(value.value)
 
 	}
 
@@ -210,7 +203,7 @@ func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 }
 
 // Lock should be held on entry
-func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
+func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 
 	// Type = Delta - 1 byte Uint8
 	// Length of payload - 4 byte uint32
@@ -230,18 +223,13 @@ func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 		participant := s.clusterMap.participants[p]
 		length += 1 + len(p) + 2 // 1 byte for name length + name length + size of delta key-values
 
-		// If no specific keys are included, serialize all keys
-		keysToSerialize := include
-		if len(include) == 0 {
-			keysToSerialize = participant.valueIndex // Serialize all keys
-		}
-
-		for _, key := range keysToSerialize {
-			if valueData, exists := participant.keyValues[key]; exists && valueData != nil {
-				length += 14 + len(key) + len(valueData.value) // Calculate size for this key
+		for _, delta := range participant.deltaQ {
+			if delta != nil {
+				// Calculate the size for this delta
+				length += 14 + len(delta.key) + len(delta.value) // 14 bytes for metadata + value length
 			} else {
-				// Log missing key and continue
-				fmt.Printf("Warning: key %s not found or valueData is nil for participant %s\n", key, p)
+				// Log missing delta and continue
+				fmt.Printf("Warning: Delta is nil for participant %s\n", s.ServerName)
 			}
 		}
 
@@ -276,17 +264,10 @@ func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(participant.keyValues)))
 		offset += 2
 
-		// If no specific keys are included, serialize all keys
-		keysToSerialize := include
-		if len(include) == 0 {
-			keysToSerialize = participant.valueIndex // Serialize all keys if 'include' is empty
-		}
-
 		// Serialize each key in 'keysToSerialize'
-		for _, value := range keysToSerialize {
+		for _, value := range participant.deltaQ {
 
-			valueData := participant.keyValues[value]
-			v := value
+			v := value.key
 			// Write key (which is similar to how we handle name)
 			deltaBuf[offset] = uint8(len(v))
 			offset++
@@ -294,18 +275,18 @@ func (s *GBServer) serialiseClusterDelta(include []string) ([]byte, error) {
 			offset += len(v)
 
 			// Write version (8 bytes, uint64)
-			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(valueData.version))
+			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(value.version))
 			offset += 8
 
 			// Write valueType (1 byte, uint8)
-			deltaBuf[offset] = uint8(valueData.valueType)
+			deltaBuf[offset] = uint8(value.valueType)
 			offset++
 
 			// Write value length (4 bytes, uint32) and the value itself
-			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(valueData.value)))
+			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(value.value)))
 			offset += 4
-			copy(deltaBuf[offset:], valueData.value)
-			offset += len(valueData.value)
+			copy(deltaBuf[offset:], value.value)
+			offset += len(value.value)
 
 		}
 
@@ -431,10 +412,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 
 	// TODO Needs to have efficient allocations
-	// Node name - max version - [value key - version, value key - version ...]
-	//node1: 10 [user123: 5, user456: 8, user789: 4, ]
-	//node2: 12 [user123: 6, user456: 10, user789: 7, ]
-	//node3: 9 [user123: 5, user456: 9, user789: 6, ]
 
 	// Need type = Digest - 1 byte Uint8
 	// Need length of payload - 4 byte uint32
@@ -522,9 +499,9 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 func serialiseDigest(digest []*fullDigest) ([]byte, error) {
 
 	// TODO Needs to have efficient allocations
-	//node1: 10 [user123: 5, user456: 8, user789: 4, ]
-	//node2: 12 [user123: 6, user456: 10, user789: 7, ]
-	//node3: 9 [user123: 5, user456: 9, user789: 6, ]
+
+	// Node1: maxVersion
+	// Node2: maxVersion
 
 	// Need type = Digest - 1 byte Uint8
 	// Need length of payload - 4 byte uint32
@@ -538,11 +515,6 @@ func serialiseDigest(digest []*fullDigest) ([]byte, error) {
 		length += len(value.nodeName)
 		length += 8 + 2 // Time unix which is int64 --> 8 Bytes plus 2 for the number of delta versions
 
-		for _, v := range value.vi {
-			length += 1
-			length += len(v)
-			length += 8
-		}
 	}
 
 	length += 2 // Adding CLRF at the end
@@ -568,20 +540,6 @@ func serialiseDigest(digest []*fullDigest) ([]byte, error) {
 		offset += nameLen
 		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(value.maxVersion))
 		offset += 8
-
-		binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(value.keyVersions)))
-		offset += 2
-
-		for _, v := range value.vi {
-			version := value.keyVersions[v]
-			keyLen := len(v)
-			digestBuf[offset] = uint8(keyLen)
-			offset++
-			copy(digestBuf[offset:], v)
-			offset += keyLen
-			binary.BigEndian.PutUint64(digestBuf[offset:], uint64(version))
-			offset += 8
-		}
 
 	}
 	copy(digestBuf[offset:], CLRF)
@@ -647,32 +605,6 @@ func deSerialiseDigest(digest []byte) ([]*fullDigest, error) {
 		digestMap[i] = fd
 
 		offset += 8
-
-		deltaSize := binary.BigEndian.Uint16(digest[offset : offset+2])
-
-		fd.keyVersions = make(map[string]int64, deltaSize)
-
-		offset += 2
-
-		for j := 0; j < int(deltaSize); j++ {
-
-			keyLen := int(digest[offset])
-			start := offset + 1
-			end := start + keyLen
-			key := string(digest[start:end])
-
-			offset += keyLen + 1
-
-			//Extract key version
-			version := int64(binary.BigEndian.Uint64(digest[offset : offset+8]))
-
-			versionTime := time.Unix(int64(version), 0)
-
-			offset += 8
-
-			fd.keyVersions[key] = versionTime.Unix()
-
-		}
 
 	}
 

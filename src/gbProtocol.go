@@ -9,6 +9,10 @@ const (
 	CLRF = "\r\n"
 )
 
+const (
+	MTU = 1400
+)
+
 // Version + Header Sizes
 const (
 	PROTO_VERSION_1     uint8 = 1

@@ -278,7 +278,7 @@ func (c *gbClient) onboardNewJoiner() error {
 	}
 
 	s.clusterMapLock.Lock()
-	msg, err := s.serialiseClusterDelta(nil)
+	msg, err := s.serialiseClusterDelta()
 	if err != nil {
 		return err
 	}

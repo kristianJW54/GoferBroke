@@ -1,6 +1,7 @@
 package src
 
 import (
+	"container/heap"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -422,37 +423,44 @@ func initSelfParticipant(name, addr string) *Participant {
 	p := &Participant{
 		name:       name,
 		keyValues:  make(map[string]*Delta),
+		deltaQ:     make(deltaHeap, 0), // Initialize an empty heap
 		valueIndex: make([]string, 3),
 		maxVersion: t,
 	}
 
-	p.keyValues[_ADDRESS_] = &Delta{
+	// Add the _ADDRESS_ delta
+	addrDelta := &Delta{
+		key:       _ADDRESS_,
 		valueType: INTERNAL_D,
 		version:   t,
 		value:     []byte(addr),
 	}
-	p.valueIndex[0] = _ADDRESS_
+	p.keyValues[_ADDRESS_] = addrDelta
+	heap.Push(&p.deltaQ, addrDelta) // Add to heap
 
-	// Set the numNodeConnections delta
+	// Add the _NODE_CONNS_ delta
 	numNodeConnBytes := make([]byte, 1)
 	numNodeConnBytes[0] = 0
-	p.keyValues[_NODE_CONNS_] = &Delta{
+	nodeConnsDelta := &Delta{
+		key:       _NODE_CONNS_,
 		valueType: INTERNAL_D,
 		version:   t,
 		value:     numNodeConnBytes,
 	}
-	p.valueIndex[1] = _NODE_CONNS_
+	p.keyValues[_NODE_CONNS_] = nodeConnsDelta
+	heap.Push(&p.deltaQ, nodeConnsDelta) // Add to heap
 
+	// Add the _HEARTBEAT_ delta
 	heart := make([]byte, 8)
 	binary.BigEndian.PutUint64(heart, uint64(t))
-	p.keyValues[_HEARTBEAT_] = &Delta{
+	heartbeatDelta := &Delta{
+		key:       _HEARTBEAT_,
 		valueType: INTERNAL_D,
 		version:   t,
 		value:     heart,
 	}
-	p.valueIndex[2] = _HEARTBEAT_
-
-	// TODO need to figure how to update maxVersion - won't be done here as this is the lowest version
+	p.keyValues[_HEARTBEAT_] = heartbeatDelta
+	heap.Push(&p.deltaQ, heartbeatDelta) // Add to heap
 
 	return p
 
