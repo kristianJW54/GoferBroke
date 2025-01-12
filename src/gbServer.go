@@ -423,7 +423,6 @@ func initSelfParticipant(name, addr string) *Participant {
 	p := &Participant{
 		name:      name,
 		keyValues: make(map[string]*Delta),
-		deltaQ:    make(deltaHeap, 0), // Initialize an empty heap
 	}
 
 	// Add the _ADDRESS_ delta
@@ -434,7 +433,6 @@ func initSelfParticipant(name, addr string) *Participant {
 		value:     []byte(addr),
 	}
 	p.keyValues[_ADDRESS_] = addrDelta
-	heap.Push(&p.deltaQ, addrDelta) // Add to heap
 
 	// Add the _NODE_CONNS_ delta
 	numNodeConnBytes := make([]byte, 1)
@@ -446,7 +444,6 @@ func initSelfParticipant(name, addr string) *Participant {
 		value:     numNodeConnBytes,
 	}
 	p.keyValues[_NODE_CONNS_] = nodeConnsDelta
-	heap.Push(&p.deltaQ, nodeConnsDelta) // Add to heap
 
 	// Add the _HEARTBEAT_ delta
 	heart := make([]byte, 8)
@@ -458,7 +455,20 @@ func initSelfParticipant(name, addr string) *Participant {
 		value:     heart,
 	}
 	p.keyValues[_HEARTBEAT_] = heartbeatDelta
-	heap.Push(&p.deltaQ, heartbeatDelta) // Add to heap
+
+	// Add deltas to heap and initialise
+	dq := make(deltaHeap, len(p.keyValues))
+	i := 0
+	for _, v := range p.keyValues {
+		dq[i] = &deltaQueue{
+			index:   i,
+			key:     v.key,
+			version: v.version,
+		}
+		i++
+	}
+	heap.Init(&dq)
+	p.deltaQ = dq
 
 	return p
 

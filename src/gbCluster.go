@@ -36,6 +36,7 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 		nodeSelection:        nodeSelection,
 		gossipControlChannel: make(chan bool, 1),
 		gossipOK:             false,
+		//isGossiping:          0,
 	}
 
 	goss.gossSignal = sync.NewCond(&goss.gossMu)
@@ -189,11 +190,15 @@ func (s *GBServer) selectNodeAndGossip() error {
 		// Or pl = 1
 		return fmt.Errorf("gossip process stopped not enough nodes to select")
 	}
+	//s.clusterMapLock.RUnlock()
 
 	for i := 0; i < int(ns); i++ {
 
 		num := rand.Intn(pl) + 1
 		node := s.clusterMap.participantQ[num]
+
+		// TODO Check exist and through error if not
+		conn := s.nodeStore[node.name]
 
 		// Increment before starting a new gossip operation
 		s.incrementGossip()
@@ -201,7 +206,7 @@ func (s *GBServer) selectNodeAndGossip() error {
 		//go s.gossipWithNode(ctx, node)
 		s.startGoRoutine(s.ServerName, "gossip-round", func() {
 			defer s.decrementGossip() // Decrement after gossip with the node completes
-			s.gossipWithNode(node.name)
+			s.gossipWithNode(node.name, conn)
 		})
 	}
 
@@ -209,16 +214,18 @@ func (s *GBServer) selectNodeAndGossip() error {
 	return nil
 }
 
-func (s *GBServer) gossipWithNode(node string) {
-	log.Printf("%s -- gossiping with %s", s.ServerName, s.clusterMap.participants[node].name)
+func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
+	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, s.clusterMap.participants[node].name, conn.gbc.RemoteAddr())
+
+	// TODO send test messages over connections
 
 	select {
 	case <-s.serverContext.Done():
 		log.Printf("Gossip with %s timed out", node)
 		return
-	case <-time.After(2 * time.Second): // Simulate gossip work
-		log.Printf("Completed gossip with %s", node)
+	case <-time.After(4 * time.Second):
 		return
+	default:
 	}
 }
 
@@ -257,6 +264,7 @@ type Seed struct {
 // TODO Need to majorly optimise cluster map for reduced memory - fast lookup and sorted storing
 
 type Delta struct {
+	index     int
 	key       string
 	valueType byte // Type could be internal, config, state, client
 	version   int64
@@ -264,7 +272,13 @@ type Delta struct {
 	// Could add user defined metadata later on??
 }
 
-type deltaHeap []*Delta
+type deltaQueue struct {
+	index   int
+	key     string
+	version int64
+}
+
+type deltaHeap []*deltaQueue
 
 type Participant struct {
 	name      string // Possibly can remove
@@ -279,12 +293,14 @@ type ClusterMap struct {
 	participants map[string]*Participant
 	participantQ participantHeap
 	phiAccMap    map[string]*phiAccrual
+	// TODO Move cluster map lock from server to here
 }
 
 type participantQueue struct {
+	index           int
 	name            string
 	availableDeltas int
-	maxVersion      int64 // Simply pop from deltaQ as maxVersion
+	maxVersion      int64 // Simply reference from deltaQ as maxVersion
 }
 
 type participantHeap []*participantQueue
@@ -327,11 +343,15 @@ func (ph participantHeap) Less(i, j int) bool {
 //goland:noinspection GoMixedReceiverTypes
 func (ph participantHeap) Swap(i, j int) {
 	ph[i], ph[j] = ph[j], ph[i]
+	ph[i].index, ph[j].index = i, j
 }
 
 //goland:noinspection GoMixedReceiverTypes
 func (ph *participantHeap) Push(x interface{}) {
-	*ph = append(*ph, x.(*participantQueue))
+	n := len(*ph)
+	item := x.(*participantQueue)
+	item.index = n
+	*ph = append(*ph, item)
 }
 
 //goland:noinspection GoMixedReceiverTypes
@@ -339,8 +359,26 @@ func (ph *participantHeap) Pop() interface{} {
 	old := *ph
 	n := len(old)
 	x := old[n-1]
+	old[n-1] = nil
+	x.index = -1
 	*ph = old[0 : n-1]
 	return x
+}
+
+// Lock needs to be held on entry
+//
+//goland:noinspection GoMixedReceiverTypes
+func (ph *participantHeap) update(item *participantQueue, availableDeltas int, maxVersion int64, name ...string) {
+
+	if name != nil && len(name) == 1 {
+		item.name = name[0]
+	}
+
+	item.availableDeltas = availableDeltas
+	item.maxVersion = maxVersion
+
+	heap.Fix(ph, item.index)
+
 }
 
 //=======================================================
@@ -360,11 +398,15 @@ func (dh deltaHeap) Less(i, j int) bool {
 //goland:noinspection GoMixedReceiverTypes
 func (dh deltaHeap) Swap(i, j int) {
 	dh[i], dh[j] = dh[j], dh[i]
+	dh[i].index, dh[j].index = i, j
 }
 
 //goland:noinspection GoMixedReceiverTypes
 func (dh *deltaHeap) Push(x interface{}) {
-	*dh = append(*dh, x.(*Delta))
+	n := len(*dh)
+	item := x.(*deltaQueue)
+	item.index = n
+	*dh = append(*dh, item)
 }
 
 //goland:noinspection GoMixedReceiverTypes
@@ -372,23 +414,21 @@ func (dh *deltaHeap) Pop() interface{} {
 	old := *dh
 	n := len(old)
 	x := old[n-1]
+	old[n-1] = nil
+	x.index = -1
 	*dh = old[0 : n-1]
 	return x
 }
 
-//=======================================================
-// Delta Handling
-//=======================================================
+//goland:noinspection GoMixedReceiverTypes
+func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 
-// Lock must be held on entry
-func (s *GBServer) getMaxVersion(p *Participant) (int64, error) {
-
-	maxVersion := p.deltaQ[0]
-	if maxVersion == nil {
-		return 0, nil
+	item.version = version
+	if len(key) == 1 {
+		item.key = key[0]
 	}
 
-	return maxVersion.version, nil
+	heap.Fix(dh, item.index)
 
 }
 
@@ -426,6 +466,21 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 //--
 
+//=======================================================
+// Participant Handling
+
+// Cluster Lock must be held on entry
+func (p *Participant) getMaxVersion() (int64, error) {
+
+	maxVersion := p.deltaQ[0]
+	if maxVersion == nil {
+		return 0, nil
+	}
+
+	return maxVersion.version, nil
+
+}
+
 //Add/Remove Participant
 
 // -- TODO do we need to think about comparisons here?
@@ -443,14 +498,17 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	// Populate the delta heap
 	for key, delta := range tmpP.keyValues {
-		delta.key = key // Ensure the delta knows its key
-		heap.Push(&newParticipant.deltaQ, delta)
+		dq := &deltaQueue{
+			key:     key,
+			version: delta.version,
+		}
+		heap.Push(&newParticipant.deltaQ, dq)
 	}
 
 	// Add the participant to the map
 	s.clusterMap.participants[name] = newParticipant
 
-	mv, err := s.getMaxVersion(newParticipant)
+	mv, err := newParticipant.getMaxVersion()
 	if err != nil {
 		return err
 	}
@@ -462,7 +520,9 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		maxVersion:      mv,
 	})
 
-	//s.clusterMap.partIndex = append(s.clusterMap.partIndex, name)
+	// Clear tmpParticipant references
+	tmpP.keyValues = nil
+	tmpP.vi = nil
 
 	s.clusterMapLock.Unlock()
 
@@ -476,10 +536,11 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
 // TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest
 
+// Thread safe
 func (s *GBServer) generateDigest() ([]byte, error) {
 
-	s.clusterMapLock.RLock()
-	defer s.clusterMapLock.RUnlock()
+	//s.clusterMapLock.RLock()
+	//defer s.clusterMapLock.RUnlock()
 
 	// First we need to determine if the Digest fits within MTU
 

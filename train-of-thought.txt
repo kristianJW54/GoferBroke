@@ -1,11 +1,8 @@
 
 
+--///
 
+For the gossip ticker - we need to have this adaptive to network load and node count
 
-//===================
-
-Prepare Info to send which should be a delta of only the seed node
-Using the cluster map - it prepare a tmpCluster with only it's participant in
-
-
-cereal =  [1 0 0 0 90 0 1 13 116 101 115 116 45 115 101 114 118 101 114 45 50 0 1 4 0 0 0 0 103 92 123 130 5 0 0 0 1 0 0 0 0 0 0 103 92 123 130 0 0 0 0 8 0 0 0 0 103 92 123 130 1 0 0 0 0 103 92 123 130 0 0 0 0 14 108 111 99 97 108 104 111 115 116 58 56 48 56 50 13 10]
+Need to go through the entire gossip flow and check that we are not holding onto references longer than needed to
+free up for the gc as quickly as possible

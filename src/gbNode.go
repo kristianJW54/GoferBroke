@@ -206,22 +206,12 @@ func (s *GBServer) connectToSeed() error {
 
 // Thread safe
 // prepareSelfInfoSend gathers the servers deltas into a participant to send over the network. We only send our self info under the assumption that we are a new node
-// and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the recieving node will detect this by
+// and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the receiving node will detect this by
 // running a check on our ServerID + address
 func (s *GBServer) prepareSelfInfoSend() ([]byte, error) {
 
 	s.clusterMapLock.Lock()
 	defer s.clusterMapLock.Unlock()
-
-	//Check if the server name exists in participants
-	//participant, ok := s.clusterMap.participants[s.ServerName]
-	//if !ok {
-	//	return nil, fmt.Errorf("no participant found for server %s", participant.name)
-	//}
-
-	//if s.ServerName != s.selfInfo.name || s.selfInfo == nil {
-	//	return nil, fmt.Errorf("participant not in self info for server %s", s.ServerName)
-	//}
 
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo()
@@ -332,6 +322,7 @@ func (c *gbClient) processArg(arg []byte) error {
 	}
 
 	c.argBuf = arg
+	log.Printf("arg == %v", c.argBuf)
 
 	return nil
 }
@@ -426,6 +417,23 @@ func (c *gbClient) processGossSynAck(message []byte) {
 }
 
 func (c *gbClient) processGossSyn(message []byte) {
+
+	c.rh.rm.Lock()
+	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	c.rh.rm.Unlock()
+
+	if exists {
+
+		responseChan.ch <- message
+
+		//c.rh.rm.Lock()
+		//delete(c.rh.resp, int(c.argBuf[2]))
+		//c.rh.rm.Unlock()
+
+	} else {
+		responseChan.err <- fmt.Errorf("no response channel found")
+		log.Printf("no response channel found")
+	}
 
 }
 

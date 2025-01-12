@@ -635,8 +635,10 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 
 func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
-	//c.rm.Lock()
-	//defer c.rm.Unlock()
+	log.Printf("cleaning up id")
+
+	c.rh.rm.Lock()
+	defer c.rh.rm.Unlock()
 	delete(c.rh.resp, int(respID))
 	close(rsp.ch)
 	close(rsp.err)
@@ -802,9 +804,14 @@ func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) 
 			value:     value,
 		}
 
+		dq := &deltaQueue{
+			key:     newDelta.key,
+			version: newDelta.version,
+		}
+
 		//s.selfInfo.valueIndex = append(s.selfInfo.valueIndex, string(key))
 		s.selfInfo.keyValues[string(key)] = newDelta
-		s.selfInfo.deltaQ.Push(&newDelta)
+		s.selfInfo.deltaQ.Push(&dq)
 
 	}
 

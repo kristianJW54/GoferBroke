@@ -72,9 +72,17 @@ func TestSerialiseDigest(t *testing.T) {
 
 		// Populate participant's keyValues and deltaQ
 		for key, delta := range keyValues {
+			i := 0
+			dq := &deltaQueue{
+				index:   i,
+				key:     delta.key,
+				version: delta.version,
+			}
+
+			i++
+
 			participant.keyValues[key] = delta
-			delta.key = key
-			heap.Push(&participant.deltaQ, delta)
+			heap.Push(&participant.deltaQ, dq)
 		}
 
 		// Add participant to the ClusterMap
@@ -140,65 +148,6 @@ func BenchmarkJSONSerialization(b *testing.B) {
 	}
 }
 
-//func BenchmarkProtobufSerialization(b *testing.B) {
-//	// Create keyValues with PBDelta messages
-//	keyValues := map[string]*PBDelta{
-//		"key1":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995200, Value: []byte("hello world")},
-//		"key2":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995200, Value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
-//		"key3":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995201, Value: []byte("short")},
-//		"key4":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995202, Value: []byte("This is a slightly longer string to test serialization.")},
-//		"key5":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995203, Value: []byte("1234567890")},
-//		"key6":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-//		"key7":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-//		"key8":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-//		"key9":  &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
-//		"key10": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
-//		"key11": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995209, Value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
-//		"key12": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995210, Value: []byte("abcdefghijklmnopqrstuvwxyz")},
-//		"key13": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995211, Value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
-//		"key14": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995212, Value: []byte("Yet another string, this one a bit longer than the previous.")},
-//		"key15": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995213, Value: []byte("Small string.")},
-//		"key16": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995214, Value: []byte("A moderately sized string for testing.")},
-//		"key17": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995215, Value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
-//		"key18": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995216, Value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
-//		"key19": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995217, Value: []byte("Medium length string for benchmarking purposes.")},
-//		"key20": &PBDelta{ValueType: ValueType_INTERNAL_D, Version: 1640995218, Value: []byte("Final key-value pair.")},
-//	}
-//
-//	// Create a ClusterMap which maps a string to PBParticipant
-//	clusterMap := make(map[string]*PBParticipant)
-//
-//	// Create a Participant and map Delta values to the Participant
-//	participant := &PBParticipant{
-//		KeyValues: make(map[string]*PBDelta),
-//	}
-//
-//	// Map all key-values from `keyValues` to the participant's KeyValues
-//	for key, delta := range keyValues {
-//		participant.KeyValues[key] = delta
-//	}
-//
-//	// Add the participant to the ClusterMap with a key (e.g., "cluster1")
-//	clusterMap["cluster1"] = participant
-//
-//	// Warm-up phase: Run once before the actual benchmarking to avoid initial overhead
-//	_, _ = proto.Marshal(clusterMap["cluster1"]) // Marshal the participant of "cluster1" to remove startup costs
-//
-//	// Run the benchmark
-//	b.ResetTimer() // Exclude the time spent in setup (like key-value initialization)
-//
-//	// Run the serialization in parallel to test performance under load
-//	b.RunParallel(func(pb *testing.PB) {
-//		for pb.Next() {
-//			// Serialize the entire ClusterMap entry (participant of "cluster1")
-//			_, err := proto.Marshal(clusterMap["cluster1"])
-//			if err != nil {
-//				b.Fatalf("Failed to marshal ClusterMap entry: %v", err)
-//			}
-//		}
-//	})
-//}
-
 func BenchmarkMySerialization(b *testing.B) {
 	// Create keyValues with PBDelta messages
 	keyValues := map[string]*Delta{
@@ -229,6 +178,7 @@ func BenchmarkMySerialization(b *testing.B) {
 		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
+			participantQ: make(participantHeap, 0),
 		},
 	}
 
@@ -241,15 +191,30 @@ func BenchmarkMySerialization(b *testing.B) {
 
 	// Populate participant's keyValues and deltaQ
 	for key, delta := range keyValues {
-		participant.keyValues[key] = delta
+		i := 0
+		dq := &deltaQueue{
+			index:   i,
+			key:     delta.key,
+			version: delta.version,
+		}
 
-		// Populate deltaQ (with key added to Delta for serialization)
-		delta.key = key
-		heap.Push(&participant.deltaQ, delta)
+		i++
+
+		participant.keyValues[key] = delta
+		heap.Push(&participant.deltaQ, dq)
 	}
 
 	// Add participant to the ClusterMap
 	gbs.clusterMap.participants["node1"] = participant
+
+	pq := &participantQueue{
+		index:           1,
+		name:            participant.name,
+		availableDeltas: 0,
+		maxVersion:      1640995200,
+	}
+
+	heap.Push(&gbs.clusterMap.participantQ, pq)
 
 	// Warm-up phase: Run once before the actual benchmarking to avoid initial overhead
 	_, _ = gbs.serialiseClusterDelta() // Marshal the participant of "cluster1" to remove startup costs
@@ -272,16 +237,16 @@ func BenchmarkMySerialization(b *testing.B) {
 func TestDeltaHeap(t *testing.T) {
 	// Pre-filled slice of deltas (not yet a valid heap)
 	deltaQ := deltaHeap{
-		&Delta{key: "key1", version: 1640995201},
-		&Delta{key: "key2", version: 1640995203},
-		&Delta{key: "key3", version: 1640995202},
+		&deltaQueue{key: "key1", version: 1640995201},
+		&deltaQueue{key: "key2", version: 1640995203},
+		&deltaQueue{key: "key3", version: 1640995202},
 	}
 
 	// Initialize the heap
 	heap.Init(&deltaQ)
 
 	// Push a new element
-	heap.Push(&deltaQ, &Delta{key: "key4", version: 1640995204})
+	heap.Push(&deltaQ, &deltaQueue{key: "key4", version: 1640995204})
 
 	// Verify the highest version is at the top
 	if deltaQ[0].version != 1640995204 {
@@ -291,7 +256,7 @@ func TestDeltaHeap(t *testing.T) {
 	// Pop elements to check order
 	expectedVersions := []int64{1640995204, 1640995203, 1640995202, 1640995201}
 	for _, expected := range expectedVersions {
-		delta := heap.Pop(&deltaQ).(*Delta)
+		delta := heap.Pop(&deltaQ).(*deltaQueue)
 		log.Println("delta = ", delta)
 		if delta.version != expected {
 			t.Errorf("Expected version %d, got %d", expected, delta.version)
@@ -314,6 +279,7 @@ func TestMySerialization(t *testing.T) {
 		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
+			participantQ: make(participantHeap, 0),
 		},
 	}
 
@@ -326,13 +292,35 @@ func TestMySerialization(t *testing.T) {
 
 	// Populate participant's keyValues and deltaQ
 	for key, delta := range keyValues {
+		i := 0
+		dq := &deltaQueue{
+			index:   i,
+			key:     key,
+			version: delta.version,
+		}
+
+		i++
+
 		participant.keyValues[key] = delta
-		delta.key = key
-		heap.Push(&participant.deltaQ, delta)
+		heap.Push(&participant.deltaQ, dq)
 	}
 
 	// Add participant to the ClusterMap
 	gbs.clusterMap.participants["node1"] = participant
+
+	mv, err := participant.getMaxVersion()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pq := &participantQueue{
+		index:           1,
+		name:            participant.name,
+		availableDeltas: 0,
+		maxVersion:      mv,
+	}
+
+	heap.Push(&gbs.clusterMap.participantQ, pq)
 
 	// Serialize the cluster deltas
 	cereal, _ := gbs.serialiseClusterDelta()
@@ -350,11 +338,7 @@ func TestMySerialization(t *testing.T) {
 	for key, value := range cd.delta {
 		t.Logf("Participant: %s", key)
 		for k, delta := range value.keyValues {
-			truncatedValue := delta.value
-			if len(truncatedValue) > 50 {
-				truncatedValue = append(truncatedValue[:47], []byte("...")...)
-			}
-			t.Logf("  Key: %s, ValueType: %d, Version: %d, Value: %s", k, delta.valueType, delta.version, truncatedValue)
+			t.Logf("  Key: %s, ValueType: %d, Version: %d, Value: %s", k, delta.valueType, delta.version, delta.value)
 		}
 	}
 }
