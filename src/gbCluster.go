@@ -36,8 +36,8 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 		gossInterval:         gossipInterval,
 		nodeSelection:        nodeSelection,
 		gossipControlChannel: make(chan bool, 1),
-		roundDoneChannel:     make(chan struct{}, nodeSelection),
-		gossipOK:             false,
+		//roundDoneChannel:     make(chan struct{}, nodeSelection),
+		gossipOK: false,
 		//isGossiping:          0,
 	}
 
@@ -356,8 +356,8 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // Thread safe
 func (s *GBServer) generateDigest() ([]byte, error) {
 
-	//s.clusterMapLock.RLock()
-	//defer s.clusterMapLock.RUnlock()
+	s.clusterMapLock.RLock()
+	defer s.clusterMapLock.RUnlock()
 
 	// First we need to determine if the Digest fits within MTU
 
@@ -394,9 +394,39 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 // Gossip Syn Prep
 //=======================================================
 
-func (s *GBServer) sendDigest() (int, error) {
+func (s *GBServer) sendDigest(conn *gbClient) (int, error) {
 
-	return 0, nil
+	// Generate the digest - if it's above MTU we either return a subset OR we move to streaming in which we'll need
+	// Adjust node header
+	digest, err := s.generateDigest()
+	if err != nil {
+		return 0, fmt.Errorf("sendDigest - generate digest error: %v", err)
+	}
+
+	reqID, err := s.acquireReqID()
+	if err != nil {
+		return 0, fmt.Errorf("sendDigest - acquiring ID error: %v", err)
+	}
+
+	header := constructNodeHeader(1, GOSS_SYN, reqID, uint16(len(digest)), NODE_HEADER_SIZE_V1, 0, 0)
+	packet := &nodePacket{
+		header,
+		digest,
+	}
+	cereal, err := packet.serialize()
+	if err != nil {
+		return 0, fmt.Errorf("sendDigest - serialize error: %v", err)
+	}
+
+	// Now we queue with response
+	resp, err := conn.qProtoWithResponse(cereal, false, true)
+	if err != nil {
+		return 0, fmt.Errorf("sendDigest - qProtoWithResponse error: %v", err)
+	}
+
+	log.Printf("response = %s", resp)
+
+	return 1, nil
 
 }
 
@@ -467,13 +497,12 @@ func (s *GBServer) tryStartGossip() bool {
 }
 
 func (s *GBServer) incrementGossip() {
-	// Increment the counter when a new gossip operation starts
 	atomic.AddInt64(&s.gossip.isGossiping, 1)
 }
 
 func (s *GBServer) decrementGossip() {
-	// Decrement the counter when a gossip operation ends
-	if atomic.AddInt64(&s.gossip.isGossiping, -1) == 0 {
+	newValue := atomic.AddInt64(&s.gossip.isGossiping, -1)
+	if newValue == 0 {
 		log.Printf("Gossiping completed: All rounds finished")
 	}
 }
@@ -548,6 +577,8 @@ func (s *GBServer) selectNodeAndGossip() error {
 	}
 	//s.clusterMapLock.RUnlock()
 
+	s.gossip.roundDoneChannel = make(chan struct{}, ns)
+
 	for i := 0; i < int(ns); i++ {
 
 		num := rand.Intn(pl) + 1
@@ -576,10 +607,6 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
 
 	// TODO send test messages over connections
 
-	//time.Sleep(2 * time.Second)
-	//log.Printf("gossip task is finito")
-	// Need something to signal a return
-
 	testMsg := []byte("Hello there pretend i am a digest message\r\n")
 
 	header := constructNodeHeader(1, GOSS_SYN, 1, uint16(len(testMsg)), NODE_HEADER_SIZE_V1, 0, 0)
@@ -593,10 +620,17 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
 		log.Printf("Error serializing packet: %v", err)
 	}
 
-	conn.mu.Lock()
-	conn.qProto(pay1, true)
-	conn.mu.Unlock()
-	//log.Printf("resp: %s", resp)
+	resp, err := conn.qProtoWithResponse(pay1, false, true)
+	if err != nil {
+		log.Printf("Error in gossip round: %v", err)
+	}
+
+	log.Printf("resp: %s", resp)
+
+	//stage, err := s.sendDigest(conn)
+	//if err != nil {
+	//	log.Printf("Error in gossip round at stage %v: %v", stage, err)
+	//}
 
 	time.Sleep(1 * time.Second)
 

@@ -1,5 +1,9 @@
 package src
 
+import (
+	"log"
+)
+
 const (
 	START = iota
 	VERSION1
@@ -288,7 +292,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 
-			//log.Println("final message --> ", string(c.msgBuf))
+			log.Println("final message --> ", string(c.msgBuf))
 
 			c.processMessage(c.msgBuf)
 

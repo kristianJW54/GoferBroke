@@ -635,8 +635,6 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 
 func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
-	log.Printf("cleaning up id")
-
 	c.rh.rm.Lock()
 	defer c.rh.rm.Unlock()
 	delete(c.rh.resp, int(respID))

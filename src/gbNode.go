@@ -3,7 +3,6 @@ package src
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -394,8 +393,8 @@ func (c *gbClient) processOK(message []byte) {
 
 	if exists {
 
-		err := errors.New("this is an error response TEST")
-		responseChan.err <- err
+		// We just send the message and allow the caller to specify what they do with it
+		responseChan.ch <- message
 
 		c.rh.rm.Lock()
 		delete(c.rh.resp, int(c.argBuf[2]))
@@ -403,6 +402,7 @@ func (c *gbClient) processOK(message []byte) {
 
 	} else {
 		log.Printf("no response channel found")
+		// Else handle as normal command
 	}
 
 }
@@ -417,24 +417,35 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 func (c *gbClient) processGossSyn(message []byte) {
 
-	// TODO Need to make command handlers more robust in order to handle nil response channels
+	//TODO No response is here as it is an initial request - we will be sending back here to a handler which will have
+	// a response handler
 
-	//c.rh.rm.Lock()
-	//responseChan, exists := c.rh.resp[int(c.argBuf[2])]
-	//c.rh.rm.Unlock()
-	//
-	//if exists {
-	//
-	//	responseChan.ch <- message
-	//
-	//	//c.rh.rm.Lock()
-	//	//delete(c.rh.resp, int(c.argBuf[2]))
-	//	//c.rh.rm.Unlock()
-	//
-	//} else {
-	//	responseChan.err <- fmt.Errorf("no response channel found")
-	//	log.Printf("no response channel found")
+	//delta, err := deSerialiseDigest(message)
+	//if err != nil {
+	//	log.Printf("error serialising digest - %v", err)
 	//}
+	//
+	//for _, v := range delta {
+	//	log.Printf("digest from - %s", v.senderName)
+	//	log.Printf("%s-%v", v.nodeName, v.maxVersion)
+	//}
+
+	resp := []byte("OK +\r\n")
+
+	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(resp)), NODE_HEADER_SIZE_V1, 0, 0)
+	packet := &nodePacket{
+		header,
+		resp,
+	}
+
+	pay, err := packet.serialize()
+	if err != nil {
+		log.Printf("error serialising packet - %v", err)
+	}
+
+	c.mu.Lock()
+	c.qProto(pay, true)
+	c.mu.Unlock()
 
 }
 
