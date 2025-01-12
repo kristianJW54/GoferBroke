@@ -322,7 +322,6 @@ func (c *gbClient) processArg(arg []byte) error {
 	}
 
 	c.argBuf = arg
-	log.Printf("arg == %v", c.argBuf)
 
 	return nil
 }
@@ -418,22 +417,24 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 func (c *gbClient) processGossSyn(message []byte) {
 
-	c.rh.rm.Lock()
-	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
-	c.rh.rm.Unlock()
+	// TODO Need to make command handlers more robust in order to handle nil response channels
 
-	if exists {
-
-		responseChan.ch <- message
-
-		//c.rh.rm.Lock()
-		//delete(c.rh.resp, int(c.argBuf[2]))
-		//c.rh.rm.Unlock()
-
-	} else {
-		responseChan.err <- fmt.Errorf("no response channel found")
-		log.Printf("no response channel found")
-	}
+	//c.rh.rm.Lock()
+	//responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	//c.rh.rm.Unlock()
+	//
+	//if exists {
+	//
+	//	responseChan.ch <- message
+	//
+	//	//c.rh.rm.Lock()
+	//	//delete(c.rh.resp, int(c.argBuf[2]))
+	//	//c.rh.rm.Unlock()
+	//
+	//} else {
+	//	responseChan.err <- fmt.Errorf("no response channel found")
+	//	log.Printf("no response channel found")
+	//}
 
 }
 

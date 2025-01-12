@@ -122,6 +122,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.state = OK
 			case INFO_ALL:
 				c.state = INFO_ALL
+			case GOSS_SYN:
+				c.state = GOSS_SYN
 			}
 
 		case INFO:

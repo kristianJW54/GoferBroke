@@ -417,7 +417,7 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		//log.Printf("%s -- read -- %v", c.srv.ServerName, buff)
+		//log.Printf("%s -- read -- %s", c.srv.ServerName, buff)
 		//log.Printf("bytes read --> %d", n)
 		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 

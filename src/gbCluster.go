@@ -20,6 +20,7 @@ type gossip struct {
 	gossInterval         time.Duration
 	nodeSelection        uint8
 	gossipControlChannel chan bool
+	roundDoneChannel     chan struct{}
 	gossipTimeout        time.Duration
 	gossipOK             bool
 	isGossiping          int64
@@ -35,6 +36,7 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 		gossInterval:         gossipInterval,
 		nodeSelection:        nodeSelection,
 		gossipControlChannel: make(chan bool, 1),
+		roundDoneChannel:     make(chan struct{}, nodeSelection),
 		gossipOK:             false,
 		//isGossiping:          0,
 	}
@@ -42,191 +44,6 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 	goss.gossSignal = sync.NewCond(&goss.gossMu)
 
 	return goss
-}
-
-//=======================================================
-// Gossip Signalling + Process
-//=======================================================
-
-//TODO to avoid bouncing gossip between two nodes - server should flag what node it is gossiping with
-// If it selects a node to gossip with and it is the one it is currently gossiping with then it should pick another or wait
-
-//----------------
-//Gossip Signalling
-
-// Lock is held on entry
-func (s *GBServer) checkGossipCondition() {
-	nodes := atomic.LoadInt64(&s.numNodeConnections)
-
-	if nodes >= 1 && !s.flags.isSet(GOSSIP_SIGNALLED) {
-		s.flags.set(GOSSIP_SIGNALLED)
-		s.gossip.gossipControlChannel <- true
-		log.Println("signalling gossip")
-		s.gossip.gossSignal.Broadcast()
-
-	} else if nodes < 1 && s.flags.isSet(GOSSIP_SIGNALLED) {
-		s.gossip.gossipControlChannel <- false
-		s.flags.clear(GOSSIP_SIGNALLED)
-	}
-
-}
-
-func (s *GBServer) gossipProcess() {
-	stopCondition := context.AfterFunc(s.serverContext, func() {
-		// Notify all waiting goroutines to proceed if needed.
-		s.gossip.gossSignal.L.Lock()
-		defer s.gossip.gossSignal.L.Unlock()
-		s.gossip.gossSignal.Broadcast()
-	})
-	defer stopCondition()
-
-	for {
-		s.gossip.gossMu.Lock()
-
-		// Wait for gossipOK to become true, or until serverContext is canceled.
-		if !s.gossip.gossipOK {
-			log.Printf("waiting for node to join...")
-			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
-
-			if s.serverContext.Err() != nil {
-				log.Printf("gossip process exiting due to context cancellation")
-				s.gossip.gossMu.Unlock()
-				return
-			}
-		}
-		s.gossip.gossipOK = s.startGossipProcess()
-
-		s.gossip.gossMu.Unlock()
-
-	}
-}
-
-func (s *GBServer) tryStartGossip() bool {
-
-	if atomic.LoadInt64(&s.gossip.isGossiping) == 1 {
-		return false
-	} else {
-		return true
-	}
-}
-
-func (s *GBServer) incrementGossip() {
-	// Increment the counter when a new gossip operation starts
-	atomic.AddInt64(&s.gossip.isGossiping, 1)
-}
-
-func (s *GBServer) decrementGossip() {
-	// Decrement the counter when a gossip operation ends
-	if atomic.AddInt64(&s.gossip.isGossiping, -1) == 0 {
-		log.Printf("Gossiping completed: All rounds finished")
-	}
-}
-
-func (s *GBServer) endGossip() {
-	// Reset gossipActive to 0
-	atomic.StoreInt64(&s.gossip.isGossiping, 0)
-}
-
-func (s *GBServer) startGossipProcess() bool {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	log.Printf("Gossip process started")
-	for {
-		select {
-		case <-s.serverContext.Done():
-			log.Printf("Gossip process stopped due to context cancellation")
-			return false
-		case <-ticker.C:
-			if !s.tryStartGossip() {
-				log.Printf("Skipping gossip round because a round is already active")
-				continue
-			}
-
-			err := s.StartGossipRound()
-			if err != nil {
-				log.Printf("Error in gossip round: %v", err)
-			}
-
-		case gossipState := <-s.gossip.gossipControlChannel:
-			if !gossipState {
-				// If gossipControlChannel sends 'false', stop the gossiping process
-				log.Printf("Gossip control received false, stopping gossip process")
-				return false
-			}
-		}
-	}
-}
-
-//--------------------
-// Gossip Round
-
-func (s *GBServer) StartGossipRound() error {
-
-	err := s.selectNodeAndGossip()
-	if err != nil {
-		return err
-	}
-
-	return nil
-
-}
-
-//--------------------
-// Gossip Selection
-
-func (s *GBServer) selectNodeAndGossip() error {
-
-	// TODO Need a fail safe check so that we don't gossip with ourselves - check name against our own?
-
-	// We need to select a node and check we are not already gossiping with them.
-	s.clusterMapLock.RLock()
-	defer s.clusterMapLock.RUnlock()
-
-	ns := s.gossip.nodeSelection
-	pl := len(s.clusterMap.participantQ) - 1
-
-	if int(ns) > pl {
-		// Or pl = 1
-		return fmt.Errorf("gossip process stopped not enough nodes to select")
-	}
-	//s.clusterMapLock.RUnlock()
-
-	for i := 0; i < int(ns); i++ {
-
-		num := rand.Intn(pl) + 1
-		node := s.clusterMap.participantQ[num]
-
-		// TODO Check exist and through error if not
-		conn := s.nodeStore[node.name]
-
-		// Increment before starting a new gossip operation
-		s.incrementGossip()
-
-		//go s.gossipWithNode(ctx, node)
-		s.startGoRoutine(s.ServerName, "gossip-round", func() {
-			defer s.decrementGossip() // Decrement after gossip with the node completes
-			s.gossipWithNode(node.name, conn)
-		})
-	}
-
-	// Then we need to access their connection
-	return nil
-}
-
-func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
-	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, s.clusterMap.participants[node].name, conn.gbc.RemoteAddr())
-
-	// TODO send test messages over connections
-
-	select {
-	case <-s.serverContext.Done():
-		log.Printf("Gossip with %s timed out", node)
-		return
-	case <-time.After(4 * time.Second):
-		return
-	default:
-	}
 }
 
 //===================================================================================
@@ -572,3 +389,224 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 //=======================================================
 // Delta Parsing, Handling and Changes
 //=======================================================
+
+//=======================================================
+// Gossip Syn Prep
+//=======================================================
+
+func (s *GBServer) sendDigest() (int, error) {
+
+	return 0, nil
+
+}
+
+//=======================================================
+// Gossip Signalling + Process
+//=======================================================
+
+//TODO to avoid bouncing gossip between two nodes - server should flag what node it is gossiping with
+// If it selects a node to gossip with and it is the one it is currently gossiping with then it should pick another or wait
+
+//----------------
+//Gossip Signalling
+
+// Lock is held on entry
+func (s *GBServer) checkGossipCondition() {
+	nodes := atomic.LoadInt64(&s.numNodeConnections)
+
+	if nodes >= 1 && !s.flags.isSet(GOSSIP_SIGNALLED) {
+		s.flags.set(GOSSIP_SIGNALLED)
+		s.gossip.gossipControlChannel <- true
+		log.Println("signalling gossip")
+		s.gossip.gossSignal.Broadcast()
+
+	} else if nodes < 1 && s.flags.isSet(GOSSIP_SIGNALLED) {
+		s.gossip.gossipControlChannel <- false
+		s.flags.clear(GOSSIP_SIGNALLED)
+	}
+
+}
+
+func (s *GBServer) gossipProcess() {
+	stopCondition := context.AfterFunc(s.serverContext, func() {
+		// Notify all waiting goroutines to proceed if needed.
+		s.gossip.gossSignal.L.Lock()
+		defer s.gossip.gossSignal.L.Unlock()
+		s.gossip.gossSignal.Broadcast()
+	})
+	defer stopCondition()
+
+	for {
+		s.gossip.gossMu.Lock()
+
+		// Wait for gossipOK to become true, or until serverContext is canceled.
+		if !s.gossip.gossipOK {
+			log.Printf("waiting for node to join...")
+			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
+
+			if s.serverContext.Err() != nil {
+				log.Printf("gossip process exiting due to context cancellation")
+				s.gossip.gossMu.Unlock()
+				return
+			}
+		}
+		s.gossip.gossipOK = s.startGossipProcess()
+
+		s.gossip.gossMu.Unlock()
+
+	}
+}
+
+func (s *GBServer) tryStartGossip() bool {
+
+	if atomic.LoadInt64(&s.gossip.isGossiping) == 1 {
+		return false
+	} else {
+		return true
+	}
+}
+
+func (s *GBServer) incrementGossip() {
+	// Increment the counter when a new gossip operation starts
+	atomic.AddInt64(&s.gossip.isGossiping, 1)
+}
+
+func (s *GBServer) decrementGossip() {
+	// Decrement the counter when a gossip operation ends
+	if atomic.AddInt64(&s.gossip.isGossiping, -1) == 0 {
+		log.Printf("Gossiping completed: All rounds finished")
+	}
+}
+
+func (s *GBServer) endGossip() {
+	// Reset gossipActive to 0
+	atomic.StoreInt64(&s.gossip.isGossiping, 0)
+}
+
+func (s *GBServer) startGossipProcess() bool {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	log.Printf("Gossip process started")
+	for {
+		select {
+		case <-s.serverContext.Done():
+			log.Printf("Gossip process stopped due to context cancellation")
+			return false
+		case <-ticker.C:
+			if !s.tryStartGossip() {
+				log.Printf("Skipping gossip round because a round is already active")
+				continue
+			}
+
+			err := s.StartGossipRound()
+			if err != nil {
+				log.Printf("Error in gossip round: %v", err)
+			}
+
+		case gossipState := <-s.gossip.gossipControlChannel:
+			if !gossipState {
+				// If gossipControlChannel sends 'false', stop the gossiping process
+				log.Printf("Gossip control received false, stopping gossip process")
+				return false
+			}
+		}
+	}
+}
+
+//--------------------
+// Gossip Round
+
+func (s *GBServer) StartGossipRound() error {
+
+	err := s.selectNodeAndGossip()
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+//--------------------
+// Gossip Selection
+
+func (s *GBServer) selectNodeAndGossip() error {
+
+	// TODO Need a fail safe check so that we don't gossip with ourselves - check name against our own?
+
+	// We need to select a node and check we are not already gossiping with them.
+	s.clusterMapLock.RLock()
+	defer s.clusterMapLock.RUnlock()
+
+	ns := s.gossip.nodeSelection
+	pl := len(s.clusterMap.participantQ) - 1
+
+	if int(ns) > pl {
+		// Or pl = 1
+		return fmt.Errorf("gossip process stopped not enough nodes to select")
+	}
+	//s.clusterMapLock.RUnlock()
+
+	for i := 0; i < int(ns); i++ {
+
+		num := rand.Intn(pl) + 1
+		node := s.clusterMap.participantQ[num]
+
+		// TODO Check exist and through error if not
+		conn := s.nodeStore[node.name]
+
+		// Increment before starting a new gossip operation
+		s.incrementGossip()
+
+		//go s.gossipWithNode(ctx, node)
+		s.startGoRoutine(s.ServerName, "gossip-round", func() {
+			defer s.decrementGossip() // Decrement after gossip with the node completes
+
+			s.gossipWithNode(node.name, conn)
+		})
+	}
+
+	// Then we need to access their connection
+	return nil
+}
+
+func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
+	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, s.clusterMap.participants[node].name, conn.gbc.RemoteAddr())
+
+	// TODO send test messages over connections
+
+	//time.Sleep(2 * time.Second)
+	//log.Printf("gossip task is finito")
+	// Need something to signal a return
+
+	testMsg := []byte("Hello there pretend i am a digest message\r\n")
+
+	header := constructNodeHeader(1, GOSS_SYN, 1, uint16(len(testMsg)), NODE_HEADER_SIZE_V1, 0, 0)
+
+	packet := &nodePacket{
+		header,
+		testMsg,
+	}
+	pay1, err := packet.serialize()
+	if err != nil {
+		log.Printf("Error serializing packet: %v", err)
+	}
+
+	conn.mu.Lock()
+	conn.qProto(pay1, true)
+	conn.mu.Unlock()
+	//log.Printf("resp: %s", resp)
+
+	time.Sleep(1 * time.Second)
+
+	select {
+	case s.gossip.roundDoneChannel <- struct{}{}:
+		log.Printf("signalling done :):):):)")
+		return
+	case <-s.serverContext.Done():
+		log.Printf("Gossip with %s timed out", node)
+		return
+		// Be careful using Default here - need to look at why it messes with the skip gossip functionality
+	}
+}

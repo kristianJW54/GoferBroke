@@ -99,7 +99,6 @@ func TestGossipSignal(t *testing.T) {
 
 	go gbs.StartServer()
 	go gbs2.StartServer()
-	time.Sleep(2 * time.Second)
 	//go gbs3.StartServer()
 	//go gbs4.StartServer()
 

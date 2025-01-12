@@ -171,7 +171,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 	// Gather server metrics
 
 	// Init gossip
-	goss := initGossipSettings(1*time.Second, 1)
+	goss := initGossipSettings(1*time.Second, 1) // TODO Node selection changing for tests
 
 	createdAt := time.Now()
 
