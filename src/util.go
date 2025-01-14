@@ -37,7 +37,7 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 			defer func() {
 				// Recover from any panic that may occur in the goroutine
 				if r := recover(); r != nil {
-					fmt.Printf("Recovered panic in goroutine %s: %v\n", name, r)
+					fmt.Printf("%s Recovered panic in goroutine %s: %v\n", serverName, name, r)
 				}
 
 				// If tracking is enabled, decrement the number of routines and remove from the map

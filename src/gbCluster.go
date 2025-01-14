@@ -20,12 +20,12 @@ type gossip struct {
 	gossInterval         time.Duration
 	nodeSelection        uint8
 	gossipControlChannel chan bool
-	roundDoneChannel     chan struct{}
 	gossipTimeout        time.Duration
 	gossipOK             bool
 	isGossiping          int64
 	gossSignal           *sync.Cond
 	gossMu               sync.RWMutex
+	gossWg               sync.WaitGroup
 }
 
 func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *gossip {
@@ -36,9 +36,8 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 		gossInterval:         gossipInterval,
 		nodeSelection:        nodeSelection,
 		gossipControlChannel: make(chan bool, 1),
-		//roundDoneChannel:     make(chan struct{}, nodeSelection),
-		gossipOK: false,
-		//isGossiping:          0,
+		gossipOK:             false,
+		gossWg:               sync.WaitGroup{},
 	}
 
 	goss.gossSignal = sync.NewCond(&goss.gossMu)
@@ -396,6 +395,9 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 
 func (s *GBServer) sendDigest(conn *gbClient) (int, error) {
 
+	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+	defer cancel()
+
 	// Generate the digest - if it's above MTU we either return a subset OR we move to streaming in which we'll need
 	// Adjust node header
 	digest, err := s.generateDigest()
@@ -419,7 +421,7 @@ func (s *GBServer) sendDigest(conn *gbClient) (int, error) {
 	}
 
 	// Now we queue with response
-	resp, err := conn.qProtoWithResponse(cereal, false, true)
+	resp, err := conn.qProtoWithResponse(ctx, cereal, false, true)
 	if err != nil {
 		return 0, fmt.Errorf("sendDigest - qProtoWithResponse error: %v", err)
 	}
@@ -471,14 +473,16 @@ func (s *GBServer) gossipProcess() {
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
 		if !s.gossip.gossipOK {
+
 			log.Printf("waiting for node to join...")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
 
 			if s.serverContext.Err() != nil {
-				log.Printf("gossip process exiting due to context cancellation")
+				log.Printf("%s - gossip process exiting due to context cancellation", s.ServerName)
 				s.gossip.gossMu.Unlock()
 				return
 			}
+
 		}
 		s.gossip.gossipOK = s.startGossipProcess()
 
@@ -520,7 +524,9 @@ func (s *GBServer) startGossipProcess() bool {
 	for {
 		select {
 		case <-s.serverContext.Done():
-			log.Printf("Gossip process stopped due to context cancellation")
+			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.ServerName)
+			s.endGossip()
+			s.gossip.gossWg.Wait() // Wait for the rounds to finish
 			return false
 		case <-ticker.C:
 			if !s.tryStartGossip() {
@@ -537,6 +543,7 @@ func (s *GBServer) startGossipProcess() bool {
 			if !gossipState {
 				// If gossipControlChannel sends 'false', stop the gossiping process
 				log.Printf("Gossip control received false, stopping gossip process")
+				s.gossip.gossWg.Wait() // Wait for the rounds to finish
 				return false
 			}
 		}
@@ -545,8 +552,16 @@ func (s *GBServer) startGossipProcess() bool {
 
 //--------------------
 // Gossip Round
+// TODO Need to look at gossip level context + gossip round context
 
 func (s *GBServer) StartGossipRound() error {
+
+	s.serverLock.Lock()
+	if s.flags.isSet(SHUTTING_DOWN) {
+		s.serverLock.Unlock()
+		return fmt.Errorf("shutting down")
+	}
+	s.serverLock.Unlock()
 
 	err := s.selectNodeAndGossip()
 	if err != nil {
@@ -575,37 +590,59 @@ func (s *GBServer) selectNodeAndGossip() error {
 		// Or pl = 1
 		return fmt.Errorf("gossip process stopped not enough nodes to select")
 	}
-	//s.clusterMapLock.RUnlock()
 
-	s.gossip.roundDoneChannel = make(chan struct{}, ns)
+	// Trying error channel approach here to collect any node specific error during gossip
 
 	for i := 0; i < int(ns); i++ {
 
-		num := rand.Intn(pl) + 1
-		node := s.clusterMap.participantQ[num]
+		select {
+		case <-gossCtx.Done():
+			return nil
+		default:
+			num := rand.Intn(pl) + 1
+			node := s.clusterMap.participantQ[num]
 
-		// TODO Check exist and through error if not
-		conn := s.nodeStore[node.name]
+			// TODO Check exist and through error if not
+			conn, exists := s.nodeStore[node.name]
 
-		// Increment before starting a new gossip operation
-		s.incrementGossip()
+			// Need to check if we have dialed the connection
+			if !exists {
+				log.Printf("no connection - skipping")
+			}
 
-		//go s.gossipWithNode(ctx, node)
-		s.startGoRoutine(s.ServerName, "gossip-round", func() {
-			defer s.decrementGossip() // Decrement after gossip with the node completes
+			// Increment before starting a new gossip operation
+			s.incrementGossip()
+			// Increment the wait group for this gossip operation
+			s.gossip.gossWg.Add(1)
 
-			s.gossipWithNode(node.name, conn)
-		})
+			s.startGoRoutine(s.ServerName, "gossip-round", func() {
+				defer s.decrementGossip() // Decrement after gossip with the node completes
+				defer s.gossip.gossWg.Done()
+
+				// Gossip with the node and collect any errors
+				if err := s.gossipWithNode(node.name, conn); err != nil {
+				}
+			})
+
+		}
+
 	}
 
-	// Then we need to access their connection
+	// Collect and aggregate errors
+
 	return nil
 }
 
-func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
-	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, s.clusterMap.participants[node].name, conn.gbc.RemoteAddr())
+//TODO When a new node joins - it is given info by the seed - so when choosing to gossip - for some it will need to dial
+// the nodes using the addr in the clusterMap
+
+func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
+	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, node, conn.gbc.RemoteAddr())
 
 	// TODO send test messages over connections
+
+	// Will be using a state machine approach
+	// - moving through each stage and checking ctx.Err() && other checks before continuing
 
 	testMsg := []byte("Hello there pretend i am a digest message\r\n")
 
@@ -620,27 +657,20 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
 		log.Printf("Error serializing packet: %v", err)
 	}
 
-	resp, err := conn.qProtoWithResponse(pay1, false, true)
+	// TODO So the response is the problem right now
+	//
+	resp, err := conn.qProtoWithResponse(s.serverContext, pay1, false, true)
 	if err != nil {
 		log.Printf("Error in gossip round: %v", err)
 	}
 
+	//conn.mu.Lock()
+	//conn.qProto(pay1, true)
+	//conn.mu.Unlock()
+
+	//
 	log.Printf("resp: %s", resp)
 
-	//stage, err := s.sendDigest(conn)
-	//if err != nil {
-	//	log.Printf("Error in gossip round at stage %v: %v", stage, err)
-	//}
+	return nil
 
-	time.Sleep(1 * time.Second)
-
-	select {
-	case s.gossip.roundDoneChannel <- struct{}{}:
-		log.Printf("signalling done :):):):)")
-		return
-	case <-s.serverContext.Done():
-		log.Printf("Gossip with %s timed out", node)
-		return
-		// Be careful using Default here - need to look at why it messes with the skip gossip functionality
-	}
 }

@@ -1,8 +1,6 @@
 package src
 
-import (
-	"log"
-)
+import "log"
 
 const (
 	START = iota

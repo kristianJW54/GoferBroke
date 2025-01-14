@@ -139,7 +139,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // will return that error and trigger logic to either retry or exit the process
 func (s *GBServer) connectToSeed() error {
 
-	ctx, cancel := context.WithTimeout(s.serverContext, 10*time.Second)
+	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
 	defer cancel()
 
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
@@ -156,7 +156,7 @@ func (s *GBServer) connectToSeed() error {
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	rsp, err := client.qProtoWithResponse(pay1, false, true)
+	rsp, err := client.qProtoWithResponse(ctx, pay1, false, true)
 	if err != nil {
 		return err
 	}

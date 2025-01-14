@@ -516,6 +516,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 		n += wn
 		c.outbound.copyWriteBuffer = c.outbound.copyWriteBuffer[consumed-len(wb):]
+
 		if err != nil && err != io.ErrShortWrite {
 			break
 		}
@@ -645,7 +646,7 @@ func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
 // TODO need to make a cleanup function to defer cleanup of resources and close channels and return hanging ID's
 
-func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID byte, timeout time.Duration) ([]byte, error) {
+func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID byte) ([]byte, error) {
 
 	defer c.responseCleanup(rsp, respID)
 
@@ -659,16 +660,13 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID by
 		return msg, nil
 	case err := <-rsp.err:
 		return nil, err
-	case <-time.After(timeout):
-		//log.Printf("%s timed out waiting for response channel %d", c.srv.ServerName, int(respID))
-		return nil, fmt.Errorf("timeout for response ID %d", rsp.id)
 	}
 
 }
 
 // Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
-func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) ([]byte, error) {
+func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush bool, sendNow bool) ([]byte, error) {
 
 	respID := proto[2]
 
@@ -684,7 +682,8 @@ func (c *gbClient) qProtoWithResponse(proto []byte, flush bool, sendNow bool) ([
 
 		// Wait for the response with timeout
 		// We have to block and wait until we get a signal to continue the process which requested a response
-		ok, err := c.waitForResponse(c.srv.serverContext, responseChannel, respID, 2*time.Second)
+
+		ok, err := c.waitForResponse(ctx, responseChannel, respID)
 
 		if err != nil {
 			return nil, err
