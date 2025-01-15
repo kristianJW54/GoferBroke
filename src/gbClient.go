@@ -637,8 +637,10 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
 	c.rh.rm.Lock()
-	defer c.rh.rm.Unlock()
 	delete(c.rh.resp, int(respID))
+	c.rh.rm.Unlock()
+
+	c.srv.releaseReqID(respID)
 	close(rsp.ch)
 	close(rsp.err)
 
@@ -648,15 +650,12 @@ func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
 func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID byte) ([]byte, error) {
 
-	defer c.responseCleanup(rsp, respID)
-
 	select {
 	case <-ctx.Done():
-		c.srv.releaseReqID(respID)
 		//log.Println("context has been CALLED on RESPONSE")
 		return nil, ctx.Err()
 	case msg := <-rsp.ch:
-		//log.Printf("%s got response", c.srv.ServerName)
+		//log.Printf("%s got response ----> %s", c.srv.ServerName, msg)
 		return msg, nil
 	case err := <-rsp.err:
 		return nil, err
@@ -672,7 +671,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 
 	responseChannel := c.addResponseChannel(int(respID))
 
-	if sendNow {
+	if sendNow && !flush {
 
 		// Client lock to flush outbound
 		c.mu.Lock()
@@ -684,6 +683,25 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
 		ok, err := c.waitForResponse(ctx, responseChannel, respID)
+		defer c.responseCleanup(responseChannel, respID)
+
+		if err != nil {
+			return nil, err
+		}
+		// If no error we may want to run the callback function here??
+		return ok, nil
+	} else if sendNow {
+		// Client lock to flush outbound
+		c.mu.Lock()
+		c.qProto(proto, flush)
+		//c.flushWriteOutbound()
+		c.mu.Unlock()
+
+		// Wait for the response with timeout
+		// We have to block and wait until we get a signal to continue the process which requested a response
+
+		ok, err := c.waitForResponse(ctx, responseChannel, respID)
+		defer c.responseCleanup(responseChannel, respID)
 
 		if err != nil {
 			return nil, err

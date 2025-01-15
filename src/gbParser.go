@@ -290,7 +290,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 
-			log.Println("final message --> ", string(c.msgBuf))
+			log.Printf("%s = final message --> %s\n\n", c.srv.ServerName, string(c.msgBuf))
 
 			c.processMessage(c.msgBuf)
 

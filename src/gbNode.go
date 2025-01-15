@@ -374,10 +374,6 @@ func (c *gbClient) processInfoAll(message []byte) {
 		// We just send the message and allow the caller to specify what they do with it
 		responseChan.ch <- message
 
-		c.rh.rm.Lock()
-		delete(c.rh.resp, int(c.argBuf[2]))
-		c.rh.rm.Unlock()
-
 	} else {
 		log.Printf("no response channel found")
 		// Else handle as normal command
@@ -387,18 +383,15 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 func (c *gbClient) processOK(message []byte) {
 
-	c.rh.rm.Lock()
+	c.mu.Lock()
 	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
-	c.rh.rm.Unlock()
+	//log.Printf("response channel == %v", c.rh.resp[int(c.argBuf[2])])
+	c.mu.Unlock()
 
 	if exists {
 
 		// We just send the message and allow the caller to specify what they do with it
 		responseChan.ch <- message
-
-		c.rh.rm.Lock()
-		delete(c.rh.resp, int(c.argBuf[2]))
-		c.rh.rm.Unlock()
 
 	} else {
 		log.Printf("no response channel found")
@@ -430,7 +423,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	//	log.Printf("%s-%v", v.nodeName, v.maxVersion)
 	//}
 
-	resp := []byte("OK +\r\n")
+	resp := []byte("OK BOIII +\r\n")
 
 	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(resp)), NODE_HEADER_SIZE_V1, 0, 0)
 	packet := &nodePacket{

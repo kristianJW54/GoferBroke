@@ -484,6 +484,13 @@ func (s *GBServer) gossipProcess() {
 			}
 
 		}
+
+		if s.serverContext.Err() != nil {
+			log.Printf("%s - STOP!!!!", s.ServerName)
+			s.gossip.gossMu.Unlock()
+			return
+		}
+
 		s.gossip.gossipOK = s.startGossipProcess()
 
 		s.gossip.gossMu.Unlock()
@@ -563,6 +570,13 @@ func (s *GBServer) StartGossipRound() error {
 	}
 	s.serverLock.Unlock()
 
+	//if s.ServerID.uuid == 1 {
+	//	err := s.selectNodeAndGossip()
+	//	if err != nil {
+	//		return err
+	//	}
+	//}
+
 	err := s.selectNodeAndGossip()
 	if err != nil {
 		return err
@@ -580,8 +594,8 @@ func (s *GBServer) selectNodeAndGossip() error {
 	// TODO Need a fail safe check so that we don't gossip with ourselves - check name against our own?
 
 	// We need to select a node and check we are not already gossiping with them.
-	s.clusterMapLock.RLock()
-	defer s.clusterMapLock.RUnlock()
+	//s.clusterMapLock.RLock()
+	//defer s.clusterMapLock.RUnlock()
 
 	ns := s.gossip.nodeSelection
 	pl := len(s.clusterMap.participantQ) - 1
@@ -591,19 +605,23 @@ func (s *GBServer) selectNodeAndGossip() error {
 		return fmt.Errorf("gossip process stopped not enough nodes to select")
 	}
 
+	gossipingWith := make([]string, ns)
+
 	// Trying error channel approach here to collect any node specific error during gossip
 
 	for i := 0; i < int(ns); i++ {
 
 		select {
-		case <-gossCtx.Done():
+		case <-s.serverContext.Done():
 			return nil
 		default:
+			s.clusterMapLock.RLock()
 			num := rand.Intn(pl) + 1
 			node := s.clusterMap.participantQ[num]
 
 			// TODO Check exist and through error if not
 			conn, exists := s.nodeStore[node.name]
+			s.clusterMapLock.RUnlock()
 
 			// Need to check if we have dialed the connection
 			if !exists {
@@ -614,6 +632,13 @@ func (s *GBServer) selectNodeAndGossip() error {
 			s.incrementGossip()
 			// Increment the wait group for this gossip operation
 			s.gossip.gossWg.Add(1)
+
+			// Random delay to break symmetry
+			//delay := time.Duration(rand.Intn(100)) * time.Millisecond
+			//time.Sleep(delay)
+
+			gossipingWith[i] = node.name
+			log.Printf("gossiping with %v", gossipingWith[i])
 
 			s.startGoRoutine(s.ServerName, "gossip-round", func() {
 				defer s.decrementGossip() // Decrement after gossip with the node completes
@@ -646,7 +671,12 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 
 	testMsg := []byte("Hello there pretend i am a digest message\r\n")
 
-	header := constructNodeHeader(1, GOSS_SYN, 1, uint16(len(testMsg)), NODE_HEADER_SIZE_V1, 0, 0)
+	id, err := s.acquireReqID()
+	if err != nil {
+		return err
+	}
+
+	header := constructNodeHeader(1, GOSS_SYN, id, uint16(len(testMsg)), NODE_HEADER_SIZE_V1, 0, 0)
 
 	packet := &nodePacket{
 		header,
@@ -659,7 +689,7 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 
 	// TODO So the response is the problem right now
 	//
-	resp, err := conn.qProtoWithResponse(s.serverContext, pay1, false, true)
+	resp, err := conn.qProtoWithResponse(s.serverContext, pay1, true, true)
 	if err != nil {
 		log.Printf("Error in gossip round: %v", err)
 	}
@@ -669,7 +699,7 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 	//conn.mu.Unlock()
 
 	//
-	log.Printf("resp: %s", resp)
+	log.Printf("%s resp: %s", s.ServerName, resp)
 
 	return nil
 
