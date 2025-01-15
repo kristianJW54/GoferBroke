@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ type gossip struct {
 	gossipTimeout        time.Duration
 	gossipOK             bool
 	isGossiping          int64
+	gossipingWith        sync.Map
 	gossSignal           *sync.Cond
 	gossMu               sync.RWMutex
 	gossWg               sync.WaitGroup
@@ -459,6 +461,33 @@ func (s *GBServer) checkGossipCondition() {
 
 }
 
+//----------------
+//Gossip sync.Map
+
+func (s *GBServer) storeGossipingWith(node string, seniority int) {
+	s.gossip.gossipingWith.Store(node, seniority)
+	log.Println("storing --> ", node)
+}
+
+func (s *GBServer) getGossipingWith(node string) (int, error) {
+	nodeSeniority, exists := s.gossip.gossipingWith.Load(node)
+	if exists {
+		// Use type assertion to convert the value to an int
+		if seniority, ok := nodeSeniority.(int); ok {
+			return seniority, nil
+		}
+		return 0, fmt.Errorf("type assertion failed for node: %s", node)
+	}
+	return 0, fmt.Errorf("node %s not found", node)
+}
+
+func (s *GBServer) clearGossipingWithMap() {
+	s.gossip.gossipingWith.Clear()
+}
+
+//----------------
+//Gossip Control
+
 func (s *GBServer) gossipProcess() {
 	stopCondition := context.AfterFunc(s.serverContext, func() {
 		// Notify all waiting goroutines to proceed if needed.
@@ -497,6 +526,9 @@ func (s *GBServer) gossipProcess() {
 	}
 }
 
+//----------------
+//Gossip Count
+
 func (s *GBServer) tryStartGossip() bool {
 
 	if atomic.LoadInt64(&s.gossip.isGossiping) == 1 {
@@ -520,7 +552,11 @@ func (s *GBServer) decrementGossip() {
 func (s *GBServer) endGossip() {
 	// Reset gossipActive to 0
 	atomic.StoreInt64(&s.gossip.isGossiping, 0)
+	log.Printf("clearing map")
 }
+
+//----------------
+//Gossip Process
 
 func (s *GBServer) startGossipProcess() bool {
 	ticker := time.NewTicker(1 * time.Second)
@@ -539,7 +575,10 @@ func (s *GBServer) startGossipProcess() bool {
 				return false
 			}
 
+			// TODO - fix bug where we sometimes get stuck here - should try to log gossipCount
+
 			if !s.tryStartGossip() && !s.flags.isSet(SHUTTING_DOWN) {
+				log.Printf("gossip count -- %v", s.gossip.isGossiping)
 				log.Printf("Skipping gossip round because a round is already active")
 				continue
 			}
@@ -584,6 +623,10 @@ func (s *GBServer) StartGossipRound() error {
 	if err != nil {
 		return err
 	}
+
+	//TODO --- to be aware: once we select node and gossip - it runs in a go-routine so any clean up resources here
+	// will effect the go-routines accessing those resources
+	// eg. --> s.clearGossipingWithMap()
 
 	return nil
 
@@ -636,6 +679,15 @@ func (s *GBServer) selectNodeAndGossip() error {
 			// Increment the wait group for this gossip operation
 			s.gossip.gossWg.Add(1)
 
+			timestampStr := node.name[len(node.name)-8:]
+
+			// Convert the extracted string to an integer
+			timestamp, err := strconv.Atoi(timestampStr)
+			if err != nil {
+				return fmt.Errorf("failed to convert timestamp '%s' to int: %v", timestampStr, err)
+			}
+			s.storeGossipingWith(node.name, timestamp)
+
 			// Random delay to break symmetry
 			//delay := time.Duration(rand.Intn(100)) * time.Millisecond
 			//time.Sleep(delay)
@@ -665,6 +717,11 @@ func (s *GBServer) selectNodeAndGossip() error {
 // the nodes using the addr in the clusterMap
 
 func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
+
+	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+		return fmt.Errorf("shutting down - returning from gossip early - %v", s.serverContext.Err())
+	}
+
 	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, node, conn.gbc.RemoteAddr())
 
 	// TODO send test messages over connections
@@ -694,7 +751,7 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 	//
 	resp, err := conn.qProtoWithResponse(s.serverContext, pay1, true, true)
 	if err != nil {
-		log.Printf("Error in gossip round: %v", err)
+		return err
 	}
 
 	//conn.mu.Lock()
@@ -707,4 +764,23 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 
 	return nil
 
+}
+
+// ======================
+func (s *GBServer) getFirstGossipingWith() (any, any, error) {
+	var firstKey, firstValue any
+	found := false
+
+	// Immediately stop after the first key-value pair
+	s.gossip.gossipingWith.Range(func(key, value any) bool {
+		firstKey = key
+		firstValue = value
+		found = true
+		return false // Stop iteration immediately
+	})
+
+	if !found {
+		return nil, nil, fmt.Errorf("map is empty")
+	}
+	return firstKey, firstValue, nil
 }

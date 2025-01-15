@@ -413,8 +413,14 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 func (c *gbClient) processGossSyn(message []byte) {
 
-	//TODO No response is here as it is an initial request - we will be sending back here to a handler which will have
-	// a response handler
+	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
+	// if we need to defer gossip round or continue
+	key, value, err := c.srv.getFirstGossipingWith()
+	if err != nil {
+		log.Printf("error getting key/value from server: %v", err)
+	}
+
+	log.Printf("KEY=%s - VALUE=%v", key, value)
 
 	//delta, err := deSerialiseDigest(message)
 	//if err != nil {
