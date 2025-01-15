@@ -383,15 +383,18 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 func (c *gbClient) processOK(message []byte) {
 
-	c.mu.Lock()
+	c.rh.rm.Lock()
 	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
 	//log.Printf("response channel == %v", c.rh.resp[int(c.argBuf[2])])
-	c.mu.Unlock()
+	c.rh.rm.Unlock()
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
 
 	if exists {
 
 		// We just send the message and allow the caller to specify what they do with it
-		responseChan.ch <- message
+		responseChan.ch <- msg
 
 	} else {
 		log.Printf("no response channel found")
@@ -422,6 +425,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	//	log.Printf("digest from - %s", v.senderName)
 	//	log.Printf("%s-%v", v.nodeName, v.maxVersion)
 	//}
+	//time.Sleep(3 * time.Second)
 
 	resp := []byte("OK BOIII +\r\n")
 

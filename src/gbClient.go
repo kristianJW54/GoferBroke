@@ -417,7 +417,7 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		//log.Printf("%s -- read -- %s", c.srv.ServerName, buff)
+		//log.Printf("%s -- read -- %s", c.srv.ServerName, buff[:n])
 		//log.Printf("bytes read --> %d", n)
 		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
@@ -641,14 +641,25 @@ func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 	c.rh.rm.Unlock()
 
 	c.srv.releaseReqID(respID)
+
+	// Drain the response channel
+	for len(rsp.ch) > 0 {
+		log.Printf("[DEBUG] Draining stale message from response channel: %s", <-rsp.ch)
+	}
+	for len(rsp.err) > 0 {
+		log.Printf("[DEBUG] Draining stale error from response channel: %v", <-rsp.err)
+	}
+
 	close(rsp.ch)
 	close(rsp.err)
+
+	log.Printf("[DEBUG] Cleanup complete for ID: %d", respID)
 
 }
 
 // TODO need to make a cleanup function to defer cleanup of resources and close channels and return hanging ID's
 
-func (c *gbClient) waitForResponse(ctx context.Context, rsp *response, respID byte) ([]byte, error) {
+func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, error) {
 
 	select {
 	case <-ctx.Done():
@@ -669,7 +680,9 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 
 	respID := proto[2]
 
+	//c.mu.Lock()
 	responseChannel := c.addResponseChannel(int(respID))
+	//c.mu.Unlock()
 
 	if sendNow && !flush {
 
@@ -682,7 +695,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// Wait for the response with timeout
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
-		ok, err := c.waitForResponse(ctx, responseChannel, respID)
+		ok, err := c.waitForResponse(ctx, responseChannel)
 		defer c.responseCleanup(responseChannel, respID)
 
 		if err != nil {
@@ -700,7 +713,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// Wait for the response with timeout
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
-		ok, err := c.waitForResponse(ctx, responseChannel, respID)
+		ok, err := c.waitForResponse(ctx, responseChannel)
 		defer c.responseCleanup(responseChannel, respID)
 
 		if err != nil {
@@ -735,6 +748,10 @@ func (c *gbClient) processDeltaHdr(arg []byte) error {
 //===================================================================================
 
 func (c *gbClient) processMessage(message []byte) {
+
+	//log.Printf("[DEBUG] %s Received message: %s", c.srv.ServerName, string(message))
+	//log.Printf("[DEBUG] %s Processing message with ID: %d", c.srv.ServerName, c.ph.id)
+
 	if c.cType == NODE {
 
 		c.dispatchNodeCommands(message)

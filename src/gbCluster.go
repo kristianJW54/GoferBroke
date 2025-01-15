@@ -472,7 +472,7 @@ func (s *GBServer) gossipProcess() {
 		s.gossip.gossMu.Lock()
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
-		if !s.gossip.gossipOK {
+		if !s.gossip.gossipOK && !s.flags.isSet(SHUTTING_DOWN) {
 
 			log.Printf("waiting for node to join...")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
@@ -485,8 +485,7 @@ func (s *GBServer) gossipProcess() {
 
 		}
 
-		if s.serverContext.Err() != nil {
-			log.Printf("%s - STOP!!!!", s.ServerName)
+		if s.flags.isSet(SHUTTING_DOWN) {
 			s.gossip.gossMu.Unlock()
 			return
 		}
@@ -532,11 +531,15 @@ func (s *GBServer) startGossipProcess() bool {
 		select {
 		case <-s.serverContext.Done():
 			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.ServerName)
-			s.endGossip()
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
 			return false
 		case <-ticker.C:
-			if !s.tryStartGossip() {
+
+			if s.flags.isSet(SHUTTING_DOWN) {
+				return false
+			}
+
+			if !s.tryStartGossip() && !s.flags.isSet(SHUTTING_DOWN) {
 				log.Printf("Skipping gossip round because a round is already active")
 				continue
 			}
@@ -605,7 +608,7 @@ func (s *GBServer) selectNodeAndGossip() error {
 		return fmt.Errorf("gossip process stopped not enough nodes to select")
 	}
 
-	gossipingWith := make([]string, ns)
+	//gossipingWith := make([]string, ns)
 
 	// Trying error channel approach here to collect any node specific error during gossip
 
@@ -637,8 +640,8 @@ func (s *GBServer) selectNodeAndGossip() error {
 			//delay := time.Duration(rand.Intn(100)) * time.Millisecond
 			//time.Sleep(delay)
 
-			gossipingWith[i] = node.name
-			log.Printf("gossiping with %v", gossipingWith[i])
+			//gossipingWith[i] = node.name
+			//log.Printf("gossiping with %v", gossipingWith[i])
 
 			s.startGoRoutine(s.ServerName, "gossip-round", func() {
 				defer s.decrementGossip() // Decrement after gossip with the node completes
@@ -697,9 +700,10 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 	//conn.mu.Lock()
 	//conn.qProto(pay1, true)
 	//conn.mu.Unlock()
+	time.Sleep(1 * time.Second)
+	log.Printf("%s resp2: %s %v", s.ServerName, resp, resp)
 
 	//
-	log.Printf("%s resp: %s", s.ServerName, resp)
 
 	return nil
 

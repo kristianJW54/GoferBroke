@@ -108,7 +108,7 @@ func TestGossipSignal(t *testing.T) {
 	//gbs2.incrementNodeConnCount()
 	//time.Sleep(1 * time.Second) // Allow for time for gossip to test
 	//gbs2.incrementNodeConnCount() // Second increment should not signal gossip
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	gbs2.Shutdown()
 	//gbs3.Shutdown()
