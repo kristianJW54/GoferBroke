@@ -321,6 +321,7 @@ func (c *gbClient) processArg(arg []byte) error {
 	}
 
 	c.argBuf = arg
+	//log.Printf("arg == %v", c.argBuf)
 
 	return nil
 }
@@ -415,22 +416,19 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
 	// if we need to defer gossip round or continue
-	key, value, err := c.srv.getFirstGossipingWith()
+
+	delta, err := deSerialiseDigest(message)
 	if err != nil {
-		log.Printf("error getting key/value from server: %v", err)
+		log.Printf("error serialising digest - %v", err)
 	}
 
-	log.Printf("KEY=%s - VALUE=%v", key, value)
+	senderName := delta[0].senderName
+	log.Printf("digest from - %s", senderName)
 
-	//delta, err := deSerialiseDigest(message)
-	//if err != nil {
-	//	log.Printf("error serialising digest - %v", err)
-	//}
-	//
-	//for _, v := range delta {
-	//	log.Printf("digest from - %s", v.senderName)
-	//	log.Printf("%s-%v", v.nodeName, v.maxVersion)
-	//}
+	for _, v := range delta {
+		//log.Printf("digest from - %s", v.senderName)
+		log.Printf("Node-Name=%s-Max-Version=%v", v.nodeName, v.maxVersion)
+	}
 	//time.Sleep(3 * time.Second)
 
 	resp := []byte("OK BOIII +\r\n")

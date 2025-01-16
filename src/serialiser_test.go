@@ -61,7 +61,7 @@ func TestSerialiseDigest(t *testing.T) {
 
 	// Add 5 mock participants to the cluster
 	for i := 1; i <= 5; i++ {
-		participantName := fmt.Sprintf("node%d", i)
+		participantName := fmt.Sprintf("node-test%d", i)
 
 		// Create a participant
 		participant := &Participant{
@@ -101,6 +101,8 @@ func TestSerialiseDigest(t *testing.T) {
 	if err != nil {
 		log.Println("error ", err)
 	}
+
+	log.Printf("serialised digest = %v", cereal)
 
 	digest, err := deSerialiseDigest(cereal)
 

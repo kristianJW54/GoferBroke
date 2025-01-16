@@ -351,6 +351,13 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // Delta Comparisons
 //=======================================================
 
+//=======================================================
+// GOSS_SYN Prep
+//=======================================================
+
+//------------------
+// Generate Digest
+
 // TODO Consider a digest pool to use to ease pressure on the Garbage Collector
 // TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest
 
@@ -358,8 +365,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 func (s *GBServer) generateDigest() ([]byte, error) {
 
 	s.clusterMapLock.RLock()
-	defer s.clusterMapLock.RUnlock()
-
 	// First we need to determine if the Digest fits within MTU
 
 	// Check how many participants first - anymore than 40 will definitely exceed MTU
@@ -367,6 +372,8 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 		return nil, fmt.Errorf("too many participants")
 		// TODO Implement overfill strategy for digest
 	}
+
+	// TODO We need to run max version lazy updates on participants we have selected to be in the digest
 
 	b, err := s.serialiseClusterDigest()
 	if err != nil {
@@ -379,37 +386,30 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 		// TODO Implement overfill strategy for digest
 	}
 
+	s.clusterMapLock.RUnlock()
+
 	// If not, we need to decide if we will stream or do a random subset of participants (increasing propagation time)
 
 	return b, nil
 }
 
-//--------
-//Compare Digest
+//-------------------------
+// Send Digest in GOSS_SYN - Stage 1
 
-//=======================================================
-// Delta Parsing, Handling and Changes
-//=======================================================
-
-//=======================================================
-// Gossip Syn Prep
-//=======================================================
-
-func (s *GBServer) sendDigest(conn *gbClient) (int, error) {
-
-	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
-	defer cancel()
+func (s *GBServer) sendDigest(conn *gbClient) ([]byte, error) {
 
 	// Generate the digest - if it's above MTU we either return a subset OR we move to streaming in which we'll need
 	// Adjust node header
+
+	// Call thread safe s.generateDigest() to return digest in bytes
 	digest, err := s.generateDigest()
 	if err != nil {
-		return 0, fmt.Errorf("sendDigest - generate digest error: %v", err)
+		return nil, fmt.Errorf("sendDigest - generate digest error: %v", err)
 	}
 
 	reqID, err := s.acquireReqID()
 	if err != nil {
-		return 0, fmt.Errorf("sendDigest - acquiring ID error: %v", err)
+		return nil, fmt.Errorf("sendDigest - acquiring ID error: %v", err)
 	}
 
 	header := constructNodeHeader(1, GOSS_SYN, reqID, uint16(len(digest)), NODE_HEADER_SIZE_V1, 0, 0)
@@ -419,18 +419,16 @@ func (s *GBServer) sendDigest(conn *gbClient) (int, error) {
 	}
 	cereal, err := packet.serialize()
 	if err != nil {
-		return 0, fmt.Errorf("sendDigest - serialize error: %v", err)
+		return nil, fmt.Errorf("sendDigest - serialize error: %v", err)
 	}
 
 	// Now we queue with response
-	resp, err := conn.qProtoWithResponse(ctx, cereal, false, true)
+	resp, err := conn.qProtoWithResponse(s.serverContext, cereal, true, true)
 	if err != nil {
-		return 0, fmt.Errorf("sendDigest - qProtoWithResponse error: %v", err)
+		return nil, fmt.Errorf("sendDigest - qProtoWithResponse error: %v", err)
 	}
 
-	log.Printf("response = %s", resp)
-
-	return 1, nil
+	return resp, nil
 
 }
 
@@ -482,6 +480,7 @@ func (s *GBServer) getGossipingWith(node string) (int, error) {
 }
 
 func (s *GBServer) clearGossipingWithMap() {
+	log.Printf("clearing map")
 	s.gossip.gossipingWith.Clear()
 }
 
@@ -583,6 +582,7 @@ func (s *GBServer) startGossipProcess() bool {
 				continue
 			}
 
+			s.clearGossipingWithMap() // Will throw error if start of gossip round or map is empty
 			err := s.StartGossipRound()
 			if err != nil {
 				log.Printf("Error in gossip round: %v", err)
@@ -611,13 +611,6 @@ func (s *GBServer) StartGossipRound() error {
 		return fmt.Errorf("shutting down")
 	}
 	s.serverLock.Unlock()
-
-	//if s.ServerID.uuid == 1 {
-	//	err := s.selectNodeAndGossip()
-	//	if err != nil {
-	//		return err
-	//	}
-	//}
 
 	err := s.selectNodeAndGossip()
 	if err != nil {
@@ -659,7 +652,7 @@ func (s *GBServer) selectNodeAndGossip() error {
 
 		select {
 		case <-s.serverContext.Done():
-			return nil
+			return fmt.Errorf("selectNodeAndGossip stopped due to context cancellation - %v", s.serverContext.Err())
 		default:
 			s.clusterMapLock.RLock()
 			num := rand.Intn(pl) + 1
@@ -692,8 +685,7 @@ func (s *GBServer) selectNodeAndGossip() error {
 			//delay := time.Duration(rand.Intn(100)) * time.Millisecond
 			//time.Sleep(delay)
 
-			//gossipingWith[i] = node.name
-			//log.Printf("gossiping with %v", gossipingWith[i])
+			// Check if need to dial first before gossiping
 
 			s.startGoRoutine(s.ServerName, "gossip-round", func() {
 				defer s.decrementGossip() // Decrement after gossip with the node completes
@@ -729,35 +721,51 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 	// Will be using a state machine approach
 	// - moving through each stage and checking ctx.Err() && other checks before continuing
 
-	testMsg := []byte("Hello there pretend i am a digest message\r\n")
+	var stage int
 
-	id, err := s.acquireReqID()
+	//-------------
+	// GOSS_SYN Stage 1
+
+	stage = 1
+
+	resp, err := s.sendDigest(conn)
 	if err != nil {
-		return err
+		return fmt.Errorf("gossipWithNode failed at Stage %v : %v", stage, err)
 	}
 
-	header := constructNodeHeader(1, GOSS_SYN, id, uint16(len(testMsg)), NODE_HEADER_SIZE_V1, 0, 0)
-
-	packet := &nodePacket{
-		header,
-		testMsg,
-	}
-	pay1, err := packet.serialize()
-	if err != nil {
-		log.Printf("Error serializing packet: %v", err)
+	if s.serverContext.Err() != nil {
+		return fmt.Errorf("gossipWithNode stopping at stage %v context cancelled cannot proceed : %v", stage, s.serverContext.Err())
 	}
 
-	// TODO So the response is the problem right now
+	//testMsg := []byte("Hello there pretend i am a digest message\r\n")
 	//
-	resp, err := conn.qProtoWithResponse(s.serverContext, pay1, true, true)
-	if err != nil {
-		return err
-	}
+	//id, err := s.acquireReqID()
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//header := constructNodeHeader(1, GOSS_SYN, id, uint16(len(testMsg)), NODE_HEADER_SIZE_V1, 0, 0)
+	//
+	//packet := &nodePacket{
+	//	header,
+	//	testMsg,
+	//}
+	//pay1, err := packet.serialize()
+	//if err != nil {
+	//	log.Printf("Error serializing packet: %v", err)
+	//}
+	//
+	//// TODO So the response is the problem right now
+	////
+	//resp, err := conn.qProtoWithResponse(s.serverContext, pay1, true, true)
+	//if err != nil {
+	//	return err
+	//}
 
 	//conn.mu.Lock()
 	//conn.qProto(pay1, true)
 	//conn.mu.Unlock()
-	time.Sleep(1 * time.Second)
+	//time.Sleep(1 * time.Second)
 	log.Printf("%s resp2: %s %v", s.ServerName, resp, resp)
 
 	//
@@ -767,20 +775,3 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 }
 
 // ======================
-func (s *GBServer) getFirstGossipingWith() (any, any, error) {
-	var firstKey, firstValue any
-	found := false
-
-	// Immediately stop after the first key-value pair
-	s.gossip.gossipingWith.Range(func(key, value any) bool {
-		firstKey = key
-		firstValue = value
-		found = true
-		return false // Stop iteration immediately
-	})
-
-	if !found {
-		return nil, nil, fmt.Errorf("map is empty")
-	}
-	return firstKey, firstValue, nil
-}

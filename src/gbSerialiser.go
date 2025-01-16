@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	DIGEST_TYPE = iota
+	DIGEST_TYPE = iota + 1
 	DELTA_TYPE
 )
 
@@ -81,6 +81,8 @@ func cerealPoolPut(b []byte) {
 
 //-------------------
 //Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
+
+// TODO look at whether we can separate sender name out of the array to avoid duplication
 
 type fullDigest struct {
 	senderName string
@@ -423,6 +425,9 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	// Need size of digest - 2 byte uint16
 	// Total metadata for digest byte array = 7
 
+	// Senders Name Length - 2 bytes
+	// Senders Name
+
 	length := 7 + 2 //Including CLRF at the end
 
 	// Include sender's name
@@ -433,7 +438,7 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 
 		length += 1
 		length += len(v.name)
-		length += 8 + 2 // Time unix which is int64 --> 8 Bytes plus 2 for the number of delta key/versions in array
+		length += 8 // Time unix which is int64 --> 8 Bytes
 
 	}
 
@@ -475,6 +480,9 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	return digestBuf, nil
 
 }
+
+//TODO When we deserialise into a tmp struct such as fullDigest - we need to make sure we kill the reference as soon as
+// we are done with it OR find a way to compare against the raw bytes in flight to avoid over allocating memory
 
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command

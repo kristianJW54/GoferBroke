@@ -667,6 +667,7 @@ func (s *GBServer) acquireReqID() (uint8, error) {
 	if id == nil {
 		return 0, fmt.Errorf("no id available")
 	}
+	log.Printf("acquiring id - %v", id)
 	return id.(uint8), nil
 }
 
