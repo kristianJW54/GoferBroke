@@ -362,6 +362,24 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 
 func (c *gbClient) processErrResp(message []byte) {
 
+	c.rh.rm.Lock()
+	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	//log.Printf("response channel == %v", c.rh.resp[int(c.argBuf[2])])
+	c.rh.rm.Unlock()
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
+	if exists {
+
+		// We just send the message and allow the caller to specify what they do with it
+		responseChan.err <- fmt.Errorf("%s", msg)
+
+	} else {
+		log.Printf("no response channel found")
+		// Else handle as normal command
+	}
+
 }
 
 func (c *gbClient) processInfoAll(message []byte) {
@@ -423,7 +441,40 @@ func (c *gbClient) processGossSyn(message []byte) {
 	}
 
 	senderName := delta[0].senderName
-	log.Printf("digest from - %s", senderName)
+
+	// Does the sending node need to defer?
+	// If it does - then we must construct an error response, so it can exit out of it's round
+	deferGossip, err := c.srv.deferGossipRound(senderName)
+	if err != nil {
+		log.Printf("error deferring gossip - %v", err)
+		return
+	}
+
+	if deferGossip {
+
+		log.Printf("%s making %s defer it's gossip", c.srv.ServerName, senderName)
+
+		// TODO Package common error responses into a function (same with ok + responses)
+		errResp := []byte("11 -x- Gossip deferred -x-\r\n")
+
+		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.id, uint16(len(errResp)), NODE_HEADER_SIZE_V1, 0, 0)
+		errPacket := &nodePacket{
+			errHeader,
+			errResp,
+		}
+
+		errPay, err := errPacket.serialize()
+		if err != nil {
+			log.Printf("error serialising packet - %v", err)
+		}
+
+		c.mu.Lock()
+		c.qProto(errPay, true)
+		c.mu.Unlock()
+
+		return
+
+	}
 
 	for _, v := range delta {
 		//log.Printf("digest from - %s", v.senderName)
@@ -447,6 +498,8 @@ func (c *gbClient) processGossSyn(message []byte) {
 	c.mu.Lock()
 	c.qProto(pay, true)
 	c.mu.Unlock()
+
+	return
 
 }
 

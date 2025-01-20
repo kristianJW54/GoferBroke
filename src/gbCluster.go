@@ -462,9 +462,20 @@ func (s *GBServer) checkGossipCondition() {
 //----------------
 //Gossip sync.Map
 
-func (s *GBServer) storeGossipingWith(node string, seniority int) {
-	s.gossip.gossipingWith.Store(node, seniority)
+func (s *GBServer) storeGossipingWith(node string) error {
+
+	timestampStr := node[len(node)-10:]
+
+	// Convert the extracted string to an integer
+	nodeTimestamp, err := strconv.Atoi(timestampStr)
+	if err != nil {
+		return fmt.Errorf("failed to convert timestamp '%s' to int: %v", timestampStr, err)
+	}
+
+	s.gossip.gossipingWith.Store(node, nodeTimestamp)
 	log.Println("storing --> ", node)
+
+	return nil
 }
 
 func (s *GBServer) getGossipingWith(node string) (int, error) {
@@ -482,6 +493,42 @@ func (s *GBServer) getGossipingWith(node string) (int, error) {
 func (s *GBServer) clearGossipingWithMap() {
 	log.Printf("clearing map")
 	s.gossip.gossipingWith.Clear()
+}
+
+func (s *GBServer) deferGossipRound(node string) (bool, error) {
+
+	// Compare both nodes ID and timestamp data to determine what node has seniority in the gossip exchange and what
+	// node needs to defer
+
+	nodeTime, exists := s.gossip.gossipingWith.Load(node)
+	log.Printf("IT EXISTS - DEFER TIME BABY =============================")
+	if !exists {
+		return false, nil // Don't need the error to be returned here as we will be continuing with gossip
+	}
+
+	nt, ok := nodeTime.(int)
+	if !ok {
+		return false, fmt.Errorf("node value type error - expected int, got %T", nodeTime)
+	}
+
+	s.serverLock.RLock()
+
+	serverTime := int(s.timeUnix)
+
+	s.serverLock.RUnlock()
+
+	if serverTime == nt {
+		log.Printf("timestamps are the same - skipping round")
+		return true, nil
+	}
+
+	if serverTime > nt {
+		log.Printf("%s time tester = %v-%v", s.ServerName, serverTime, nt)
+		return true, nil
+	} else {
+		return false, nil
+	}
+
 }
 
 //----------------
@@ -672,14 +719,10 @@ func (s *GBServer) selectNodeAndGossip() error {
 			// Increment the wait group for this gossip operation
 			s.gossip.gossWg.Add(1)
 
-			timestampStr := node.name[len(node.name)-8:]
-
-			// Convert the extracted string to an integer
-			timestamp, err := strconv.Atoi(timestampStr)
+			err := s.storeGossipingWith(node.name)
 			if err != nil {
-				return fmt.Errorf("failed to convert timestamp '%s' to int: %v", timestampStr, err)
+				return err
 			}
-			s.storeGossipingWith(node.name, timestamp)
 
 			// Random delay to break symmetry
 			//delay := time.Duration(rand.Intn(100)) * time.Millisecond

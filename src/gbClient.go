@@ -669,7 +669,7 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, 
 		//log.Printf("%s got response ----> %s", c.srv.ServerName, msg)
 		return msg, nil
 	case err := <-rsp.err:
-		return nil, err
+		return []byte(err.Error()), nil
 	}
 
 }

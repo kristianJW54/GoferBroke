@@ -124,6 +124,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.state = INFO_ALL
 			case GOSS_SYN:
 				c.state = GOSS_SYN
+			case ERR_RESP:
+				c.state = ERR_RESP
 			}
 
 		case INFO:
@@ -155,6 +157,34 @@ func (c *gbClient) parsePacket(packet []byte) {
 			}
 
 		case OK:
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				var arg []byte
+				if c.argBuf != nil {
+					arg = c.argBuf
+					c.argBuf = nil
+				} else {
+					arg = packet[c.position : i-c.drop]
+				}
+				c.processArg(arg)
+
+				c.drop = 0
+				c.position = i + 1
+				c.state = MSG_PAYLOAD
+
+				if c.msgBuf == nil {
+					i = c.position + c.ph.msgLength - 2
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case ERR_RESP:
 			switch b {
 			case '\r':
 				c.drop = 1
