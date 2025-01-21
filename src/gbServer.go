@@ -415,6 +415,7 @@ func (s *GBServer) seedCheck() int {
 //=======================================================
 
 // TODO This needs to be a carefully considered initialisation which takes into account the server configurations
+
 // And environment + users use case
 func initSelfParticipant(name, addr string) *Participant {
 

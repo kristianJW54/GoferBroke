@@ -254,6 +254,7 @@ func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 // Cluster Map Handling
 //=======================================================
 
+// TODO We need to return error for this and handle them accordingly
 func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
 
 	cm := &ClusterMap{
@@ -265,15 +266,19 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
+	cm.participants[name] = participant
+	mv, err := participant.getMaxVersion()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Create a participantQueue entry and push it to the heap
 	pq := &participantQueue{
 		name:            name,
-		availableDeltas: 0, // Initialize to 0
-		maxVersion:      0, // Initialize to 0
+		availableDeltas: 0,  // Initialize to 0
+		maxVersion:      mv, // Initialize to 0
 	}
 	heap.Push(&cm.participantQ, pq)
-
-	cm.participants[name] = participant
 
 	return cm
 
@@ -295,8 +300,16 @@ func (p *Participant) getMaxVersion() (int64, error) {
 		return 0, nil
 	}
 
+	log.Printf("%s - max version =================== %v", p.name, maxVersion.version)
+
 	return maxVersion.version, nil
 
+}
+
+func (p *Participant) updateMaxVersion() error {
+
+	// TODO we need to update the participant heap
+	return nil
 }
 
 //Add/Remove Participant
@@ -337,6 +350,8 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		availableDeltas: 0,
 		maxVersion:      mv,
 	})
+
+	log.Printf("%s - max version in addTmp ========================== %v", s.ServerName, mv)
 
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
@@ -647,7 +662,6 @@ func (s *GBServer) startGossipProcess() bool {
 
 //--------------------
 // Gossip Round
-// TODO Need to look at gossip level context + gossip round context
 
 func (s *GBServer) StartGossipRound() error {
 
@@ -779,35 +793,6 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) error {
 		return fmt.Errorf("gossipWithNode stopping at stage %v context cancelled cannot proceed : %v", stage, s.serverContext.Err())
 	}
 
-	//testMsg := []byte("Hello there pretend i am a digest message\r\n")
-	//
-	//id, err := s.acquireReqID()
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//header := constructNodeHeader(1, GOSS_SYN, id, uint16(len(testMsg)), NODE_HEADER_SIZE_V1, 0, 0)
-	//
-	//packet := &nodePacket{
-	//	header,
-	//	testMsg,
-	//}
-	//pay1, err := packet.serialize()
-	//if err != nil {
-	//	log.Printf("Error serializing packet: %v", err)
-	//}
-	//
-	//// TODO So the response is the problem right now
-	////
-	//resp, err := conn.qProtoWithResponse(s.serverContext, pay1, true, true)
-	//if err != nil {
-	//	return err
-	//}
-
-	//conn.mu.Lock()
-	//conn.qProto(pay1, true)
-	//conn.mu.Unlock()
-	//time.Sleep(1 * time.Second)
 	log.Printf("%s resp2: %s %v", s.ServerName, resp, resp)
 
 	//

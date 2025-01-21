@@ -3,6 +3,7 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -435,6 +436,8 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	length += len(s.ServerName)
 
 	for _, v := range s.clusterMap.participantQ {
+
+		log.Printf("%s - name %s -- version from cereal ====== %v", s.ServerName, v.name, v.maxVersion)
 
 		length += 1
 		length += len(v.name)
