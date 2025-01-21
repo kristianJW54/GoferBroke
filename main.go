@@ -10,10 +10,9 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 )
 
-func run(ctx context.Context, w io.Writer, name string, uuid int, clusterAddr string, nodeIp, nodePort string) error {
+func run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clusterPort, nodeIp, nodePort string) error {
 	// Create a new context that listens for interrupt signals
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
@@ -22,7 +21,7 @@ func run(ctx context.Context, w io.Writer, name string, uuid int, clusterAddr st
 
 	var config *src.GbConfig
 
-	if clusterAddr == "" {
+	if clusterIP == "" && clusterPort == "" {
 		ip := "localhost" // Use the localhost for now - will change when actually config is implemented
 		port := "8081"
 
@@ -38,16 +37,13 @@ func run(ctx context.Context, w io.Writer, name string, uuid int, clusterAddr st
 		log.Println("Config initialized:", config)
 	} else {
 
-		parts := strings.Split(clusterAddr, ":")
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid cluster address format, expected IP:PORT")
-		}
+		log.Printf("cluster ip == %s", clusterIP)
 
 		config = &src.GbConfig{
 			SeedServers: []src.Seeds{
 				{
-					SeedIP:   parts[0],
-					SeedPort: parts[1],
+					SeedIP:   clusterIP,
+					SeedPort: clusterPort,
 				},
 			},
 		}
@@ -81,18 +77,24 @@ func main() {
 
 	nameFlag := flag.String("name", "", "name to use")
 	idFlag := flag.Int("ID", 1, "uuid for server")
-	clusterAddr := flag.String("cluster", "", "address of the cluster seed")
+	clusterIP := flag.String("clusterIP", "", "ip of the cluster seed")
+	clusterPort := flag.String("clusterPort", "", "port of the cluster seed")
 	ipFlag := flag.String("nodeIP", "", "ip address for node")
 	portFlag := flag.String("nodePort", "", "port number for node")
 
 	flag.Parse()
 
+	fmt.Printf("Arguments: %v\n", os.Args)
+
 	ctx := context.Background()
 
 	// Call run and check for any errors
-	if err := run(ctx, os.Stdout, *nameFlag, *idFlag, *clusterAddr, *ipFlag, *portFlag); err != nil {
+	if err := run(ctx, os.Stdout, *nameFlag, *idFlag, *clusterIP, *clusterPort, *ipFlag, *portFlag); err != nil {
 		log.Fatalf("Error running server: %v\n", err)
 	}
+
+	log.Printf("Name: %s, ID: %d, ClusterIP: %s, ClusterPort: %s, NodeIP: %s, NodePort: %s\n",
+		*nameFlag, *idFlag, *clusterIP, *clusterPort, *ipFlag, *portFlag)
 
 	log.Println("Server exited.")
 
