@@ -501,7 +501,6 @@ func (s *GBServer) deferGossipRound(node string) (bool, error) {
 	// node needs to defer
 
 	nodeTime, exists := s.gossip.gossipingWith.Load(node)
-	log.Printf("IT EXISTS - DEFER TIME BABY =============================")
 	if !exists {
 		return false, nil // Don't need the error to be returned here as we will be continuing with gossip
 	}
