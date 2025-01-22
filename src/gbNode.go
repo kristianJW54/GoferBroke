@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -139,7 +140,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // will return that error and trigger logic to either retry or exit the process
 func (s *GBServer) connectToSeed() error {
 
-	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+	ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second)
 	defer cancel()
 
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
@@ -149,7 +150,7 @@ func (s *GBServer) connectToSeed() error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	pay1, err := s.prepareSelfInfoSend()
+	pay1, err := s.prepareSelfInfoSend(INFO)
 	if err != nil {
 		return err
 	}
@@ -158,7 +159,7 @@ func (s *GBServer) connectToSeed() error {
 
 	rsp, err := client.qProtoWithResponse(ctx, pay1, false, true)
 	if err != nil {
-		return err
+		return fmt.Errorf("response error in connect to seed: %s", err)
 	}
 	// If we receive no error we can assume the response was received and continue
 
@@ -203,11 +204,86 @@ func (s *GBServer) connectToSeed() error {
 
 }
 
+// Lock held on entry
+func (s *GBServer) connectToNodeInMap(node string) error {
+
+	ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second)
+	defer cancel()
+
+	// Need to get the info from cluster map using node name as key
+	participant := s.clusterMap.participants[node]
+	// We only need the address so extract that using the key
+	addr := participant.keyValues[_ADDRESS_]
+	log.Printf("addr = %s\n", addr.value)
+
+	parts := strings.Split(string(addr.value), ":")
+
+	ip, err := net.ResolveIPAddr("ip", parts[0])
+	if err != nil {
+		return fmt.Errorf("error resolving ip address: %s", err)
+	}
+
+	nodeIP := ip.String()
+	nodePort := parts[1]
+
+	nodeAddr := net.JoinHostPort(nodeIP, nodePort)
+
+	conn, err := net.Dial("tcp", nodeAddr)
+	if err != nil {
+		return fmt.Errorf("error connecting to server: %s", err)
+	}
+
+	pay1, err := s.prepareSelfInfoSend(HANDSHAKE)
+	if err != nil {
+		return err
+	}
+
+	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
+
+	rsp, err := client.qProtoWithResponse(ctx, pay1, false, true)
+	if err != nil {
+		return fmt.Errorf("response error in connect to seed: %s", err)
+	}
+
+	delta, err := deserialiseDelta(rsp)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range delta.delta {
+		log.Printf("%s -- %+v", k, v.keyValues)
+	}
+
+	if participant.name == delta.sender {
+		log.Printf("node is already in map")
+	} else {
+		log.Printf("need to add to cluster map")
+	}
+
+	// Now we can remove from tmp map and add to client store including connected flag
+	s.serverLock.Lock()
+	err = s.moveToConnected(client.cid, delta.sender)
+	if err != nil {
+		return err
+	}
+
+	client.mu.Lock()
+	client.name = delta.sender
+	client.mu.Unlock()
+
+	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
+	s.incrementNodeConnCount()
+
+	s.serverLock.Unlock()
+
+	return nil
+}
+
 // Thread safe
 // prepareSelfInfoSend gathers the servers deltas into a participant to send over the network. We only send our self info under the assumption that we are a new node
 // and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the receiving node will detect this by
 // running a check on our ServerID + address
-func (s *GBServer) prepareSelfInfoSend() ([]byte, error) {
+func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 
 	s.clusterMapLock.Lock()
 	defer s.clusterMapLock.Unlock()
@@ -225,7 +301,7 @@ func (s *GBServer) prepareSelfInfoSend() ([]byte, error) {
 	}
 
 	// Construct header
-	header := constructNodeHeader(1, INFO, seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, uint8(command), seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
 	// Create packet
 	packet := &nodePacket{
 		header,
@@ -255,6 +331,9 @@ func (s *GBServer) prepareSelfInfoSend() ([]byte, error) {
 func (c *gbClient) onboardNewJoiner() error {
 
 	s := c.srv
+
+	//TODO we will use a hybrid bootstrap approach by selecting a random number of participants to download to the new joining node
+	// This will be based on how many nodes are in the map
 
 	if len(s.clusterMap.participantQ) > 100 {
 		log.Printf("lots of participants - may need more efficient snapshot transfer")
@@ -344,6 +423,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processInfoMessage(message)
 	case INFO_ALL:
 		c.processInfoAll(message)
+	case HANDSHAKE:
+		c.processHandShake(message)
 	case GOSS_SYN:
 		c.processGossSyn(message)
 	case GOSS_SYN_ACK:
@@ -397,6 +478,45 @@ func (c *gbClient) processInfoAll(message []byte) {
 		log.Printf("no response channel found")
 		// Else handle as normal command
 	}
+
+}
+
+func (c *gbClient) processHandShake(message []byte) {
+
+	tmpC, err := deserialiseDelta(message)
+	if err != nil {
+		log.Printf("deserialise Delta failed: %v", err)
+		// Send err response
+	}
+
+	// TODO Finish this
+	// Send HandShake Response here
+	// --
+
+	log.Printf("handshake message ===== %s", message)
+
+	for key, value := range tmpC.delta {
+
+		err := c.srv.addParticipantFromTmp(key, value)
+		if err != nil {
+			log.Printf("AddParticipantFromTmp failed: %v", err)
+			//send err response
+		}
+
+	}
+
+	// Move the tmpClient to connected as it has provided its info which we have now stored
+	err = c.srv.moveToConnected(c.cid, tmpC.sender)
+	if err != nil {
+		log.Printf("MoveToConnected failed in process info message: %v", err)
+	}
+
+	// TODO Monitor the server lock here and be mindful
+	c.srv.serverLock.Lock()
+	c.srv.incrementNodeConnCount()
+	c.srv.serverLock.Unlock()
+
+	return
 
 }
 

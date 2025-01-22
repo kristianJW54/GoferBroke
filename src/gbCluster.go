@@ -304,12 +304,6 @@ func (p *Participant) getMaxVersion() (int64, error) {
 
 }
 
-func (p *Participant) updateMaxVersion() error {
-
-	// TODO we need to update the participant heap
-	return nil
-}
-
 //Add/Remove Participant
 
 // -- TODO do we need to think about comparisons here?
@@ -432,6 +426,8 @@ func (s *GBServer) sendDigest(conn *gbClient) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sendDigest - serialize error: %v", err)
 	}
+
+	// We may not have a connection to the client - so we must dial first and then perform gossip round
 
 	// Now we queue with response
 	resp, err := conn.qProtoWithResponse(s.serverContext, cereal, true, true)
@@ -559,7 +555,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		s.gossip.gossMu.Lock()
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
-		if !s.gossip.gossipOK {
+		if !s.gossip.gossipOK && !s.flags.isSet(SHUTTING_DOWN) {
 
 			log.Printf("waiting for node to join...")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
@@ -573,7 +569,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		}
 
 		if s.flags.isSet(SHUTTING_DOWN) {
-			log.Printf("WE ARE SHUTTING DOWN ======================")
+			log.Printf("WE ARE SHUTTING DOWN")
 			s.gossip.gossMu.Unlock()
 			return
 		}
@@ -707,24 +703,15 @@ func (s *GBServer) selectNodeAndGossip() error {
 		return fmt.Errorf("gossip process stopped not enough nodes to select")
 	}
 
-	//gossipingWith := make([]string, ns)
-
-	// Trying error channel approach here to collect any node specific error during gossip
-
 	for i := 0; i < int(ns); i++ {
 
 		s.clusterMapLock.RLock()
 		num := rand.Intn(pl) + 1
 		node := s.clusterMap.participantQ[num]
 
-		// TODO Check exist and through error if not
-		conn, exists := s.nodeStore[node.name]
-		s.clusterMapLock.RUnlock()
+		// TODO Check exist and dial if not --> then throw error if neither work
 
-		// Need to check if we have dialed the connection
-		if !exists {
-			log.Printf("no connection - skipping")
-		}
+		s.clusterMapLock.RUnlock()
 
 		// Increment before starting a new gossip operation
 		s.incrementGossip()
@@ -740,14 +727,12 @@ func (s *GBServer) selectNodeAndGossip() error {
 		//delay := time.Duration(rand.Intn(100)) * time.Millisecond
 		//time.Sleep(delay)
 
-		// Check if need to dial first before gossiping
-
 		s.startGoRoutine(s.ServerName, "gossip-round", func() {
 			defer s.decrementGossip() // Decrement after gossip with the node completes
 			defer s.gossip.gossWg.Done()
 
 			// Gossip with the node and collect any errors
-			s.gossipWithNode(node.name, conn)
+			s.gossipWithNode(node.name)
 		})
 
 	}
@@ -760,11 +745,20 @@ func (s *GBServer) selectNodeAndGossip() error {
 //TODO When a new node joins - it is given info by the seed - so when choosing to gossip - for some it will need to dial
 // the nodes using the addr in the clusterMap
 
-func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
+func (s *GBServer) gossipWithNode(node string) {
 
 	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
 		log.Printf("shutting down - returning from gossip early - %v", s.serverContext.Err())
 		return
+	}
+
+	conn, err := s.checkNodeStore(node)
+	if err != nil {
+		log.Printf("Error in gossip round: %v", err)
+		err = s.connectToNodeInMap(node)
+		if err != nil {
+			return
+		}
 	}
 
 	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, node, conn.gbc.RemoteAddr())
@@ -782,8 +776,15 @@ func (s *GBServer) gossipWithNode(node string, conn *gbClient) {
 	resp, err := s.sendDigest(conn)
 	if err != nil {
 		log.Printf("gossipWithNode failed at Stage %v : %v", stage, err)
+
+		// TODO Will need to handle error based on type for phi-accrual
+
 		return
 	}
+
+	// We have received the digest and must recognise if we have any new nodes that we haven't seen
+	// This will be a priority to request
+	// If not then the node and delta selection will defer back to flow control and MTU
 
 	if s.serverContext.Err() != nil {
 		return

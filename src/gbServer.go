@@ -704,3 +704,17 @@ func (s *GBServer) decrementNodeConnCount() {
 	// Check and update gossip condition
 	s.checkGossipCondition()
 }
+
+//----------------
+// Node Store
+
+func (s *GBServer) checkNodeStore(node string) (*gbClient, error) {
+
+	conn, exists := s.nodeStore[node]
+	if !exists {
+		return nil, fmt.Errorf("node %s not in store -- proceeding to dial", node)
+	}
+
+	return conn, nil
+
+}

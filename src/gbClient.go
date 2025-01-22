@@ -737,7 +737,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 	responseChannel := c.addResponseChannel(int(respID))
 	//c.mu.Unlock()
 
-	respCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	respCtx, cancel := context.WithTimeout(ctx, 1*time.Second) // Can't be less than the gossip interval tick ?
 	defer cancel()
 
 	if sendNow && !flush {
