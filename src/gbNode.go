@@ -476,10 +476,10 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	}
 
-	for _, v := range delta {
-		log.Printf("digest from - %s", v.senderName)
-		log.Printf("Node-Name=%s-Max-Version=%v", v.nodeName, v.maxVersion)
-	}
+	//for _, v := range delta {
+	//	log.Printf("digest from - %s", v.senderName)
+	//	log.Printf("Node-Name=%s-Max-Version=%v", v.nodeName, v.maxVersion)
+	//}
 	//time.Sleep(3 * time.Second)
 
 	resp := []byte("OK BOIII +\r\n")

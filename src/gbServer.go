@@ -226,7 +226,10 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 func (s *GBServer) StartServer() {
 
 	// Reset the context to handle reconnect scenarios
+	s.serverLock.Lock()
 	s.resetContext()
+	s.flags.clear(SHUTTING_DOWN)
+	s.serverLock.Unlock()
 
 	s.updateTime()
 	srvName := s.String()
@@ -288,7 +291,9 @@ func (s *GBServer) StartServer() {
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	s.startGoRoutine(s.ServerName, "gossip-process",
 		func() {
-			s.gossipProcess()
+			ctx, cancel := context.WithCancel(s.serverContext)
+			defer cancel()
+			s.gossipProcess(ctx)
 		})
 
 }
@@ -668,12 +673,12 @@ func (s *GBServer) acquireReqID() (uint8, error) {
 	if id == nil {
 		return 0, fmt.Errorf("no id available")
 	}
-	log.Printf("acquiring id - %v", id)
+	//log.Printf("acquiring id - %v", id)
 	return id.(uint8), nil
 }
 
 func (s *GBServer) releaseReqID(id uint8) {
-	log.Printf("Releasing sequence ID %d back to the pool", id)
+	//log.Printf("Releasing sequence ID %d back to the pool", id)
 	s.nodeReqPool.reqPool.Put(id)
 }
 
@@ -686,13 +691,14 @@ func (s *GBServer) releaseReqID(id uint8) {
 func (s *GBServer) incrementNodeConnCount() {
 	// Atomically increment node connections
 	atomic.AddInt64(&s.numNodeConnections, 1)
+	//log.Printf("incrementing node conn count")
 	// Check and update gossip condition
 	s.checkGossipCondition()
 }
 
 // decrementNodeCount works the same as incrementNodeCount but by decrementing the node count and calling a check.
 func (s *GBServer) decrementNodeConnCount() {
-	log.Printf("removing conn count by 1")
+	//log.Printf("removing conn count by 1")
 	// Atomically decrement node connections
 	atomic.AddInt64(&s.numNodeConnections, -1)
 	// Check and update gossip condition

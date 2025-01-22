@@ -102,9 +102,59 @@ type gbClient struct {
 	//Responses
 	rh *responseHandler
 
+	//Errors
+	errChan chan error
+
 	//Syncing
 	mu       sync.Mutex
 	refCount byte //Uint8
+}
+
+//===================================================================================
+// Client Errors
+//===================================================================================
+
+type NodeReadError struct {
+	err string
+}
+
+type NodeWriteError struct {
+	err string
+}
+
+func (e *NodeReadError) Error() string {
+	return fmt.Sprintf("read error: %s", e.err)
+}
+
+func (e *NodeWriteError) Error() string {
+	return fmt.Sprintf("write error: %s", e.err)
+}
+
+// TODO separate the channels to avoid contention
+func (c *gbClient) handleReadError(err error) {
+
+	switch c.cType {
+	case NODE:
+		readErr := &NodeReadError{err: err.Error()}
+		c.errChan <- readErr
+		return
+	case CLIENT:
+		return
+	}
+
+}
+
+func (c *gbClient) handleWriteError(err error) {
+
+	switch c.cType {
+	case NODE:
+		writeErr := &NodeWriteError{err: err.Error()}
+		c.errChan <- writeErr
+		return
+	case CLIENT:
+		return
+	}
+
 }
 
 //===================================================================================
@@ -211,13 +261,7 @@ func (c *gbClient) initClient() {
 
 	c.rh = respHanlder // Need to align with SeqID pool-size
 
-	//for i := 0; i < 10; i++ {
-	//	c.responseHandler.resp[i] = &response{
-	//		ch:      make(chan []byte, 1),
-	//		timeout: 2 * time.Second, // Default timeout; can be overridden
-	//		err:     make(chan error, 1),
-	//	}
-	//}
+	c.errChan = make(chan error, 1)
 
 	return
 
@@ -260,7 +304,7 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
 	// Track the goroutine for the read loop using startGoRoutine
 	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
-		defer conn.Close() // Should this be here if closure is managed elsewhere?
+		defer conn.Close() // TODO Should this be here if closure is managed elsewhere?
 		client.readLoop()
 	})
 
@@ -294,6 +338,7 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 	//TODO --> use server ID without timestamp to detect whether a node as restarted if so, check addr to verify and then
 	// gossip digest to bring up to date, allow background node deleter to remove previous store when dead
+	// - ! Need to remove old version of two of the same node !
 
 	// If client not found we must check our cluster map for both server ID + Addr
 	// If it's in there then we must decide on what to do - gossip and update - remove old entry
@@ -530,6 +575,12 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 	c.outbound.copyWriteBuffer = append(start[:0], c.outbound.copyWriteBuffer...)
 
+	// Write errors
+	if err != nil {
+		c.handleWriteError(err)
+		return true
+	}
+
 	c.outbound.bytesInQ -= n
 
 	if c.outbound.bytesInQ > 0 {
@@ -644,16 +695,16 @@ func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
 	// Drain the response channel
 	for len(rsp.ch) > 0 {
-		log.Printf("[DEBUG] Draining stale message from response channel: %s", <-rsp.ch)
+		//log.Printf("[DEBUG] Draining stale message from response channel: %s", <-rsp.ch)
 	}
 	for len(rsp.err) > 0 {
-		log.Printf("[DEBUG] Draining stale error from response channel: %v", <-rsp.err)
+		//log.Printf("[DEBUG] Draining stale error from response channel: %v", <-rsp.err)
 	}
 
 	close(rsp.ch)
 	close(rsp.err)
 
-	log.Printf("[DEBUG] Cleanup complete for ID: %d", respID)
+	//log.Printf("[DEBUG] Cleanup complete for ID: %d", respID)
 
 }
 
@@ -665,6 +716,8 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, 
 	case <-ctx.Done():
 		//log.Println("context has been CALLED on RESPONSE")
 		return nil, ctx.Err()
+	case writeErr := <-c.errChan:
+		return nil, writeErr
 	case msg := <-rsp.ch:
 		//log.Printf("%s got response ----> %s", c.srv.ServerName, msg)
 		return msg, nil
@@ -683,6 +736,9 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 	//c.mu.Lock()
 	responseChannel := c.addResponseChannel(int(respID))
 	//c.mu.Unlock()
+
+	respCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 
 	if sendNow && !flush {
 
@@ -713,7 +769,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// Wait for the response with timeout
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
-		ok, err := c.waitForResponse(ctx, responseChannel)
+		ok, err := c.waitForResponse(respCtx, responseChannel)
 		defer c.responseCleanup(responseChannel, respID)
 
 		if err != nil {
