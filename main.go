@@ -13,6 +13,9 @@ import (
 )
 
 func run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clusterPort, nodeIp, nodePort string) error {
+
+	log.SetOutput(w)
+
 	// Create a new context that listens for interrupt signals
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
