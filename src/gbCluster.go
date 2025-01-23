@@ -658,6 +658,8 @@ func (s *GBServer) startGossipProcess() bool {
 			//}
 			s.gossip.gossWg.Add(1)
 
+			// TODO Refactor back into modular gossip process
+
 			go func() {
 				log.Printf("gossiping")
 				defer s.decrementGossip()
@@ -665,10 +667,14 @@ func (s *GBServer) startGossipProcess() bool {
 
 				// Channel to signal when individual gossip tasks complete
 				done := make(chan struct{}, 4)
-				defer close(done)
+				// Channels aren't like files; you don't usually need to close them.
+				// Closing is only necessary when the receiver must be told there are no more values coming, such as to terminate a range loop.
+				// https://go.dev/tour/concurrency/4#:~:text=Note%3A%20Only%20the%20sender%20should,to%20terminate%20a%20range%20loop.
+
+				//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
 				// Context for cancellation or timeout
-				ctx, cancel := context.WithTimeout(s.serverContext, 10*time.Second)
+				ctx, cancel := context.WithTimeout(s.serverContext, 4*time.Second)
 				defer cancel()
 
 				for i := 0; i < 4; i++ {
@@ -677,16 +683,18 @@ func (s *GBServer) startGossipProcess() bool {
 
 						select {
 						case <-ctx.Done():
+							// Exit early if the context is canceled
 							log.Printf("%s gossiping with node %d canceled: %v", s.ServerName, nodeIndex, ctx.Err())
 							return
 						default:
 							// Simulate gossip work
-							log.Printf("%s gossiping with node %d", s.ServerName, i)
-							time.Sleep(3 * time.Second)
+							log.Printf("%s gossiping with node %d", s.ServerName, nodeIndex)
+							time.Sleep(3 * time.Second) // Simulated work
 							log.Printf("%s done with node %d", s.ServerName, nodeIndex)
 
+							// Signal completion
 							select {
-							case done <- struct{}{}: // Signal completion
+							case done <- struct{}{}:
 							default:
 								log.Printf("%s done channel full; skipping signal for node %d", s.ServerName, nodeIndex)
 							}
