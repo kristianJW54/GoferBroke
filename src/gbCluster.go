@@ -401,7 +401,7 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 //-------------------------
 // Send Digest in GOSS_SYN - Stage 1
 
-func (s *GBServer) sendDigest(conn *gbClient) ([]byte, error) {
+func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, error) {
 
 	// Generate the digest - if it's above MTU we either return a subset OR we move to streaming in which we'll need
 	// Adjust node header
@@ -430,7 +430,7 @@ func (s *GBServer) sendDigest(conn *gbClient) ([]byte, error) {
 	// We may not have a connection to the client - so we must dial first and then perform gossip round
 
 	// Now we queue with response
-	resp, err := conn.qProtoWithResponse(s.serverContext, cereal, true, true)
+	resp, err := conn.qProtoWithResponse(ctx, cereal, true, true)
 	if err != nil {
 		return nil, fmt.Errorf("sendDigest - qProtoWithResponse error: %v", err)
 	}
@@ -568,9 +568,10 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 
 		}
 
-		if s.flags.isSet(SHUTTING_DOWN) {
+		if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
 			log.Printf("WE ARE SHUTTING DOWN")
 			s.gossip.gossMu.Unlock()
+			s.endGossip()
 			return
 		}
 
@@ -585,24 +586,24 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 //Gossip Count
 
 func (s *GBServer) tryStartGossip() bool {
-
-	if atomic.LoadInt64(&s.gossip.isGossiping) == 1 {
-		return false
-	} else {
-		return true
-	}
+	// Use atomic compare-and-swap to ensure atomicity
+	return atomic.CompareAndSwapInt64(&s.gossip.isGossiping, 0, 1)
 }
 
 func (s *GBServer) incrementGossip() {
-	atomic.AddInt64(&s.gossip.isGossiping, 1)
+	if s.tryStartGossip() {
+		atomic.AddInt64(&s.gossip.isGossiping, 1)
+	} else {
+		return
+	}
 }
 
 func (s *GBServer) decrementGossip() {
+	if s.gossip.isGossiping > 1 || s.gossip.isGossiping < 0 {
+		atomic.AddInt64(&s.gossip.isGossiping, 1)
+	}
 	atomic.AddInt64(&s.gossip.isGossiping, -1)
-	//log.Printf("decrementing ...")
-	//if newValue == 0 {
-	//	log.Printf("Gossiping completed: All rounds finished")
-	//}
+	log.Printf("decrementing - %v", s.gossip.isGossiping)
 }
 
 func (s *GBServer) endGossip() {
@@ -623,36 +624,97 @@ func (s *GBServer) startGossipProcess() bool {
 		select {
 		case <-s.serverContext.Done():
 			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.ServerName)
+			s.endGossip()
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
+			ticker.Stop()
 			return false
 		case <-ticker.C:
-
-			if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
-				return false
-			}
 
 			// TODO - fix bug where we sometimes get stuck here - should try to log gossipCount
 			// TODO - might be because -- gossipWithNode failed at Stage 1 : sendDigest - qProtoWithResponse error: context canceled sometimes comes before this is called
 
-			if !s.tryStartGossip() && !s.flags.isSet(SHUTTING_DOWN) && s.serverContext.Err() == nil {
+			if !s.tryStartGossip() {
 
+				if s.flags.isSet(SHUTTING_DOWN) && s.serverContext.Err() != nil {
+					log.Printf("ending gossip boiii")
+					s.endGossip()
+					return false
+				}
 				// TODO we need to kick out of the skipping message somehow if we get a node error
 
-				log.Printf("Skipping gossip round because a round is already active")
+				log.Printf("Skipping gossip round because a round is already active %v", s.gossip.isGossiping)
 				continue
 			}
 
 			s.clearGossipingWithMap() // Will throw error if start of gossip round or map is empty
-			err := s.StartGossipRound()
-			if err != nil {
-				log.Printf("Error in gossip round: %v", err)
-			}
+
+			// TODO Maybe this needs to be go-routine??
+
+			// Start the gossip round in a separate goroutine
+			//err := s.StartGossipRound()
+			//if err != nil {
+			//	log.Printf("Error in gossip round: %v", err)
+			//	return false
+			//}
+			s.gossip.gossWg.Add(1)
+
+			go func() {
+				log.Printf("gossiping")
+				defer s.decrementGossip()
+				defer s.gossip.gossWg.Done()
+
+				// Channel to signal when individual gossip tasks complete
+				done := make(chan struct{}, 4)
+				defer close(done)
+
+				// Context for cancellation or timeout
+				ctx, cancel := context.WithTimeout(s.serverContext, 10*time.Second)
+				defer cancel()
+
+				for i := 0; i < 4; i++ {
+
+					go func(nodeIndex int) {
+
+						select {
+						case <-ctx.Done():
+							log.Printf("%s gossiping with node %d canceled: %v", s.ServerName, nodeIndex, ctx.Err())
+							return
+						default:
+							// Simulate gossip work
+							log.Printf("%s gossiping with node %d", s.ServerName, i)
+							time.Sleep(3 * time.Second)
+							log.Printf("%s done with node %d", s.ServerName, nodeIndex)
+
+							select {
+							case done <- struct{}{}: // Signal completion
+							default:
+								log.Printf("%s done channel full; skipping signal for node %d", s.ServerName, nodeIndex)
+							}
+						}
+					}(i)
+				}
+
+				// Wait for all gossip tasks to complete or for context cancellation
+				completedTasks := 0
+				for completedTasks < 4 {
+					select {
+					case <-ctx.Done():
+						log.Printf("%s gossip round canceled: %v", s.ServerName, ctx.Err())
+						return
+					case <-done:
+						completedTasks++
+					}
+				}
+
+				log.Printf("%s gossip round complete", s.ServerName)
+			}()
 
 		case gossipState := <-s.gossip.gossipControlChannel:
 			if !gossipState {
 				// If gossipControlChannel sends 'false', stop the gossiping process
 				log.Printf("Gossip control received false, stopping gossip process")
 				s.gossip.gossWg.Wait() // Wait for the rounds to finish
+				s.endGossip()
 				return false
 			}
 		}
@@ -664,12 +726,10 @@ func (s *GBServer) startGossipProcess() bool {
 
 func (s *GBServer) StartGossipRound() error {
 
-	s.serverLock.Lock()
 	if s.flags.isSet(SHUTTING_DOWN) {
 		s.serverLock.Unlock()
 		return fmt.Errorf("shutting down")
 	}
-	s.serverLock.Unlock()
 
 	err := s.selectNodeAndGossip()
 	if err != nil {
@@ -705,6 +765,14 @@ func (s *GBServer) selectNodeAndGossip() error {
 
 	for i := 0; i < int(ns); i++ {
 
+		select {
+		case <-s.serverContext.Done():
+			log.Printf("%s -- context canceled, stopping gossip selection", s.ServerName)
+			return s.serverContext.Err() // Gracefully exit if context is canceled
+		default:
+			// Proceed with gossip selection
+		}
+
 		s.clusterMapLock.RLock()
 		num := rand.Intn(pl) + 1
 		node := s.clusterMap.participantQ[num]
@@ -731,8 +799,15 @@ func (s *GBServer) selectNodeAndGossip() error {
 			defer s.decrementGossip() // Decrement after gossip with the node completes
 			defer s.gossip.gossWg.Done()
 
-			// Gossip with the node and collect any errors
-			s.gossipWithNode(node.name)
+			select {
+			case <-s.serverContext.Done():
+				log.Printf("%s -- context canceled during gossip with %s", s.ServerName, node.name)
+				return // Exit the goroutine if context is canceled
+			default:
+				// Proceed with gossiping
+				// Gossip with the node and collect any errors
+				s.gossipWithNode(node.name)
+			}
 		})
 
 	}
@@ -747,18 +822,18 @@ func (s *GBServer) selectNodeAndGossip() error {
 
 func (s *GBServer) gossipWithNode(node string) {
 
-	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+	if s.serverContext.Err() != nil {
 		log.Printf("shutting down - returning from gossip early - %v", s.serverContext.Err())
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+	defer cancel()
+
 	conn, err := s.checkNodeStore(node)
 	if err != nil {
 		log.Printf("Error in gossip round: %v", err)
-		err = s.connectToNodeInMap(node)
-		if err != nil {
-			return
-		}
+		return
 	}
 
 	log.Printf("%s -- gossiping with %s - addr %s", s.ServerName, node, conn.gbc.RemoteAddr())
@@ -773,22 +848,26 @@ func (s *GBServer) gossipWithNode(node string) {
 
 	stage = 1
 
-	resp, err := s.sendDigest(conn)
+	// TODO Because we are deferring server 1 - I believe we are causing the response to remain longer than it would which may cause it to race with the ticker
+
+	// Stage 1: Send Digest
+	resp, err := s.sendDigest(ctx, conn)
+
+	// TODO Remember to remove ================!!!
+	time.Sleep(3 * time.Second)
 	if err != nil {
-		log.Printf("gossipWithNode failed at Stage %v : %v", stage, err)
-
-		// TODO Will need to handle error based on type for phi-accrual
-
-		return
+		if ctx.Err() != nil {
+			log.Printf("%s -- gossipWithNode aborted due to context cancellation at stage %v: %v", s.ServerName, stage, ctx.Err())
+			return
+		} else {
+			log.Printf("%s -- gossipWithNode failed during digest exchange with %s at stage %v: %v", s.ServerName, node, stage, err)
+			return
+		}
 	}
 
 	// We have received the digest and must recognise if we have any new nodes that we haven't seen
 	// This will be a priority to request
 	// If not then the node and delta selection will defer back to flow control and MTU
-
-	if s.serverContext.Err() != nil {
-		return
-	}
 
 	log.Printf("%s resp2: %s %v", s.ServerName, resp, resp)
 

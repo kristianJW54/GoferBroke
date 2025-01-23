@@ -693,13 +693,13 @@ func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 
 	c.srv.releaseReqID(respID)
 
-	// Drain the response channel
-	for len(rsp.ch) > 0 {
-		//log.Printf("[DEBUG] Draining stale message from response channel: %s", <-rsp.ch)
-	}
-	for len(rsp.err) > 0 {
-		//log.Printf("[DEBUG] Draining stale error from response channel: %v", <-rsp.err)
-	}
+	//// Drain the response channel
+	//for len(rsp.ch) > 0 {
+	//	//log.Printf("[DEBUG] Draining stale message from response channel: %s", <-rsp.ch)
+	//}
+	//for len(rsp.err) > 0 {
+	//	//log.Printf("[DEBUG] Draining stale error from response channel: %v", <-rsp.err)
+	//}
 
 	close(rsp.ch)
 	close(rsp.err)
@@ -722,7 +722,7 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, 
 		//log.Printf("%s got response ----> %s", c.srv.ServerName, msg)
 		return msg, nil
 	case err := <-rsp.err:
-		return []byte(err.Error()), nil
+		return nil, err
 	}
 
 }
@@ -736,9 +736,6 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 	//c.mu.Lock()
 	responseChannel := c.addResponseChannel(int(respID))
 	//c.mu.Unlock()
-
-	respCtx, cancel := context.WithTimeout(ctx, 1*time.Second) // Can't be less than the gossip interval tick ?
-	defer cancel()
 
 	if sendNow && !flush {
 
@@ -769,7 +766,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// Wait for the response with timeout
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
-		ok, err := c.waitForResponse(respCtx, responseChannel)
+		ok, err := c.waitForResponse(ctx, responseChannel)
 		defer c.responseCleanup(responseChannel, respID)
 
 		if err != nil {

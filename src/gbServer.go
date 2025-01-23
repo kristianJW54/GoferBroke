@@ -291,9 +291,7 @@ func (s *GBServer) StartServer() {
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	s.startGoRoutine(s.ServerName, "gossip-process",
 		func() {
-			ctx, cancel := context.WithCancel(s.serverContext)
-			defer cancel()
-			s.gossipProcess(ctx)
+			s.gossipProcess(s.serverContext)
 		})
 
 }

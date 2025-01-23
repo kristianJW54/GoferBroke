@@ -240,7 +240,7 @@ func (s *GBServer) connectToNodeInMap(node string) error {
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	rsp, err := client.qProtoWithResponse(ctx, pay1, false, true)
+	rsp, err := client.qProtoWithResponse(ctx, pay1, true, true)
 	if err != nil {
 		return fmt.Errorf("response error in connect to seed: %s", err)
 	}
@@ -286,7 +286,6 @@ func (s *GBServer) connectToNodeInMap(node string) error {
 func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 
 	s.clusterMapLock.Lock()
-	defer s.clusterMapLock.Unlock()
 
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo()
@@ -299,6 +298,8 @@ func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	s.clusterMapLock.Unlock()
 
 	// Construct header
 	header := constructNodeHeader(1, uint8(command), seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
@@ -425,6 +426,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processInfoAll(message)
 	case HANDSHAKE:
 		c.processHandShake(message)
+	case HANDSHAKE_RESP:
+		c.processHandShakeResp(message)
 	case GOSS_SYN:
 		c.processGossSyn(message)
 	case GOSS_SYN_ACK:
@@ -469,10 +472,13 @@ func (c *gbClient) processInfoAll(message []byte) {
 	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
 	c.rh.rm.Unlock()
 
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
 	if exists {
 
 		// We just send the message and allow the caller to specify what they do with it
-		responseChan.ch <- message
+		responseChan.ch <- msg
 
 	} else {
 		log.Printf("no response channel found")
@@ -492,11 +498,19 @@ func (c *gbClient) processHandShake(message []byte) {
 	// TODO Finish this
 	// Send HandShake Response here
 	// --
+	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP)
+	if err != nil {
+		log.Printf("prepareSelfInfoSend failed: %v", err)
+	}
 
-	log.Printf("handshake message ===== %s", message)
+	c.mu.Lock()
+	c.qProto(info, true)
+	c.mu.Unlock()
+
+	log.Printf("%s --> handshake message ===== %s", c.srv.ServerName, message)
 
 	for key, value := range tmpC.delta {
-
+		log.Printf("%s ---> %s - %+v", c.srv.ServerName, key, value)
 		err := c.srv.addParticipantFromTmp(key, value)
 		if err != nil {
 			log.Printf("AddParticipantFromTmp failed: %v", err)
@@ -517,6 +531,27 @@ func (c *gbClient) processHandShake(message []byte) {
 	c.srv.serverLock.Unlock()
 
 	return
+
+}
+
+func (c *gbClient) processHandShakeResp(message []byte) {
+
+	c.rh.rm.Lock()
+	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	c.rh.rm.Unlock()
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
+	if exists {
+
+		// We just send the message and allow the caller to specify what they do with it
+		responseChan.ch <- msg
+
+	} else {
+		log.Printf("no response channel found")
+		// Else handle as normal command
+	}
 
 }
 

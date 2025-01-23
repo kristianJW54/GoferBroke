@@ -126,6 +126,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.state = INFO_ALL
 			case HANDSHAKE:
 				c.state = HANDSHAKE
+			case HANDSHAKE_RESP:
+				c.state = HANDSHAKE_RESP
 			case GOSS_SYN:
 				c.state = GOSS_SYN
 			case ERR_RESP:
@@ -248,6 +250,37 @@ func (c *gbClient) parsePacket(packet []byte) {
 			}
 
 		case HANDSHAKE:
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				if packet[i-1] == 13 {
+					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+					var arg []byte
+					if c.argBuf != nil {
+						arg = c.argBuf
+						c.argBuf = nil
+					} else {
+						arg = packet[c.position : i-c.drop]
+					}
+					c.processArg(arg)
+
+					c.drop = 0
+					c.position = i + 1
+					c.state = MSG_PAYLOAD
+
+					if c.msgBuf == nil {
+						i = c.position + c.ph.msgLength - 2
+					}
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case HANDSHAKE_RESP:
 			switch b {
 			case '\r':
 				c.drop = 1
