@@ -412,6 +412,8 @@ func (c *gbClient) readLoop() {
 			//TODO Handle client closures more effectively - based on type
 			// if client may want to reconnect and retry - if node we will want to use the phi accrual
 
+			c.handleReadError(err)
+
 			return
 		}
 
@@ -686,45 +688,40 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 }
 
 func (c *gbClient) responseCleanup(rsp *response, respID byte) {
-
 	c.rh.rm.Lock()
+	defer c.rh.rm.Unlock()
+
+	// Check if the response ID still exists in the map
+	if _, exists := c.rh.resp[int(respID)]; !exists {
+		return // Already cleaned up
+	}
+
 	delete(c.rh.resp, int(respID))
-	c.rh.rm.Unlock()
-
 	c.srv.releaseReqID(respID)
-
-	//// Drain the response channel
-	//for len(rsp.ch) > 0 {
-	//	//log.Printf("[DEBUG] Draining stale message from response channel: %s", <-rsp.ch)
-	//}
-	//for len(rsp.err) > 0 {
-	//	//log.Printf("[DEBUG] Draining stale error from response channel: %v", <-rsp.err)
-	//}
 
 	close(rsp.ch)
 	close(rsp.err)
-
-	//log.Printf("[DEBUG] Cleanup complete for ID: %d", respID)
-
+	log.Printf("responseCleanup - cleaned up response ID %d", respID)
 }
 
 // TODO need to make a cleanup function to defer cleanup of resources and close channels and return hanging ID's
 
 func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, error) {
-
 	select {
 	case <-ctx.Done():
-		//log.Println("context has been CALLED on RESPONSE")
+		// Context canceled, return immediately
+		log.Printf("waitForResponse - context canceled for response ID %d", rsp.id)
 		return nil, ctx.Err()
 	case writeErr := <-c.errChan:
-		return nil, writeErr
+		return nil, fmt.Errorf("write error: %w", writeErr)
+	case readErr := <-c.errChan:
+		return nil, fmt.Errorf("read error: %w", readErr)
 	case msg := <-rsp.ch:
-		//log.Printf("%s got response ----> %s", c.srv.ServerName, msg)
+		log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
 	case err := <-rsp.err:
-		return nil, err
+		return nil, fmt.Errorf("response error: %w", err)
 	}
-
 }
 
 // Can think about inserting a command and callback function to specify what we want to do based on the response
@@ -735,6 +732,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 
 	//c.mu.Lock()
 	responseChannel := c.addResponseChannel(int(respID))
+	defer c.responseCleanup(responseChannel, respID)
 	//c.mu.Unlock()
 
 	if sendNow && !flush {
@@ -749,7 +747,6 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
 		ok, err := c.waitForResponse(ctx, responseChannel)
-		defer c.responseCleanup(responseChannel, respID)
 
 		if err != nil {
 			return nil, err
@@ -767,16 +764,15 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
 		ok, err := c.waitForResponse(ctx, responseChannel)
-		defer c.responseCleanup(responseChannel, respID)
-
 		if err != nil {
 			return nil, err
 		}
+		log.Printf("GOT RESPONSE WOOOOO")
 		// If no error we may want to run the callback function here??
 		return ok, nil
 	}
 
-	return nil, nil
+	return nil, fmt.Errorf("response err - exiting")
 }
 
 //===================================================================================

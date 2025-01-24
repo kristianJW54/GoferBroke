@@ -325,6 +325,7 @@ func (s *GBServer) Shutdown() {
 		//log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.nodeStore, name)
+		s.decrementNodeConnCount()
 	}
 
 	for name, client := range s.tmpClientStore {
