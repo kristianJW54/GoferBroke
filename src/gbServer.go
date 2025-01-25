@@ -303,11 +303,12 @@ func (s *GBServer) StartServer() {
 // Shutdown attempts to gracefully shutdown the server and terminate any running processes and go-routines. It will close listeners and client connections.
 func (s *GBServer) Shutdown() {
 	//log.Printf("%s -- shut down initiated\n", s.ServerName)
+	s.serverContextCancel()
+
 	s.serverLock.Lock()
 	s.flags.set(SHUTTING_DOWN)
 
 	//log.Println("context called")
-	s.serverContextCancel()
 
 	if s.listener != nil {
 		//log.Println("closing client listener")

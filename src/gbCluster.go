@@ -429,8 +429,12 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 		return nil, fmt.Errorf("sendDigest - serialize error: %w", err)
 	}
 
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	// Introduce an artificial delay before sending the request
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("sendDigest - context canceled before sending digest: %w", ctx.Err())
+	default:
+
 	}
 
 	// Send the digest and wait for a response
@@ -463,6 +467,8 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 // Lock is held on entry
 func (s *GBServer) checkGossipCondition() {
 	nodes := atomic.LoadInt64(&s.numNodeConnections)
+
+	log.Printf("number of nodes ==== %v", nodes)
 
 	if nodes >= 1 && !s.flags.isSet(GOSSIP_SIGNALLED) {
 		s.flags.set(GOSSIP_SIGNALLED)
@@ -595,14 +601,18 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 //Gossip Check
 
 func (s *GBServer) tryStartGossip() bool {
+	// Check if shutting down or context is canceled before attempting gossip
+	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+		log.Printf("%s - Cannot start gossip: shutting down or context canceled", s.ServerName)
+		return false
+	}
+
+	// Attempt to acquire the semaphore
 	select {
 	case s.gossip.gossipSemaphore <- struct{}{}:
 		log.Printf("%s - Gossip started", s.ServerName)
 		return true
 	default:
-		if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
-			return true
-		}
 		log.Printf("%s - Gossip already active", s.ServerName)
 		return false
 	}
@@ -620,11 +630,15 @@ func (s *GBServer) endGossip() {
 //----------------
 //Gossip Process
 
+// TODO We need start gossip process to return false in order for us to kick back up to main gossip process and exit or wait
+
 func (s *GBServer) startGossipProcess() bool {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	// Exit immediately if the server context is already canceled
 	if s.serverContext.Err() != nil {
+		log.Printf("%s - Server context already canceled, exiting gossip process", s.ServerName)
 		return false
 	}
 
@@ -634,12 +648,14 @@ func (s *GBServer) startGossipProcess() bool {
 		case <-s.serverContext.Done():
 			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.ServerName)
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
+			s.endGossip()          // Ensure state is reset
 			return false
 		case <-ticker.C:
 			// Attempt to start a new gossip round
 			if !s.tryStartGossip() {
 
 				if s.flags.isSet(SHUTTING_DOWN) {
+					log.Printf("%s - Gossip process is shutting down, exiting", s.ServerName)
 					return false
 				}
 
@@ -647,15 +663,18 @@ func (s *GBServer) startGossipProcess() bool {
 				continue
 			}
 
-			s.clearGossipingWithMap()
+			// Create a context for the gossip round
+			ctx, cancel := context.WithTimeout(s.serverContext, 4*time.Second)
 
 			// Start a new gossip round
 			s.gossip.gossWg.Add(1)
 			s.startGoRoutine(s.ServerName, "main-gossip-round", func() {
 				defer s.gossip.gossWg.Done()
 				defer s.endGossip()
+				defer cancel()
 
-				s.startGossipRound()
+				s.startGossipRound(ctx)
+
 			})
 
 		case gossipState := <-s.gossip.gossipControlChannel:
@@ -672,18 +691,41 @@ func (s *GBServer) startGossipProcess() bool {
 //--------------------
 // Gossip Round
 
-// TODO Think about introducing a gossip result struct for a channel to feed back errors
-
 //TODO ISSUE --> Sometimes gossip round gets caught in a skipping round loop which has something
 // to do with the tryGossip checks on isGossiping as well as the concurrency of context cancellation between nodes
 // e.g - when running TestGossipSignal test - shutting down node 2 will sometimes leave node 2 in a skipping round loop
+// Narrowed down to the problem being that we need to kick back up to the main gossip process by return false on startGossipProcess()
+// Doing that is the difficult bit because sometimes we don't detect the ctx signal or the tryGossip check loops
+// See Logs:
 
+// 2025/01/25 10:29:39 test-server-2@1737800976 - Gossip process stopped due to context cancellation - waiting for rounds to finish
+//2025/01/25 10:29:39 test-server-2@1737800976 - Gossip already inactive
+//2025/01/25 10:29:39 test-server-2@1737800976 - gossip process exiting due to context cancellation
+//2025/01/25 10:29:39 test-server-1@1737800975 - Gossip started // TODO <-- test-server-1 misses it's ctx signal
+//2025/01/25 10:29:39 test-server-1@1737800975 - Gossiping with node test-server-2@1737800976 (stage 1)
+//2025/01/25 10:29:40 test-server-1@1737800975 - Gossip already active
+//2025/01/25 10:29:40 test-server-1@1737800975 - Skipping gossip round because a round is already active
+//2025/01/25 10:29:41 test-server-1@1737800975 - Gossip already active
+//2025/01/25 10:29:41 test-server-1@1737800975 - Skipping gossip round because a round is already active
+//2025/01/25 10:29:43 waitForResponse - context canceled for response ID 1
+//2025/01/25 10:29:43 responseCleanup - cleaned up response ID 1
+//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip already active
+//2025/01/25 10:29:43 sendDigest - context canceled for node: context deadline exceeded
+//2025/01/25 10:29:43 test-server-1@1737800975 - Skipping gossip round because a round is already active
+//2025/01/25 10:29:43 Error in gossip round (stage 1): context deadline exceeded
+//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip round canceled: context deadline exceeded
+//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip ended
+//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip already inactive
+//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip already inactive
+//2025/01/25 10:29:44 test-server-1@1737800975 - Gossip started // TODO <-- We shouldn't be starting again here
+
+// TODO Think about introducing a gossip result struct for a channel to feed back errors
 // type GossipResult struct {
 //    Node string
 //    Err  error
 //}
 
-func (s *GBServer) startGossipRound() {
+func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	if s.flags.isSet(SHUTTING_DOWN) {
 		log.Printf("server shutting down - exiting gossip round")
@@ -691,10 +733,11 @@ func (s *GBServer) startGossipRound() {
 	}
 
 	defer s.endGossip() // Ensure gossip state is reset when the process ends
+	defer s.clearGossipingWithMap()
 
 	// Context for cancellation or timeout
-	ctx, cancel := context.WithTimeout(s.serverContext, 4*time.Second)
-	defer cancel()
+	//ctx, cancel := context.WithTimeout(s.serverContext, 4*time.Second)
+	//defer cancel()
 
 	ns := s.gossip.nodeSelection
 	pl := len(s.clusterMap.participantQ) - 1
@@ -743,8 +786,7 @@ func (s *GBServer) startGossipRound() {
 			log.Printf("%s - Gossip round canceled: %v", s.ServerName, ctx.Err())
 			return
 		case <-done:
-			log.Printf("done")
-			// Task completed
+			log.Printf("%s - Node gossip task completed", s.ServerName)
 		}
 	}
 
@@ -761,6 +803,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	if s.flags.isSet(SHUTTING_DOWN) {
 		log.Printf("pulled from gossip with node")
+		ctx.Done()
 		return
 	}
 
@@ -768,7 +811,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	conn, err := s.checkNodeStore(node)
 	if err != nil {
-		log.Printf("Error in gossip round: %v", err)
+		log.Printf("Error in check node store at gossip round: %v", err)
 		return
 	}
 
@@ -784,6 +827,9 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
 		} else {
 			log.Printf("Error in gossip round (stage %d): %v", stage, err)
+			s.endGossip()
+			s.clearGossipingWithMap()
+			return
 		}
 		return
 	}
