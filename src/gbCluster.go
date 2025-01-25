@@ -24,9 +24,8 @@ type gossip struct {
 	gossipControlChannel chan bool
 	gossipTimeout        time.Duration
 	gossipOK             bool
-	gossipingLock        sync.Mutex // Protects isGossiping
-	isGossiping          bool
 	gossipSemaphore      chan struct{}
+	gossipExit           chan bool
 	gossipingWith        sync.Map
 	gossSignal           *sync.Cond
 	gossMu               sync.RWMutex
@@ -44,9 +43,11 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 		gossipOK:             false,
 		gossWg:               sync.WaitGroup{},
 		gossipSemaphore:      make(chan struct{}, 1),
+		gossipExit:           make(chan bool, 1),
 	}
 
 	goss.gossSignal = sync.NewCond(&goss.gossMu)
+	goss.gossipExit <- false
 
 	return goss
 }
@@ -650,7 +651,22 @@ func (s *GBServer) startGossipProcess() bool {
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
 			s.endGossip()          // Ensure state is reset
 			return false
+		case gossipQuit := <-s.gossip.gossipExit:
+			if gossipQuit {
+				s.gossip.gossWg.Wait() // Wait for the rounds to finish
+				s.endGossip()          // Ensure state is reset
+				return false
+			}
 		case <-ticker.C:
+
+			// Check if context cancellation occurred
+			if s.serverContext.Err() != nil || s.flags.isSet(SHUTTING_DOWN) {
+				log.Printf("%s - Server shutting down during ticker event", s.ServerName)
+				s.gossip.gossWg.Wait()
+				s.endGossip()
+				return false
+			}
+
 			// Attempt to start a new gossip round
 			if !s.tryStartGossip() {
 
@@ -659,7 +675,10 @@ func (s *GBServer) startGossipProcess() bool {
 					return false
 				}
 
+				// TODO Currently the context.Err() is nil when we get stuck in the skip loop
+
 				log.Printf("%s - Skipping gossip round because a round is already active", s.ServerName)
+				log.Printf("logging the context here because im confused %v", s.serverContext.Err())
 				continue
 			}
 
@@ -670,10 +689,11 @@ func (s *GBServer) startGossipProcess() bool {
 			s.gossip.gossWg.Add(1)
 			s.startGoRoutine(s.ServerName, "main-gossip-round", func() {
 				defer s.gossip.gossWg.Done()
-				defer s.endGossip()
+				//defer s.endGossip()
 				defer cancel()
 
 				s.startGossipRound(ctx)
+				s.endGossip()
 
 			})
 

@@ -307,6 +307,7 @@ func (s *GBServer) Shutdown() {
 
 	s.serverLock.Lock()
 	s.flags.set(SHUTTING_DOWN)
+	s.gossip.gossipExit <- true
 
 	//log.Println("context called")
 
