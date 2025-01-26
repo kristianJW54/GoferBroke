@@ -27,7 +27,7 @@ const (
 	ACCEPT_NODE_LOOP_STARTED
 	CONNECTED_TO_CLUSTER
 	GOSSIP_SIGNALLED
-	IS_GOSSIPING
+	GOSSIP_EXITED
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -300,14 +300,27 @@ func (s *GBServer) StartServer() {
 //---------------------
 // Server Shutdown
 
+//TODO - Thinking to add a tryShutdown which signals - logs time checks after a couple seconds and then checks
+// flags and signals, if nothing then it simply calls it again
+
 // Shutdown attempts to gracefully shutdown the server and terminate any running processes and go-routines. It will close listeners and client connections.
 func (s *GBServer) Shutdown() {
-	//log.Printf("%s -- shut down initiated\n", s.ServerName)
+
+	// Try to acquire the server lock
+	if !s.serverLock.TryLock() { // Assuming TryLock is implemented
+		log.Printf("%s - Shutdown blocked waiting on serverLock", s.ServerName)
+		return
+	}
+	defer s.serverLock.Unlock()
+
+	// Log shutdown initiation
+	log.Printf("%s - Shutdown Initiated", s.ServerName)
+
+	// Cancel the server context to signal all other processes
 	s.serverContextCancel()
 
-	s.serverLock.Lock()
+	// Set the SHUTTING_DOWN flag to prevent new processes from starting
 	s.flags.set(SHUTTING_DOWN)
-	s.gossip.gossipExit <- true
 
 	//log.Println("context called")
 
@@ -336,7 +349,7 @@ func (s *GBServer) Shutdown() {
 		delete(s.tmpClientStore, name)
 	}
 
-	s.serverLock.Unlock()
+	//s.serverLock.Unlock()
 
 	//s.nodeReqPool.reqPool.Put(1)
 

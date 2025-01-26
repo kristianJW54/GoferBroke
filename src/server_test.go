@@ -102,6 +102,7 @@ func TestGossipSignal(t *testing.T) {
 	go gbs2.StartServer()
 	time.Sleep(3 * time.Second)
 	gbs2.Shutdown()
+	time.Sleep(1 * time.Second)
 	gbs.Shutdown()
 
 	gbs.logActiveGoRoutines()

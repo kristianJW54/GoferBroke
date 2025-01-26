@@ -25,7 +25,6 @@ type gossip struct {
 	gossipTimeout        time.Duration
 	gossipOK             bool
 	gossipSemaphore      chan struct{}
-	gossipExit           chan bool
 	gossipingWith        sync.Map
 	gossSignal           *sync.Cond
 	gossMu               sync.RWMutex
@@ -43,11 +42,9 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 		gossipOK:             false,
 		gossWg:               sync.WaitGroup{},
 		gossipSemaphore:      make(chan struct{}, 1),
-		gossipExit:           make(chan bool, 1),
 	}
 
 	goss.gossSignal = sync.NewCond(&goss.gossMu)
-	goss.gossipExit <- false
 
 	return goss
 }
@@ -563,6 +560,10 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		// Notify all waiting goroutines to proceed if needed.
 		s.gossip.gossSignal.L.Lock()
 		defer s.gossip.gossSignal.L.Unlock()
+		s.flags.clear(GOSSIP_SIGNALLED)
+		s.flags.set(GOSSIP_EXITED)
+		close(s.gossip.gossipControlChannel)
+		close(s.gossip.gossipSemaphore)
 		s.gossip.gossSignal.Broadcast()
 	})
 	defer stopCondition()
@@ -651,12 +652,6 @@ func (s *GBServer) startGossipProcess() bool {
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
 			s.endGossip()          // Ensure state is reset
 			return false
-		case gossipQuit := <-s.gossip.gossipExit:
-			if gossipQuit {
-				s.gossip.gossWg.Wait() // Wait for the rounds to finish
-				s.endGossip()          // Ensure state is reset
-				return false
-			}
 		case <-ticker.C:
 
 			// Check if context cancellation occurred
@@ -678,7 +673,8 @@ func (s *GBServer) startGossipProcess() bool {
 				// TODO Currently the context.Err() is nil when we get stuck in the skip loop
 
 				log.Printf("%s - Skipping gossip round because a round is already active", s.ServerName)
-				log.Printf("logging the context here because im confused %v", s.serverContext.Err())
+				log.Printf("logging the context and shutting down signal here because im confused %v %v", s.serverContext.Err(), s.flags.isSet(SHUTTING_DOWN))
+
 				continue
 			}
 
@@ -718,6 +714,9 @@ func (s *GBServer) startGossipProcess() bool {
 // Doing that is the difficult bit because sometimes we don't detect the ctx signal or the tryGossip check loops
 // See Logs:
 
+//TODO ISSUE UPDATE --> Turns out that sometimes shutdown isn't being registered as called under certain conditions meaning the
+// server is unaware of a shutdown happening - shutdown could be signalled again..?
+
 // 2025/01/25 10:29:39 test-server-2@1737800976 - Gossip process stopped due to context cancellation - waiting for rounds to finish
 //2025/01/25 10:29:39 test-server-2@1737800976 - Gossip already inactive
 //2025/01/25 10:29:39 test-server-2@1737800976 - gossip process exiting due to context cancellation
@@ -754,10 +753,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	defer s.endGossip() // Ensure gossip state is reset when the process ends
 	defer s.clearGossipingWithMap()
-
-	// Context for cancellation or timeout
-	//ctx, cancel := context.WithTimeout(s.serverContext, 4*time.Second)
-	//defer cancel()
 
 	ns := s.gossip.nodeSelection
 	pl := len(s.clusterMap.participantQ) - 1
