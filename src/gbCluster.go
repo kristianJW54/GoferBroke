@@ -462,21 +462,23 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 
 // TODO when we start the node again the flags need to be reset so gossip_signalled should be clear here
 
-// Lock is held on entry
+// Thread safe
 func (s *GBServer) checkGossipCondition() {
 	nodes := atomic.LoadInt64(&s.numNodeConnections)
 
-	log.Printf("number of nodes ==== %v", nodes)
-
 	if nodes >= 1 && !s.flags.isSet(GOSSIP_SIGNALLED) {
+		s.serverLock.Lock()
 		s.flags.set(GOSSIP_SIGNALLED)
+		s.serverLock.Unlock()
 		s.gossip.gossipControlChannel <- true
 		log.Println("signalling gossip")
 		s.gossip.gossSignal.Broadcast()
 
 	} else if nodes < 1 && s.flags.isSet(GOSSIP_SIGNALLED) {
 		s.gossip.gossipControlChannel <- false
+		s.serverLock.Lock()
 		s.flags.clear(GOSSIP_SIGNALLED)
+		s.serverLock.Unlock()
 	}
 
 }
@@ -562,8 +564,8 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		defer s.gossip.gossSignal.L.Unlock()
 		s.flags.clear(GOSSIP_SIGNALLED)
 		s.flags.set(GOSSIP_EXITED)
-		close(s.gossip.gossipControlChannel)
-		close(s.gossip.gossipSemaphore)
+		//close(s.gossip.gossipControlChannel)
+		//close(s.gossip.gossipSemaphore)
 		s.gossip.gossSignal.Broadcast()
 	})
 	defer stopCondition()
@@ -612,10 +614,8 @@ func (s *GBServer) tryStartGossip() bool {
 	// Attempt to acquire the semaphore
 	select {
 	case s.gossip.gossipSemaphore <- struct{}{}:
-		log.Printf("%s - Gossip started", s.ServerName)
 		return true
 	default:
-		log.Printf("%s - Gossip already active", s.ServerName)
 		return false
 	}
 }
@@ -623,9 +623,7 @@ func (s *GBServer) tryStartGossip() bool {
 func (s *GBServer) endGossip() {
 	select {
 	case <-s.gossip.gossipSemaphore:
-		log.Printf("%s - Gossip ended", s.ServerName)
 	default:
-		log.Printf("%s - Gossip already inactive", s.ServerName)
 	}
 }
 
@@ -685,11 +683,9 @@ func (s *GBServer) startGossipProcess() bool {
 			s.gossip.gossWg.Add(1)
 			s.startGoRoutine(s.ServerName, "main-gossip-round", func() {
 				defer s.gossip.gossWg.Done()
-				//defer s.endGossip()
 				defer cancel()
 
 				s.startGossipRound(ctx)
-				s.endGossip()
 
 			})
 
@@ -771,7 +767,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
-	for i := 0; i < pl; i++ {
+	for i := 0; i < int(ns); i++ {
 
 		s.clusterMapLock.RLock()
 		num := rand.Intn(pl) + 1
@@ -779,7 +775,25 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 		// TODO Check exist and dial if not --> then throw error if neither work
 
+		conn, exists := s.nodeStore[node.name]
+		// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 		s.clusterMapLock.RUnlock()
+		if !exists {
+			log.Printf("%s - Node not found in gossip store =================================", s.ServerName)
+
+			err := s.connectToNodeInMap(node.name)
+			if err != nil {
+				log.Printf("error in gossip with node ----> %v", err)
+				return
+			}
+			info, err := s.prepareSelfInfoSend(HANDSHAKE)
+			if err != nil {
+				log.Printf("%s - Failed to prepare self info send %v", s.ServerName, err)
+				return
+			}
+			log.Printf("%s - Sending self info to gossip --> %s", s.ServerName, info)
+			return
+		}
 
 		err := s.storeGossipingWith(node.name)
 		if err != nil {
@@ -789,13 +803,13 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() { done <- struct{}{} }()
 
-			s.gossipWithNode(ctx, node.name)
+			s.gossipWithNode(ctx, node.name, conn)
 		})
 
 	}
 
 	// Wait for all tasks or context cancellation
-	for i := 0; i < pl; i++ {
+	for i := 0; i < int(ns); i++ {
 		select {
 		case <-ctx.Done():
 			log.Printf("%s - Gossip round canceled: %v", s.ServerName, ctx.Err())
@@ -814,21 +828,14 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 //TODO When a new node joins - it is given info by the seed - so when choosing to gossip - for some it will need to dial
 // the nodes using the addr in the clusterMap
 
-func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
+func (s *GBServer) gossipWithNode(ctx context.Context, node string, conn *gbClient) {
 
 	if s.flags.isSet(SHUTTING_DOWN) {
 		log.Printf("pulled from gossip with node")
-		ctx.Done()
 		return
 	}
 
 	var stage int
-
-	conn, err := s.checkNodeStore(node)
-	if err != nil {
-		log.Printf("Error in check node store at gossip round: %v", err)
-		return
-	}
 
 	//------------- GOSS_SYN Stage 1 -------------
 

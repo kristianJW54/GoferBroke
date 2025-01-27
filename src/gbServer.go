@@ -337,11 +337,12 @@ func (s *GBServer) Shutdown() {
 
 	//Close connections
 	for name, client := range s.nodeStore {
-		//log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
+		log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
 		client.gbc.Close()
 		delete(s.nodeStore, name)
-		s.decrementNodeConnCount()
 	}
+
+	s.clearNodeConnCount()
 
 	for name, client := range s.tmpClientStore {
 		//log.Printf("%s closing client from TmpStore %d\n", s.ServerName, name)
@@ -699,7 +700,6 @@ func (s *GBServer) releaseReqID(id uint8) {
 //----------------
 // Connection Count
 
-// Lock should be held on entry
 // incrementNodeCount atomically adds to the number of node connections. Once it does, it will call a check to take place to see if the change in conn count
 // should signal the gossip process to either start or pause.
 func (s *GBServer) incrementNodeConnCount() {
@@ -710,6 +710,7 @@ func (s *GBServer) incrementNodeConnCount() {
 	s.checkGossipCondition()
 }
 
+// Lock held on entry
 // decrementNodeCount works the same as incrementNodeCount but by decrementing the node count and calling a check.
 func (s *GBServer) decrementNodeConnCount() {
 	//log.Printf("removing conn count by 1")
@@ -717,6 +718,12 @@ func (s *GBServer) decrementNodeConnCount() {
 	atomic.AddInt64(&s.numNodeConnections, -1)
 	// Check and update gossip condition
 	s.checkGossipCondition()
+}
+
+func (s *GBServer) clearNodeConnCount() {
+
+	atomic.AddInt64(&s.numNodeConnections, 0)
+
 }
 
 //----------------

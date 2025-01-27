@@ -94,20 +94,29 @@ func TestGossipSignal(t *testing.T) {
 
 	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 	gbs2 := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
-	//gbs3 := NewServer("test-server-3", 3, config, "localhost", "8085", "8083", lc)
+	gbs3 := NewServer("test-server", 3, config, "localhost", "8085", "8083", lc)
 	//gbs4 := NewServer("test-server-4", 4, config, "localhost", "8086", "8083", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-	time.Sleep(3 * time.Second)
-	gbs2.Shutdown()
 	time.Sleep(1 * time.Second)
-	gbs.Shutdown()
+	go gbs3.StartServer()
+	time.Sleep(3 * time.Second)
+
+	gbs2.serverContext.Done()
+	gbs.serverContext.Done()
+	gbs3.serverContext.Done()
+
+	go gbs2.Shutdown()
+	go gbs.Shutdown()
+	go gbs3.Shutdown()
+
+	time.Sleep(3 * time.Second)
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
-	//gbs3.logActiveGoRoutines()
+	gbs3.logActiveGoRoutines()
 	//gbs4.logActiveGoRoutines()
 
 }

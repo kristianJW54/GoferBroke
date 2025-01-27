@@ -189,9 +189,9 @@ func (s *GBServer) connectToSeed() error {
 	client.mu.Unlock()
 
 	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
-	s.incrementNodeConnCount()
-
 	s.serverLock.Unlock()
+
+	s.incrementNodeConnCount()
 
 	select {
 	case <-ctx.Done():
@@ -204,79 +204,29 @@ func (s *GBServer) connectToSeed() error {
 
 }
 
-// Lock held on entry
 func (s *GBServer) connectToNodeInMap(node string) error {
 
-	ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second)
-	defer cancel()
+	// Must clean up resources if we get timeout or error response (example - seq ID)
 
-	// Need to get the info from cluster map using node name as key
 	participant := s.clusterMap.participants[node]
-	// We only need the address so extract that using the key
-	addr := participant.keyValues[_ADDRESS_]
-	log.Printf("addr = %s\n", addr.value)
 
-	parts := strings.Split(string(addr.value), ":")
+	addr := participant.keyValues[_ADDRESS_].value
+
+	parts := strings.Split(string(addr), ":")
 
 	ip, err := net.ResolveIPAddr("ip", parts[0])
 	if err != nil {
-		return fmt.Errorf("error resolving ip address: %s", err)
+		return fmt.Errorf("error in connectToNodeInMap while resolving ip address: %s", err)
 	}
 
-	nodeIP := ip.String()
-	nodePort := parts[1]
+	port := parts[1]
 
-	nodeAddr := net.JoinHostPort(nodeIP, nodePort)
+	nodeAddr := net.JoinHostPort(ip.String(), port)
 
-	conn, err := net.Dial("tcp", nodeAddr)
-	if err != nil {
-		return fmt.Errorf("error connecting to server: %s", err)
-	}
-
-	pay1, err := s.prepareSelfInfoSend(HANDSHAKE)
-	if err != nil {
-		return err
-	}
-
-	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
-
-	rsp, err := client.qProtoWithResponse(ctx, pay1, true, true)
-	if err != nil {
-		return fmt.Errorf("response error in connect to seed: %s", err)
-	}
-
-	delta, err := deserialiseDelta(rsp)
-	if err != nil {
-		return err
-	}
-
-	for k, v := range delta.delta {
-		log.Printf("%s -- %+v", k, v.keyValues)
-	}
-
-	if participant.name == delta.sender {
-		log.Printf("node is already in map")
-	} else {
-		log.Printf("need to add to cluster map")
-	}
-
-	// Now we can remove from tmp map and add to client store including connected flag
-	s.serverLock.Lock()
-	err = s.moveToConnected(client.cid, delta.sender)
-	if err != nil {
-		return err
-	}
-
-	client.mu.Lock()
-	client.name = delta.sender
-	client.mu.Unlock()
-
-	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
-	s.incrementNodeConnCount()
-
-	s.serverLock.Unlock()
+	log.Printf("connecting to node %s at %s", node, nodeAddr)
 
 	return nil
+
 }
 
 // Thread safe
@@ -285,7 +235,7 @@ func (s *GBServer) connectToNodeInMap(node string) error {
 // running a check on our ServerID + address
 func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 
-	s.clusterMapLock.Lock()
+	s.clusterMapLock.RLock()
 
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo()
@@ -299,7 +249,7 @@ func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 		return nil, err
 	}
 
-	s.clusterMapLock.Unlock()
+	s.clusterMapLock.RUnlock()
 
 	// Construct header
 	header := constructNodeHeader(1, uint8(command), seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
@@ -312,6 +262,9 @@ func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO Think about releasing seq id's when we get error or no response (id's only used when qProtoWithResponse)
+	s.releaseReqID(seq)
 
 	return pay1, nil
 
@@ -526,9 +479,7 @@ func (c *gbClient) processHandShake(message []byte) {
 	}
 
 	// TODO Monitor the server lock here and be mindful
-	c.srv.serverLock.Lock()
 	c.srv.incrementNodeConnCount()
-	c.srv.serverLock.Unlock()
 
 	return
 
@@ -694,9 +645,7 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	}
 
 	// TODO Monitor the server lock here and be mindful
-	c.srv.serverLock.Lock()
 	c.srv.incrementNodeConnCount()
-	c.srv.serverLock.Unlock()
 
 	return
 
