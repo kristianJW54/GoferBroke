@@ -170,6 +170,8 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 	// Creation steps
 	// Gather server metrics
 
+	// TODO May want to look at net.Lookup host and ip and any other lookups or resolvers from either config or flags to ensure server address is correct
+
 	// Init gossip
 	goss := initGossipSettings(1*time.Second, 1) // TODO Node selection changing for tests
 
@@ -563,6 +565,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 		s.acceptConnection(nl, "node-test",
 			func(conn net.Conn) {
 				s.createNodeClient(conn, "node-client", false, NODE)
+				log.Printf("%s accepting node ===========================", s.ServerName)
 			},
 			func(err error) bool {
 				select {

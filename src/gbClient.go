@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -464,7 +465,7 @@ func (c *gbClient) readLoop() {
 			c.parsePacket(buff[:n])
 		}
 
-		//log.Printf("%s -- read -- %v", c.srv.ServerName, buff[:n])
+		//log.Printf("%s -- read -- %s", c.srv.ServerName, buff[:n])
 		//log.Printf("bytes read --> %d", n)
 		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
 
@@ -528,10 +529,21 @@ func (c *gbClient) flushSignal() {
 // Lock must be held coming in
 func (c *gbClient) flushWriteOutbound() bool {
 
+	if c.flags.isSet(FLUSH_OUTBOUND) {
+		c.mu.Unlock()
+		runtime.Gosched()
+		c.mu.Lock()
+		return false
+	}
+
 	c.flags.set(FLUSH_OUTBOUND)
 	defer func() {
 		c.flags.clear(FLUSH_OUTBOUND)
 	}()
+
+	if c.gbc == nil || c.srv == nil {
+		return true
+	}
 
 	toWrite := c.outbound.writeBuffer
 	c.outbound.writeBuffer = nil
@@ -576,6 +588,10 @@ func (c *gbClient) flushWriteOutbound() bool {
 	}
 
 	c.outbound.copyWriteBuffer = append(start[:0], c.outbound.copyWriteBuffer...)
+
+	if len(c.outbound.writeBuffer) == 0 && cap(c.outbound.writeBuffer) > nbWritePoolLarge*8 {
+		c.outbound.writeBuffer = nil
+	}
 
 	// Write errors
 	if err != nil {
@@ -730,10 +746,11 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 
 	respID := proto[2]
 
-	//c.mu.Lock()
+	// TODO Do we need locks here
+	c.mu.Lock()
 	responseChannel := c.addResponseChannel(int(respID))
 	defer c.responseCleanup(responseChannel, respID)
-	//c.mu.Unlock()
+	c.mu.Unlock()
 
 	if sendNow && !flush {
 
@@ -753,10 +770,11 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		}
 		// If no error we may want to run the callback function here??
 		return ok, nil
+
 	} else if sendNow {
 		// Client lock to flush outbound
 		c.mu.Lock()
-		c.qProto(proto, flush)
+		c.qProto(proto, true)
 		//c.flushWriteOutbound()
 		c.mu.Unlock()
 
@@ -772,7 +790,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		return ok, nil
 	}
 
-	return nil, fmt.Errorf("response err - exiting")
+	return nil, fmt.Errorf("response error - exiting")
 }
 
 //===================================================================================

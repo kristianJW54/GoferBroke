@@ -117,11 +117,11 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.LocalAddr())
+		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.LocalAddr())
 
 	} else {
 		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.Name, clientType, conn.RemoteAddr())
+		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.RemoteAddr())
 
 	}
 
@@ -159,7 +159,7 @@ func (s *GBServer) connectToSeed() error {
 
 	rsp, err := client.qProtoWithResponse(ctx, pay1, false, true)
 	if err != nil {
-		return fmt.Errorf("response error in connect to seed: %s", err)
+		return fmt.Errorf("%s response error in connect to seed: %s", s.ServerName, err)
 	}
 	// If we receive no error we can assume the response was received and continue
 
@@ -204,7 +204,7 @@ func (s *GBServer) connectToSeed() error {
 
 }
 
-func (s *GBServer) connectToNodeInMap(node string) error {
+func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	// Must clean up resources if we get timeout or error response (example - seq ID)
 
@@ -224,6 +224,49 @@ func (s *GBServer) connectToNodeInMap(node string) error {
 	nodeAddr := net.JoinHostPort(ip.String(), port)
 
 	log.Printf("connecting to node %s at %s", node, nodeAddr)
+
+	// Dial here
+	conn, err := net.Dial("tcp", nodeAddr)
+	if err != nil {
+		return fmt.Errorf("error connecting to server: %s", err)
+	}
+
+	info, err := s.prepareSelfInfoSend(HANDSHAKE)
+	if err != nil {
+		return err
+	}
+	log.Printf("%s - Sending self info to gossip --> %s", s.ServerName, info)
+
+	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
+
+	// Flush is false because we have started a new client routine and write loop + signals may not be up yet
+	resp, err := client.qProtoWithResponse(ctx, info, false, true)
+	if err != nil {
+		return fmt.Errorf("response error in connect to seed: %s", err)
+	}
+	// If we receive no error we can assume the response was received and continue
+
+	//log.Printf("resp = %s", resp)
+
+	// First de-serialise the delta and then we can move sender to store
+
+	delta, err := deserialiseDelta(resp)
+
+	// From here we then move the temp client to node store and increment the node count
+	s.serverLock.Lock()
+	err = s.moveToConnected(client.cid, delta.sender)
+	if err != nil {
+		return err
+	}
+
+	client.mu.Lock()
+	client.name = delta.sender
+	client.mu.Unlock()
+
+	//we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
+	s.serverLock.Unlock()
+
+	s.incrementNodeConnCount()
 
 	return nil
 
@@ -262,9 +305,6 @@ func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// TODO Think about releasing seq id's when we get error or no response (id's only used when qProtoWithResponse)
-	s.releaseReqID(seq)
 
 	return pay1, nil
 
@@ -328,6 +368,18 @@ func (c *gbClient) onboardNewJoiner() error {
 	return nil
 
 }
+
+//===================================================================================
+// Node Protocol Responses
+//===================================================================================
+
+//===================================================================================
+// Node Protocol Errors
+//===================================================================================
+
+//===================================================================================
+// Node Protocol Payloads
+//===================================================================================
 
 //===================================================================================
 // Parser Header Processing
@@ -460,8 +512,6 @@ func (c *gbClient) processHandShake(message []byte) {
 	c.qProto(info, true)
 	c.mu.Unlock()
 
-	log.Printf("%s --> handshake message ===== %s", c.srv.ServerName, message)
-
 	for key, value := range tmpC.delta {
 		log.Printf("%s ---> %s - %+v", c.srv.ServerName, key, value)
 		err := c.srv.addParticipantFromTmp(key, value)
@@ -500,9 +550,26 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 		responseChan.ch <- msg
 
 	} else {
-		log.Printf("no response channel found")
+		log.Printf("%s no response channel found", c.srv.ServerName)
 		// Else handle as normal command
 	}
+
+	resp := []byte("OK BOIII +\r\n")
+
+	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(resp)), NODE_HEADER_SIZE_V1, 0, 0)
+	packet := &nodePacket{
+		header,
+		resp,
+	}
+
+	pay, err := packet.serialize()
+	if err != nil {
+		log.Printf("error serialising packet - %v", err)
+	}
+
+	c.mu.Lock()
+	c.qProto(pay, true)
+	c.mu.Unlock()
 
 }
 
@@ -510,7 +577,7 @@ func (c *gbClient) processOK(message []byte) {
 
 	c.rh.rm.Lock()
 	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
-	//log.Printf("response channel == %v", c.rh.resp[int(c.argBuf[2])])
+	log.Printf("response channel == %v", c.rh.resp[int(c.argBuf[2])])
 	c.rh.rm.Unlock()
 
 	msg := make([]byte, len(message))
@@ -522,7 +589,7 @@ func (c *gbClient) processOK(message []byte) {
 		responseChan.ch <- msg
 
 	} else {
-		log.Printf("no response channel found")
+		log.Printf("%s - no response channel found for OK + ", c.srv.ServerName)
 		// Else handle as normal command
 	}
 

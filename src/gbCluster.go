@@ -774,36 +774,36 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		node := s.clusterMap.participantQ[num]
 
 		// TODO Check exist and dial if not --> then throw error if neither work
-
-		conn, exists := s.nodeStore[node.name]
-		// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 		s.clusterMapLock.RUnlock()
-		if !exists {
-			log.Printf("%s - Node not found in gossip store =================================", s.ServerName)
-
-			err := s.connectToNodeInMap(node.name)
-			if err != nil {
-				log.Printf("error in gossip with node ----> %v", err)
-				return
-			}
-			info, err := s.prepareSelfInfoSend(HANDSHAKE)
-			if err != nil {
-				log.Printf("%s - Failed to prepare self info send %v", s.ServerName, err)
-				return
-			}
-			log.Printf("%s - Sending self info to gossip --> %s", s.ServerName, info)
-			return
-		}
-
-		err := s.storeGossipingWith(node.name)
-		if err != nil {
-			return
-		}
+		//conn, exists := s.nodeStore[node.name]
+		//// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
+		//
+		//if !exists {
+		//	log.Printf("%s - Node not found in gossip store =================================", s.ServerName)
+		//
+		//	err := s.connectToNodeInMap(node.name)
+		//	if err != nil {
+		//		log.Printf("error in gossip with node ----> %v", err)
+		//		return
+		//	}
+		//	info, err := s.prepareSelfInfoSend(HANDSHAKE)
+		//	if err != nil {
+		//		log.Printf("%s - Failed to prepare self info send %v", s.ServerName, err)
+		//		return
+		//	}
+		//	log.Printf("%s - Sending self info to gossip --> %s", s.ServerName, info)
+		//	return
+		//}
+		//
+		//err := s.storeGossipingWith(node.name)
+		//if err != nil {
+		//	return
+		//}
 
 		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() { done <- struct{}{} }()
 
-			s.gossipWithNode(ctx, node.name, conn)
+			s.gossipWithNode(ctx, node.name)
 		})
 
 	}
@@ -828,35 +828,60 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 //TODO When a new node joins - it is given info by the seed - so when choosing to gossip - for some it will need to dial
 // the nodes using the addr in the clusterMap
 
-func (s *GBServer) gossipWithNode(ctx context.Context, node string, conn *gbClient) {
+func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	if s.flags.isSet(SHUTTING_DOWN) {
 		log.Printf("pulled from gossip with node")
 		return
 	}
 
-	var stage int
+	//------------- Dial Check -------------//
 
-	//------------- GOSS_SYN Stage 1 -------------
+	//TODO We are having response channel problems -- current thought is that the connectToNode returns and cleans up
+	// response before completing the response cycle...
 
-	stage = 1
-	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
+	s.clusterMapLock.RLock()
+	conn, exists := s.nodeStore[node]
+	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
+	s.clusterMapLock.RUnlock()
+	if !exists {
+		log.Printf("%s - Node not found in gossip store =================================", s.ServerName)
 
-	// Stage 1: Send Digest
-	resp, err := s.sendDigest(ctx, conn)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
-		} else {
-			log.Printf("Error in gossip round (stage %d): %v", stage, err)
-			s.endGossip()
-			s.clearGossipingWithMap()
+		err := s.connectToNodeInMap(ctx, node)
+		if err != nil {
+			log.Printf("error in gossip with node %s ----> %v", conn.gbc.RemoteAddr(), err)
 			return
 		}
 		return
 	}
 
-	log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
+	err := s.storeGossipingWith(node)
+	if err != nil {
+		return
+	}
+
+	var stage int
+
+	//------------- GOSS_SYN Stage 1 -------------//
+
+	stage = 1
+	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
+
+	//// Stage 1: Send Digest
+	//resp, err := s.sendDigest(ctx, conn)
+	//if err != nil {
+	//	if errors.Is(err, context.Canceled) {
+	//		log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+	//	} else {
+	//		log.Printf("Error in gossip round (stage %d): %v", stage, err)
+	//		s.endGossip()
+	//		s.clearGossipingWithMap()
+	//		return
+	//	}
+	//	return
+	//}
+	//
+	//log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
 
 	//------------- Handle Completion -------------
 
