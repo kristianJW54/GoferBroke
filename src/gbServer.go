@@ -565,7 +565,6 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 		s.acceptConnection(nl, "node-test",
 			func(conn net.Conn) {
 				s.createNodeClient(conn, "node-client", false, NODE)
-				log.Printf("%s accepting node ===========================", s.ServerName)
 			},
 			func(err error) bool {
 				select {

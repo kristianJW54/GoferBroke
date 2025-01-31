@@ -32,8 +32,16 @@ const (
 // which packets can implement, then we can pass an interface to handle connection methods on server...?
 
 //=====================================================================
-// Node Protocol
+// Node Response Errors
 //=====================================================================
+
+var gossipError = []byte("11 -x- Gossip deferred -x-\r\n")
+
+//=====================================================================
+// Node Response Success
+//=====================================================================
+
+var respOK = []byte("1 -+- OK -+-\r\n")
 
 //------------------------
 //Packet constructor and serialisation

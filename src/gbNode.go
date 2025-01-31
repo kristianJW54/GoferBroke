@@ -117,11 +117,11 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// Only log if the connection was initiated by this server (to avoid duplicate logs)
 	if initiated {
 		client.directionType = INITIATED
-		log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.LocalAddr())
+		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.LocalAddr())
 
 	} else {
 		client.directionType = RECEIVED
-		log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.RemoteAddr())
+		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.RemoteAddr())
 
 	}
 
@@ -150,7 +150,7 @@ func (s *GBServer) connectToSeed() error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	pay1, err := s.prepareSelfInfoSend(INFO)
+	pay1, err := s.prepareSelfInfoSend(INFO, -1)
 	if err != nil {
 		return err
 	}
@@ -231,7 +231,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	info, err := s.prepareSelfInfoSend(HANDSHAKE)
+	info, err := s.prepareSelfInfoSend(HANDSHAKE, -1)
 	if err != nil {
 		return err
 	}
@@ -246,11 +246,14 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	}
 	// If we receive no error we can assume the response was received and continue
 
-	//log.Printf("resp = %s", resp)
-
 	// First de-serialise the delta and then we can move sender to store
 
 	delta, err := deserialiseDelta(resp)
+
+	for _, participant := range delta.delta {
+		log.Printf("%s -- sender = %s", s.ServerName, delta.sender)
+		log.Printf("%+v", participant.keyValues)
+	}
 
 	// From here we then move the temp client to node store and increment the node count
 	s.serverLock.Lock()
@@ -276,7 +279,9 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 // prepareSelfInfoSend gathers the servers deltas into a participant to send over the network. We only send our self info under the assumption that we are a new node
 // and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the receiving node will detect this by
 // running a check on our ServerID + address
-func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
+func (s *GBServer) prepareSelfInfoSend(command int, respID int) ([]byte, error) {
+
+	var seq uint8
 
 	s.clusterMapLock.RLock()
 
@@ -286,10 +291,14 @@ func (s *GBServer) prepareSelfInfoSend(command int) ([]byte, error) {
 		return nil, err
 	}
 
-	// Acquire sequence ID
-	seq, err := s.acquireReqID()
-	if err != nil {
-		return nil, err
+	if respID != -1 {
+		seq = uint8(respID)
+	} else {
+		// Acquire sequence ID
+		seq, err = s.acquireReqID()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	s.clusterMapLock.RUnlock()
@@ -368,22 +377,6 @@ func (c *gbClient) onboardNewJoiner() error {
 	return nil
 
 }
-
-//===================================================================================
-// Node Protocol Responses
-//===================================================================================
-
-//===================================================================================
-// Node Protocol Errors
-//===================================================================================
-
-//===================================================================================
-// Node Protocol Payloads
-//===================================================================================
-
-//===================================================================================
-// Parser Header Processing
-//===================================================================================
 
 func (c *gbClient) processArg(arg []byte) error {
 	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
@@ -503,7 +496,7 @@ func (c *gbClient) processHandShake(message []byte) {
 	// TODO Finish this
 	// Send HandShake Response here
 	// --
-	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP)
+	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(c.ph.id))
 	if err != nil {
 		log.Printf("prepareSelfInfoSend failed: %v", err)
 	}
@@ -554,22 +547,22 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 		// Else handle as normal command
 	}
 
-	resp := []byte("OK BOIII +\r\n")
-
-	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(resp)), NODE_HEADER_SIZE_V1, 0, 0)
-	packet := &nodePacket{
-		header,
-		resp,
-	}
-
-	pay, err := packet.serialize()
-	if err != nil {
-		log.Printf("error serialising packet - %v", err)
-	}
-
-	c.mu.Lock()
-	c.qProto(pay, true)
-	c.mu.Unlock()
+	//resp := []byte("OK BOIII +\r\n")
+	//
+	//header := constructNodeHeader(1, OK, c.ph.id, uint16(len(resp)), NODE_HEADER_SIZE_V1, 0, 0)
+	//packet := &nodePacket{
+	//	header,
+	//	resp,
+	//}
+	//
+	//pay, err := packet.serialize()
+	//if err != nil {
+	//	log.Printf("error serialising packet - %v", err)
+	//}
+	//
+	//c.mu.Lock()
+	//c.qProto(pay, true)
+	//c.mu.Unlock()
 
 }
 
@@ -577,7 +570,6 @@ func (c *gbClient) processOK(message []byte) {
 
 	c.rh.rm.Lock()
 	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
-	log.Printf("response channel == %v", c.rh.resp[int(c.argBuf[2])])
 	c.rh.rm.Unlock()
 
 	msg := make([]byte, len(message))
@@ -628,12 +620,11 @@ func (c *gbClient) processGossSyn(message []byte) {
 		log.Printf("%s making %s defer it's gossip", c.srv.ServerName, senderName)
 
 		// TODO Package common error responses into a function (same with ok + responses)
-		errResp := []byte("11 -x- Gossip deferred -x-\r\n")
 
-		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.id, uint16(len(errResp)), NODE_HEADER_SIZE_V1, 0, 0)
+		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.id, uint16(len(gossipError)), NODE_HEADER_SIZE_V1, 0, 0)
 		errPacket := &nodePacket{
 			errHeader,
-			errResp,
+			gossipError,
 		}
 
 		errPay, err := errPacket.serialize()
@@ -649,18 +640,10 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	}
 
-	//for _, v := range delta {
-	//	log.Printf("digest from - %s", v.senderName)
-	//	log.Printf("Node-Name=%s-Max-Version=%v", v.nodeName, v.maxVersion)
-	//}
-	//time.Sleep(3 * time.Second)
-
-	resp := []byte("OK BOIII +\r\n")
-
-	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(resp)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(respOK)), NODE_HEADER_SIZE_V1, 0, 0)
 	packet := &nodePacket{
 		header,
-		resp,
+		respOK,
 	}
 
 	pay, err := packet.serialize()

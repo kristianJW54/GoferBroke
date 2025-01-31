@@ -760,7 +760,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	// Channel to signal when individual gossip tasks complete
 	done := make(chan struct{}, pl)
-	log.Printf("pl = %v", pl)
 	// Channels aren't like files; you don't usually need to close them.
 	// Closing is only necessary when the receiver must be told there are no more values coming, such as to terminate a range loop.
 	// https://go.dev/tour/concurrency/4#:~:text=Note%3A%20Only%20the%20sender%20should,to%20terminate%20a%20range%20loop.
@@ -775,30 +774,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 		// TODO Check exist and dial if not --> then throw error if neither work
 		s.clusterMapLock.RUnlock()
-		//conn, exists := s.nodeStore[node.name]
-		//// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
-		//
-		//if !exists {
-		//	log.Printf("%s - Node not found in gossip store =================================", s.ServerName)
-		//
-		//	err := s.connectToNodeInMap(node.name)
-		//	if err != nil {
-		//		log.Printf("error in gossip with node ----> %v", err)
-		//		return
-		//	}
-		//	info, err := s.prepareSelfInfoSend(HANDSHAKE)
-		//	if err != nil {
-		//		log.Printf("%s - Failed to prepare self info send %v", s.ServerName, err)
-		//		return
-		//	}
-		//	log.Printf("%s - Sending self info to gossip --> %s", s.ServerName, info)
-		//	return
-		//}
-		//
-		//err := s.storeGossipingWith(node.name)
-		//if err != nil {
-		//	return
-		//}
 
 		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() { done <- struct{}{} }()
@@ -837,8 +812,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	//------------- Dial Check -------------//
 
-	//TODO We are having response channel problems -- current thought is that the connectToNode returns and cleans up
-	// response before completing the response cycle...
+	//TODO Look at respIDs as a req->resp cycle can only be 1-1. After a completed cycle a new resp ID must be acquired
+	// This means that a node responding to a request cannot generate a new ID to put in the header as it must echo the one received first
 
 	s.clusterMapLock.RLock()
 	conn, exists := s.nodeStore[node]
@@ -867,21 +842,21 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	stage = 1
 	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
 
-	//// Stage 1: Send Digest
-	//resp, err := s.sendDigest(ctx, conn)
-	//if err != nil {
-	//	if errors.Is(err, context.Canceled) {
-	//		log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
-	//	} else {
-	//		log.Printf("Error in gossip round (stage %d): %v", stage, err)
-	//		s.endGossip()
-	//		s.clearGossipingWithMap()
-	//		return
-	//	}
-	//	return
-	//}
-	//
-	//log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
+	// Stage 1: Send Digest
+	resp, err := s.sendDigest(ctx, conn)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+		} else {
+			log.Printf("Error in gossip round (stage %d): %v", stage, err)
+			s.endGossip()
+			s.clearGossipingWithMap()
+			return
+		}
+		return
+	}
+
+	log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
 
 	//------------- Handle Completion -------------
 
