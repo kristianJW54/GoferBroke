@@ -314,6 +314,23 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	s.clusterMapLock.Lock()
 
+	//for k, v := range tmpP.keyValues {
+	//	log.Printf("-------------------------------------->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> %s-%+s", k, v.value)
+	//}
+
+	// Log all key-values before adding
+	log.Printf("Before adding to map: Name=%s", name)
+	for k, v := range tmpP.keyValues {
+		log.Printf("Key=%s, Value=%s", k, string(v.value))
+	}
+
+	// Check ADDR specifically
+	if addr, exists := tmpP.keyValues["ADDR"]; exists {
+		log.Printf("ADDR in tmpParticipant: Name=%s, ADDR=%s", name, string(addr.value))
+	} else {
+		log.Printf("ERROR: ADDR missing in tmpParticipant for %s!", name)
+	}
+
 	// Step 1: Add participant to the participants map
 	newParticipant := &Participant{
 		name:      name,
@@ -330,8 +347,9 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		heap.Push(&newParticipant.deltaQ, dq)
 	}
 
-	// Add the participant to the map
+	log.Printf("---------------------------------------------------------------------------------Before adding to map: Name=%s, Addr=%s", name, tmpP.keyValues["ADDR"].value)
 	s.clusterMap.participants[name] = newParticipant
+	//log.Printf("---------------------------------------------------------------------------------After adding to map: Name=%s, Addr=%s", name, s.clusterMap.participants[name].keyValues["ADDR"].value)
 
 	mv, err := newParticipant.getMaxVersion()
 	if err != nil {
@@ -371,7 +389,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // Thread safe
 func (s *GBServer) generateDigest() ([]byte, error) {
 
-	s.clusterMapLock.RLock()
+	s.clusterMapLock.Lock()
 	// First we need to determine if the Digest fits within MTU
 
 	// Check how many participants first - anymore than 40 will definitely exceed MTU
@@ -393,7 +411,7 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 		// TODO Implement overfill strategy for digest
 	}
 
-	s.clusterMapLock.RUnlock()
+	s.clusterMapLock.Unlock()
 
 	// If not, we need to decide if we will stream or do a random subset of participants (increasing propagation time)
 
@@ -768,12 +786,12 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	for i := 0; i < int(ns); i++ {
 
-		s.clusterMapLock.RLock()
+		s.clusterMapLock.Lock()
 		num := rand.Intn(pl) + 1
 		node := s.clusterMap.participantQ[num]
 
 		// TODO Check exist and dial if not --> then throw error if neither work
-		s.clusterMapLock.RUnlock()
+		s.clusterMapLock.Unlock()
 
 		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() { done <- struct{}{} }()
@@ -815,18 +833,18 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//TODO Look at respIDs as a req->resp cycle can only be 1-1. After a completed cycle a new resp ID must be acquired
 	// This means that a node responding to a request cannot generate a new ID to put in the header as it must echo the one received first
 
-	s.clusterMapLock.RLock()
+	s.serverLock.RLock()
 	conn, exists := s.nodeStore[node]
 	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
-	s.clusterMapLock.RUnlock()
+	s.serverLock.RUnlock()
 	if !exists {
-		log.Printf("%s - Node not found in gossip store =================================", s.ServerName)
+		log.Printf("%s - Node %s not found in gossip store =================================", s.ServerName, conn.gbc.RemoteAddr())
 
-		err := s.connectToNodeInMap(ctx, node)
-		if err != nil {
-			log.Printf("error in gossip with node %s ----> %v", conn.gbc.RemoteAddr(), err)
-			return
-		}
+		//err := s.connectToNodeInMap(ctx, node)
+		//if err != nil {
+		//	log.Printf("error in gossip with node %s ----> %v", conn.gbc.RemoteAddr(), err)
+		//	return
+		//}
 		return
 	}
 
@@ -842,21 +860,21 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	stage = 1
 	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
 
-	// Stage 1: Send Digest
-	resp, err := s.sendDigest(ctx, conn)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
-		} else {
-			log.Printf("Error in gossip round (stage %d): %v", stage, err)
-			s.endGossip()
-			s.clearGossipingWithMap()
-			return
-		}
-		return
-	}
+	//// Stage 1: Send Digest
+	//resp, err := s.sendDigest(ctx, conn)
+	//if err != nil {
+	//	if errors.Is(err, context.Canceled) {
+	//		log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+	//	} else {
+	//		log.Printf("Error in gossip round (stage %d): %v", stage, err)
+	//		s.endGossip()
+	//		s.clearGossipingWithMap()
+	//		return
+	//	}
+	//	return
+	//}
 
-	log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
+	//log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
 
 	//------------- Handle Completion -------------
 

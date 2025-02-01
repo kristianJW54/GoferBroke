@@ -223,6 +223,8 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 
 	pi := s.clusterMap.participantQ
 
+	//log.Printf("%s --- length of pi ========================== %v", s.ServerName, len(pi))
+
 	for _, p := range pi {
 
 		participant := s.clusterMap.participants[p.name]
@@ -292,6 +294,7 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 			// Write value length (4 bytes, uint32) and the value itself
 			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.value)))
 			offset += 4
+			//log.Printf("%s value ----- ==================== %s", s.ServerName, v.value)
 			copy(deltaBuf[offset:], v.value)
 			offset += len(v.value)
 

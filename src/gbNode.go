@@ -183,13 +183,13 @@ func (s *GBServer) connectToSeed() error {
 	if err != nil {
 		return err
 	}
+	s.serverLock.Unlock()
 
 	client.mu.Lock()
 	client.name = delta.sender
 	client.mu.Unlock()
 
 	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
-	s.serverLock.Unlock()
 
 	s.incrementNodeConnCount()
 
@@ -208,9 +208,11 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	// Must clean up resources if we get timeout or error response (example - seq ID)
 
+	s.clusterMapLock.RLock()
 	participant := s.clusterMap.participants[node]
 
 	addr := participant.keyValues[_ADDRESS_].value
+	s.clusterMapLock.RUnlock()
 
 	parts := strings.Split(string(addr), ":")
 
@@ -349,11 +351,34 @@ func (c *gbClient) onboardNewJoiner() error {
 	}
 
 	s.clusterMapLock.Lock()
+
+	// TODO ISSUE --> Accessing the cluster map here gives us the wrong values sometimes
+
+	for p, value := range c.srv.clusterMap.participants {
+		log.Printf("%s XXXXXXXXXXXXXXXXXX", p)
+		for k, v := range value.keyValues {
+			log.Printf("%s-%+s", k, v.value)
+		}
+	}
+
 	msg, err := s.serialiseClusterDelta()
 	if err != nil {
 		return err
 	}
+
 	s.clusterMapLock.Unlock()
+
+	//deese, err := deserialiseDelta(msg)
+	//if err != nil {
+	//	return err
+	//}
+
+	//for _, participant := range deese.delta {
+	//	log.Printf("DE-CEREAL ----------------+++++++++++++++++++++++++++++++++")
+	//	for k, v := range participant.keyValues {
+	//		log.Printf("%s-%+s", k, v.value)
+	//	}
+	//}
 
 	hdr := constructNodeHeader(1, INFO_ALL, c.ph.id, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
 
@@ -670,6 +695,13 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
 	// Allow for an error response or retry if this is not correct
 	// TODO - then use method to add to cluster - must do check to see if it is in cluster already, if so we must call update instead
+
+	for _, value := range tmpC.delta {
+		log.Printf("%s ------------ DE-CEREALISING ---------------", c.srv.ServerName)
+		for k, v := range value.keyValues {
+			log.Printf("%s - %+s", k, v.value)
+		}
+	}
 
 	err = c.onboardNewJoiner()
 	if err != nil {
