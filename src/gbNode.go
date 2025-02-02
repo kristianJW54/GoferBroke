@@ -178,12 +178,12 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	// Now we can remove from tmp map and add to client store including connected flag
-	s.serverLock.Lock()
+	//s.serverLock.Lock()
 	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
 		return err
 	}
-	s.serverLock.Unlock()
+	//s.serverLock.Unlock()
 
 	client.mu.Lock()
 	client.name = delta.sender
@@ -258,7 +258,6 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	}
 
 	// From here we then move the temp client to node store and increment the node count
-	s.serverLock.Lock()
 	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
 		return err
@@ -269,7 +268,6 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	client.mu.Unlock()
 
 	//we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
-	s.serverLock.Unlock()
 
 	s.incrementNodeConnCount()
 
@@ -352,14 +350,12 @@ func (c *gbClient) onboardNewJoiner() error {
 
 	s.clusterMapLock.Lock()
 
-	// TODO ISSUE --> Accessing the cluster map here gives us the wrong values sometimes
-
-	for p, value := range c.srv.clusterMap.participants {
-		log.Printf("%s XXXXXXXXXXXXXXXXXX", p)
-		for k, v := range value.keyValues {
-			log.Printf("%s-%+s", k, v.value)
-		}
-	}
+	//for p, value := range c.srv.clusterMap.participants {
+	//	log.Printf("%s XXXXXXXXXXXXXXXXXX", p)
+	//	for k, v := range value.keyValues {
+	//		log.Printf("%s-%+s", k, v.value)
+	//	}
+	//}
 
 	msg, err := s.serialiseClusterDelta()
 	if err != nil {
@@ -696,12 +692,9 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	// Allow for an error response or retry if this is not correct
 	// TODO - then use method to add to cluster - must do check to see if it is in cluster already, if so we must call update instead
 
-	for _, value := range tmpC.delta {
-		log.Printf("%s ------------ DE-CEREALISING ---------------", c.srv.ServerName)
-		for k, v := range value.keyValues {
-			log.Printf("%s - %+s", k, v.value)
-		}
-	}
+	//=========================================
+
+	// TODO When we onboard new joiner we should wait for response before adding to cluster map
 
 	err = c.onboardNewJoiner()
 	if err != nil {

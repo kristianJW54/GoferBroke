@@ -346,8 +346,10 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 	switch client.cType {
 	case NODE:
+		s.serverLock.Lock()
 		s.nodeStore[name] = client
 		log.Printf("%s added %s to node store ------------------------", s.ServerName, name)
+		s.serverLock.Unlock()
 		client.flags.set(CONNECTED)
 		delete(s.tmpClientStore, client.cid)
 	case CLIENT:

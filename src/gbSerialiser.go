@@ -431,6 +431,9 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	// Senders Name Length - 2 bytes
 	// Senders Name
 
+	//s.clusterMapLock.Lock()
+	//defer s.clusterMapLock.Unlock()
+
 	length := 7 + 2 //Including CLRF at the end
 
 	// Include sender's name
@@ -463,11 +466,11 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 
 	for _, v := range s.clusterMap.participantQ {
 
-		value := s.clusterMap.participants[v.name]
+		//value := s.clusterMap.participants[v.name]
 
-		if len(value.name) > 255 {
-			return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.name)
-		}
+		//if len(value.name) > 255 {
+		//	return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.name)
+		//}
 		nameLen := len(v.name)
 		digestBuf[offset] = uint8(nameLen)
 		offset++
