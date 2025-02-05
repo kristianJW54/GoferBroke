@@ -256,9 +256,7 @@ func (c *gbClient) initClient() {
 
 	//c.responseHandler.resp = make(map[int]chan []byte, 10) // Need to align with SeqID pool-size
 
-	respHanlder := &responseHandler{
-		resp: make(map[int]*response, 10),
-	}
+	respHanlder := &responseHandler{}
 
 	c.rh = respHanlder // Need to align with SeqID pool-size
 
@@ -289,15 +287,15 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 	client.initClient()
 
+	client.mu.Unlock()
+
 	//TODO:
 	// At the moment - tmpClientStore is NEEDED in order to effectively close clients on server shutdown
 	// This is important for fault detection as when a node/client goes down we won't know to close the connection unless
 	// we detect it or us as a server shuts down
 	//We also only get a read error once we close the connection - so we need to handle our connections in a robust way
 
-	s.tmpClientStore[client.cid] = client
-
-	client.mu.Unlock()
+	s.tmpConnStore.Store(client.cid, client)
 
 	//TODO before starting the loops - handle TLS Handshake if needed
 	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
@@ -328,13 +326,18 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
-	client, ok := s.tmpClientStore[cid]
-	if !ok {
+	client, exists := s.tmpConnStore.LoadAndDelete(cid)
+	if !exists {
 		return fmt.Errorf("client %v not found", cid)
 	}
 
-	if existingClient, exists := s.nodeStore[name]; exists {
-		log.Printf("Client %s already exists in nodeStore: %+v -- continuing...", name, existingClient)
+	c, ok := client.(*gbClient)
+	if !ok {
+		return fmt.Errorf("client %v is not a client of type gbClient - got: %T", cid, client)
+	}
+
+	if _, exists := s.nodeConnStore.Load(name); exists {
+		return fmt.Errorf("client %s already exists in nodeConnStore: %+v", name, c.gbc)
 	}
 
 	//TODO --> use server ID without timestamp to detect whether a node as restarted if so, check addr to verify and then
@@ -344,17 +347,13 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 	// If client not found we must check our cluster map for both server ID + Addr
 	// If it's in there then we must decide on what to do - gossip and update - remove old entry
 
-	switch client.cType {
+	switch c.cType {
 	case NODE:
-		s.serverLock.Lock()
-		s.nodeStore[name] = client
-		s.serverLock.Unlock()
-		client.flags.set(CONNECTED)
-		delete(s.tmpClientStore, client.cid)
+		s.nodeConnStore.Store(name, c) // TODO Moving to sync.Map so phase out nodeStore
+		c.flags.set(CONNECTED)
 	case CLIENT:
-		s.clientStore[cid] = client
-		client.flags.set(CONNECTED)
-		delete(s.tmpClientStore, client.cid)
+		s.clientStore[cid] = c
+		c.flags.set(CONNECTED)
 	}
 
 	return nil
@@ -671,8 +670,9 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 	}
 }
 
-//---------------------------
-//Node Response Handling
+//===================================================================================
+// Node Response Handling
+//===================================================================================
 
 // TODO Create standard response errors and protocol errors to return on the channel
 
@@ -684,8 +684,7 @@ type response struct {
 }
 
 type responseHandler struct {
-	resp map[int]*response
-	rm   sync.Mutex
+	resp sync.Map
 }
 
 // Maybe resp needs to be an embedded struct of response {type, id, chan}
@@ -698,9 +697,8 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 		id:  seqID,
 	}
 
-	c.rh.rm.Lock()
-	c.rh.resp[seqID] = rsp
-	c.rh.rm.Unlock()
+	c.rh.resp.Store(seqID, rsp) // Store safely in sync.Map
+	log.Printf("response channel made for %v", seqID)
 
 	return rsp
 }
@@ -708,20 +706,15 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 // TODO Need to change cleanup in line with the new qProtoWithResponse - need to run in background and cleanup once channels are drained or timeout
 
 func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
-	c.rh.rm.Lock()
-	defer c.rh.rm.Unlock()
+	if val, ok := c.rh.resp.Load(int(respID)); ok {
+		rsp := val.(*response)
+		c.srv.releaseReqID(respID)
+		close(rsp.ch)
+		close(rsp.err)
+		c.rh.resp.Delete(respID) // Remove safely
 
-	// Check if the response ID still exists in the map
-	if _, exists := c.rh.resp[int(respID)]; !exists {
-		return // Already cleaned up
+		log.Printf("responseCleanup - cleaned up response ID %d", respID)
 	}
-
-	delete(c.rh.resp, int(respID))
-	c.srv.releaseReqID(respID)
-
-	close(rsp.ch)
-	close(rsp.err)
-	log.Printf("responseCleanup - cleaned up response ID %d", respID)
 }
 
 // TODO need to make generic wait for response that a caller can use to wait
@@ -744,17 +737,61 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, 
 	}
 }
 
+func (c *gbClient) waitForResponseAndBlock(ctx context.Context, rsp *response) ([]byte, error) {
+
+	defer c.responseCleanup(rsp, uint16(rsp.id))
+
+	resp, err := c.waitForResponse(ctx, rsp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+
+}
+
+func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, handleResponse func([]byte, error)) {
+
+	defer c.responseCleanup(rsp, uint16(rsp.id))
+
+	go func() {
+		log.Printf("waitForResponseAsync - waiting for response for ID %d", rsp.id)
+
+		resp, err := c.waitForResponse(ctx, rsp)
+		handleResponse(resp, err)
+
+	}()
+
+}
+
+func (c *gbClient) getResponseChannel(id uint16) (*response, error) {
+
+	if id == 0 {
+		return nil, nil
+	}
+
+	responseChan, exists := c.rh.resp.Load(int(id))
+	if !exists {
+		return nil, fmt.Errorf("no response channel found for reqID %d", id)
+	}
+
+	// Type assertion to ensure we have the correct type
+	rsp, ok := responseChan.(*response)
+	if !ok {
+		return nil, fmt.Errorf("invalid type assertion for response channel, reqID: %d", c.ph.reqID)
+	}
+
+	return rsp, nil
+
+}
+
 // Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
-func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []byte, flush bool, sendNow bool) (<-chan []byte, <-chan error) {
-
-	//respID := binary.BigEndian.Uint16(proto[2:4])
-	//log.Printf("resp ID == %v", respID)
+func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []byte, flush bool, sendNow bool) *response {
 
 	// TODO Do we need locks here
 	c.mu.Lock()
 	responseChannel := c.addResponseChannel(int(id))
-	//defer c.responseCleanup(responseChannel, id)
 	c.mu.Unlock()
 
 	if sendNow && !flush {
@@ -779,7 +816,7 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []by
 		// We have to block and wait until we get a signal to continue the process which requested a response
 	}
 
-	return responseChannel.ch, responseChannel.err
+	return responseChannel
 }
 
 //===================================================================================

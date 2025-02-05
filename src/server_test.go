@@ -65,12 +65,19 @@ func (s *GBServer) simulateConnectionLoss() {
 	defer s.serverLock.Unlock()
 
 	// Close all active client connections
-	for _, client := range s.tmpClientStore {
-		err := client.gbc.Close() // Assuming client.conn is of type net.Conn
-		if err != nil {
-			log.Printf("Failed to close client connection: %v", err)
+	s.tmpConnStore.Range(func(key, value interface{}) bool {
+		log.Printf("closing temp node %s", key)
+		c, ok := value.(*gbClient)
+		if !ok {
+			log.Printf("Error: expected *gbClient but got %T for key %v", value, key)
+			return true // Continue iteration
 		}
-	}
+		if c.gbc != nil {
+			c.gbc.Close()
+		}
+		s.tmpConnStore.Delete(key)
+		return true
+	})
 
 	log.Println("All existing connections have been closed to simulate network loss")
 }

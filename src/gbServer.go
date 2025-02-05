@@ -130,9 +130,11 @@ type GBServer struct {
 	numNodeConnections   int64 //Atomically incremented
 	numClientConnections int64 //Atomically incremented
 
-	tmpClientStore map[uint64]*gbClient
-	nodeStore      map[string]*gbClient // TODO May want to possibly embed this into the clusterMap?
-	clientStore    map[uint64]*gbClient
+	// TODO Use sync.Map instead for connection storing
+	clientStore map[uint64]*gbClient
+
+	tmpConnStore  sync.Map
+	nodeConnStore sync.Map
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response
@@ -194,11 +196,9 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
 
-		gbConfig:       gbConfig,
-		seedAddr:       make([]*net.TCPAddr, 0),
-		tmpClientStore: make(map[uint64]*gbClient),
-		nodeStore:      make(map[string]*gbClient),
-		clientStore:    make(map[uint64]*gbClient),
+		gbConfig:    gbConfig,
+		seedAddr:    make([]*net.TCPAddr, 0),
+		clientStore: make(map[uint64]*gbClient),
 
 		selfInfo:   selfInfo,
 		clusterMap: *initClusterMap(srvName, nodeTCPAddr, selfInfo),
@@ -338,19 +338,35 @@ func (s *GBServer) Shutdown() {
 	}
 
 	//Close connections
-	for name, client := range s.nodeStore {
-		log.Printf("%s closing client from NodeStore %s\n", s.ServerName, name)
-		client.gbc.Close()
-		delete(s.nodeStore, name)
-	}
+	s.tmpConnStore.Range(func(key, value interface{}) bool {
+		c, ok := value.(*gbClient)
+		if !ok {
+			log.Printf("Error: expected *gbClient but got %T for key %v", value, key)
+			return true // Continue iteration
+		}
+		if c.gbc != nil {
+			log.Printf("%s -- closing temp node %s", s.ServerName, key)
+			c.gbc.Close()
+		}
+		s.tmpConnStore.Delete(key)
+		return true
+	})
 
 	s.clearNodeConnCount()
 
-	for name, client := range s.tmpClientStore {
-		//log.Printf("%s closing client from TmpStore %d\n", s.ServerName, name)
-		client.gbc.Close()
-		delete(s.tmpClientStore, name)
-	}
+	s.nodeConnStore.Range(func(key, value interface{}) bool {
+		c, ok := value.(*gbClient)
+		if !ok {
+			log.Printf("Error: expected *gbClient but got %T for key %v", value, key)
+			return true
+		}
+		if c.gbc != nil {
+			log.Printf("%s -- closing node %s", s.ServerName, key)
+			c.gbc.Close()
+		}
+		s.nodeConnStore.Delete(key)
+		return true
+	})
 
 	//s.serverLock.Unlock()
 
@@ -731,13 +747,20 @@ func (s *GBServer) clearNodeConnCount() {
 //----------------
 // Node Store
 
-func (s *GBServer) checkNodeStore(node string) (*gbClient, error) {
+// TODO Finish implementing - need to do a dial check so nodes can dial or if a valid error then return that instead
+func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 
-	conn, exists := s.nodeStore[node]
-	if !exists {
-		return nil, fmt.Errorf("node %s not in store -- proceeding to dial", node)
+	c, exists := s.nodeConnStore.Load(node)
+
+	gbc, ok := c.(*gbClient)
+	if !ok {
+		return nil, false, fmt.Errorf("%s - getNodeConnFromStore type assertion error for node %s - should be type gbClient got %T", s.ServerName, node, c)
 	}
 
-	return conn, nil
+	if !exists {
+		return nil, false, fmt.Errorf("node %s not in store -- proceeding to dial", node)
+	}
+
+	return gbc, true, nil
 
 }

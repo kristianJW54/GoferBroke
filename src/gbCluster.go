@@ -449,25 +449,34 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 
 	// Send the digest and wait for a response
-	respChan, errChan := conn.qProtoWithResponse(ctx, reqID, cereal, true, true)
+	resp := conn.qProtoWithResponse(ctx, reqID, cereal, true, true)
+	//if err != nil {
+	//	log.Printf("sendDigest - qProtoWithResponse setup error: %v", err)
+	//	return nil, err
+	//}
+
+	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
-		log.Printf("sendDigest - qProtoWithResponse setup error: %v", err)
 		return nil, err
 	}
 
-	select {
-	case resp := <-respChan:
-		log.Printf("sendDigest - received response: %s", string(resp))
-		return resp, nil
+	log.Printf("r = %s", r)
 
-	case err := <-errChan:
-		log.Printf("sendDigest - received error: %v", err)
-		return nil, err
+	return r, nil
 
-	case <-ctx.Done():
-		log.Printf("sendDigest - context canceled for node: %v", ctx.Err())
-		return nil, ctx.Err()
-	}
+	//select {
+	//case resp := <-respChan:
+	//	log.Printf("sendDigest - received response: %s", string(resp))
+	//	return resp, nil
+	//
+	//case err := <-errChan:
+	//	log.Printf("sendDigest - received error: %v", err)
+	//	return nil, err
+	//
+	//case <-ctx.Done():
+	//	log.Printf("sendDigest - context canceled for node: %v", ctx.Err())
+	//	return nil, ctx.Err()
+	//}
 
 }
 
@@ -835,19 +844,22 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// This means that a node responding to a request cannot generate a new ID to put in the header as it must echo the one received first
 
 	//s.serverLock.Lock()
-	conn, exists := s.nodeStore[node]
+	conn, exists, err := s.getNodeConnFromStore(node)
 	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 	//s.serverLock.Unlock()
-	if !exists {
+	// TODO Fix nil pointer deference here
+	if err == nil && !exists {
 		err := s.connectToNodeInMap(ctx, node)
 		if err != nil {
-			log.Printf("error in gossip with node %s ----> %v", conn.gbc.RemoteAddr(), err)
+			log.Printf("error in gossip with node %s ----> %v", node, err)
 			return
 		}
 		return
+	} else if err != nil {
+		log.Printf("error in gossip with node %s ----> %v", node, err)
 	}
 
-	err := s.storeGossipingWith(node)
+	err = s.storeGossipingWith(node)
 	if err != nil {
 		return
 	}

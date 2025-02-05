@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 )
 
 const (
@@ -90,7 +89,7 @@ func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
 	header[12] = '\r'
 	header[13] = '\n'
 
-	log.Println("Header:", header)
+	//log.Println("Header:", header)
 
 	return header, nil
 
