@@ -95,15 +95,15 @@ func TestGossipSignal(t *testing.T) {
 	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 	gbs2 := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
 	gbs3 := NewServer("test-server", 3, config, "localhost", "8085", "8083", lc)
-	gbs4 := NewServer("test-server-4", 4, config, "localhost", "8086", "8083", lc)
+	//gbs4 := NewServer("test-server-4", 4, config, "localhost", "8086", "8083", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs3.StartServer()
-	time.Sleep(1 * time.Second)
-	go gbs4.StartServer()
+	//time.Sleep(1 * time.Second)
+	//go gbs4.StartServer()
 	time.Sleep(6 * time.Second)
 
 	gbs2.serverContext.Done()
@@ -113,7 +113,7 @@ func TestGossipSignal(t *testing.T) {
 	go gbs2.Shutdown()
 	go gbs.Shutdown()
 	go gbs3.Shutdown()
-	go gbs4.Shutdown()
+	//go gbs4.Shutdown()
 
 	//for _, value := range gbs.clusterMap.participants {
 	//	log.Printf("name = %s", value.name)
@@ -127,7 +127,7 @@ func TestGossipSignal(t *testing.T) {
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
 	gbs3.logActiveGoRoutines()
-	gbs4.logActiveGoRoutines()
+	//gbs4.logActiveGoRoutines()
 
 }
 

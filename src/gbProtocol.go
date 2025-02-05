@@ -3,6 +3,7 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 )
 
 const (
@@ -17,7 +18,7 @@ const (
 const (
 	PROTO_VERSION_1     uint8 = 1
 	HEADER_SIZE_V1            = 6
-	NODE_HEADER_SIZE_V1       = 11
+	NODE_HEADER_SIZE_V1       = 14
 )
 
 const (
@@ -49,7 +50,8 @@ var respOK = []byte("1 -+- OK -+-\r\n")
 type nodePacketHeader struct {
 	version             uint8
 	command             uint8
-	id                  uint8
+	requestID           uint16
+	respID              uint16
 	msgSize             uint16
 	headerSize          uint16
 	streamBatchSize     uint8
@@ -61,8 +63,8 @@ type nodePacket struct {
 	data []byte
 }
 
-func constructNodeHeader(version, command, id uint8, msgSize, headerSize uint16, batchSize, batchSequence uint8) *nodePacketHeader {
-	return &nodePacketHeader{version, command, id, msgSize, headerSize, batchSize, batchSequence}
+func constructNodeHeader(version, command uint8, reqID, respID, msgSize, headerSize uint16, batchSize, batchSequence uint8) *nodePacketHeader {
+	return &nodePacketHeader{version, command, reqID, respID, msgSize, headerSize, batchSize, batchSequence}
 }
 
 func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
@@ -78,13 +80,17 @@ func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
 	header := make([]byte, NODE_HEADER_SIZE_V1)
 	header[0] = nph.version
 	header[1] = nph.command
-	header[2] = nph.id
-	binary.BigEndian.PutUint16(header[3:5], nph.msgSize)
-	binary.BigEndian.PutUint16(header[5:7], nph.headerSize)
-	header[7] = nph.streamBatchSize
-	header[8] = nph.streamBatchSequence
-	header[9] = '\r'
-	header[10] = '\n'
+	binary.BigEndian.PutUint16(header[2:4], nph.requestID)
+	binary.BigEndian.PutUint16(header[4:6], nph.respID)
+
+	binary.BigEndian.PutUint16(header[6:8], nph.msgSize)
+	binary.BigEndian.PutUint16(header[8:10], nph.headerSize)
+	header[10] = nph.streamBatchSize
+	header[11] = nph.streamBatchSequence
+	header[12] = '\r'
+	header[13] = '\n'
+
+	log.Println("Header:", header)
 
 	return header, nil
 

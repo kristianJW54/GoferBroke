@@ -150,16 +150,37 @@ func (s *GBServer) connectToSeed() error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	pay1, err := s.prepareSelfInfoSend(INFO, -1)
+	respID, err := s.acquireReqID()
+	if err != nil {
+		return err
+	}
+
+	pay1, err := s.prepareSelfInfoSend(INFO, int(respID), 0)
 	if err != nil {
 		return err
 	}
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	rsp, err := client.qProtoWithResponse(ctx, pay1, false, true)
+	rspChan, errChan := client.qProtoWithResponse(ctx, respID, pay1, false, true)
 	if err != nil {
 		return fmt.Errorf("%s response error in connect to seed: %s", s.ServerName, err)
+	}
+
+	// Wait for either a response or an error
+	var rsp []byte
+
+	select {
+	case rsp = <-rspChan:
+		log.Printf("Received response: %s", string(rsp))
+
+	case err = <-errChan:
+		log.Printf("Error received: %v", err)
+		return err
+
+	case <-ctx.Done():
+		log.Printf("Timeout or cancellation while waiting for response")
+		return ctx.Err()
 	}
 	// If we receive no error we can assume the response was received and continue
 
@@ -233,29 +254,39 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		return fmt.Errorf("error connecting to server: %s", err)
 	}
 
-	info, err := s.prepareSelfInfoSend(HANDSHAKE, -1)
+	info, err := s.prepareSelfInfoSend(HANDSHAKE, -1, 0)
 	if err != nil {
 		return err
 	}
-	log.Printf("%s - Sending self info to gossip --> %s", s.ServerName, info)
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
 	// Flush is false because we have started a new client routine and write loop + signals may not be up yet
-	resp, err := client.qProtoWithResponse(ctx, info, false, true)
+	rspChan, errChan := client.qProtoWithResponse(ctx, 0, info, false, true)
 	if err != nil {
-		return fmt.Errorf("response error in connect to seed: %s", err)
+		return fmt.Errorf("%s response error in connect to seed: %s", s.ServerName, err)
+	}
+
+	// Wait for either a response or an error
+	var rsp []byte
+
+	select {
+	case rsp = <-rspChan:
+		log.Printf("Received response: %s", string(rsp))
+
+	case err = <-errChan:
+		log.Printf("Error received: %v", err)
+		return err
+
+	case <-ctx.Done():
+		log.Printf("Timeout or cancellation while waiting for response")
+		return ctx.Err()
 	}
 	// If we receive no error we can assume the response was received and continue
 
 	// First de-serialise the delta and then we can move sender to store
 
-	delta, err := deserialiseDelta(resp)
-
-	for _, participant := range delta.delta {
-		log.Printf("%s -- sender = %s", s.ServerName, delta.sender)
-		log.Printf("%+v", participant.keyValues)
-	}
+	delta, err := deserialiseDelta(rsp)
 
 	// From here we then move the temp client to node store and increment the node count
 	err = s.moveToConnected(client.cid, delta.sender)
@@ -279,9 +310,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 // prepareSelfInfoSend gathers the servers deltas into a participant to send over the network. We only send our self info under the assumption that we are a new node
 // and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the receiving node will detect this by
 // running a check on our ServerID + address
-func (s *GBServer) prepareSelfInfoSend(command int, respID int) ([]byte, error) {
-
-	var seq uint8
+func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, error) {
 
 	s.clusterMapLock.RLock()
 
@@ -291,20 +320,12 @@ func (s *GBServer) prepareSelfInfoSend(command int, respID int) ([]byte, error) 
 		return nil, err
 	}
 
-	if respID != -1 {
-		seq = uint8(respID)
-	} else {
-		// Acquire sequence ID
-		seq, err = s.acquireReqID()
-		if err != nil {
-			return nil, err
-		}
-	}
+	log.Printf("seq %v", reqID)
 
 	s.clusterMapLock.RUnlock()
 
 	// Construct header
-	header := constructNodeHeader(1, uint8(command), seq, uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, uint8(command), uint16(reqID), uint16(respID), uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
 	// Create packet
 	packet := &nodePacket{
 		header,
@@ -350,13 +371,6 @@ func (c *gbClient) onboardNewJoiner() error {
 
 	s.clusterMapLock.Lock()
 
-	//for p, value := range c.srv.clusterMap.participants {
-	//	log.Printf("%s XXXXXXXXXXXXXXXXXX", p)
-	//	for k, v := range value.keyValues {
-	//		log.Printf("%s-%+s", k, v.value)
-	//	}
-	//}
-
 	msg, err := s.serialiseClusterDelta()
 	if err != nil {
 		return err
@@ -364,38 +378,47 @@ func (c *gbClient) onboardNewJoiner() error {
 
 	s.clusterMapLock.Unlock()
 
-	//deese, err := deserialiseDelta(msg)
+	// TODO -- We should be able to specify a responder ID here now which will chain the request-response cycle
+
+	//respID, err := s.acquireReqID()
 	//if err != nil {
 	//	return err
 	//}
 
-	//for _, participant := range deese.delta {
-	//	log.Printf("DE-CEREAL ----------------+++++++++++++++++++++++++++++++++")
-	//	for k, v := range participant.keyValues {
-	//		log.Printf("%s-%+s", k, v.value)
-	//	}
-	//}
-
-	hdr := constructNodeHeader(1, INFO_ALL, c.ph.id, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
+	hdr := constructNodeHeader(1, INFO_ALL, c.ph.reqID, 1, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
 
 	packet := &nodePacket{
 		hdr,
 		msg,
 	}
 
-	//log.Printf("packet == %s", packet.data)
-	//log.Printf("header == %v", packet.nodePacketHeader)
-
 	pay1, err := packet.serialize()
 	if err != nil {
 		return err
 	}
 
+	//TODO Wait for response is causing a deadlock - need to look at if we want to chain request-response cycle
+	// if queue with response is used
+
+	//ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second)
+	//defer cancel()
+	//
+	//resp, err := c.qProtoWithResponse(ctx, 1, pay1, true, true)
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//log.Printf("onboard response = %v", string(resp))
+	//
+	//if resp != nil {
+	//	return nil
+	//}
+
 	c.mu.Lock()
 	c.qProto(pay1, true)
 	c.mu.Unlock()
 
-	return nil
+	return fmt.Errorf("no response in onboardNewJoiner")
 
 }
 
@@ -406,10 +429,11 @@ func (c *gbClient) processArg(arg []byte) error {
 
 	if len(arg) >= 4 {
 		c.ph.version = arg[0]
-		c.ph.id = arg[2]
 		c.ph.command = arg[1]
+		c.ph.reqID = binary.BigEndian.Uint16(arg[2:4])
+		c.ph.respID = binary.BigEndian.Uint16(arg[4:6])
 		// Extract the last 4 bytes
-		msgLengthBytes := arg[3:5]
+		msgLengthBytes := arg[6:8]
 		// Convert those 4 bytes to uint32 (BigEndian)
 		c.ph.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
 
@@ -420,13 +444,13 @@ func (c *gbClient) processArg(arg []byte) error {
 	}
 
 	c.argBuf = arg
-	//log.Printf("arg == %v", c.argBuf)
+	log.Printf("arg == %v", c.argBuf)
 
 	return nil
 }
 
 //===================================================================================
-// Parser Message Processing - Dispatched from processMessage()
+// Parser Message Processing - Dispatched from processMessage() called in parser
 //===================================================================================
 
 //---------------------------
@@ -466,8 +490,7 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 func (c *gbClient) processErrResp(message []byte) {
 
 	c.rh.rm.Lock()
-	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
-	//log.Printf("response channel == %v", c.rh.resp[int(c.argBuf[2])])
+	responseChan, exists := c.rh.resp[int(c.ph.reqID)]
 	c.rh.rm.Unlock()
 
 	msg := make([]byte, len(message))
@@ -488,7 +511,7 @@ func (c *gbClient) processErrResp(message []byte) {
 func (c *gbClient) processInfoAll(message []byte) {
 
 	c.rh.rm.Lock()
-	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	requestChan, exists := c.rh.resp[int(c.ph.reqID)]
 	c.rh.rm.Unlock()
 
 	msg := make([]byte, len(message))
@@ -497,7 +520,24 @@ func (c *gbClient) processInfoAll(message []byte) {
 	if exists {
 
 		// We just send the message and allow the caller to specify what they do with it
-		responseChan.ch <- msg
+		requestChan.ch <- msg
+		if c.ph.respID != 0 {
+			log.Printf("we have a responder to respond to -- %v", c.ph.respID)
+			header := constructNodeHeader(1, OK, 0, c.ph.respID, uint16(len(respOK)), NODE_HEADER_SIZE_V1, 0, 0)
+			packet := &nodePacket{
+				header,
+				respOK,
+			}
+
+			pay, err := packet.serialize()
+			if err != nil {
+				log.Printf("error serialising packet - %v", err)
+			}
+
+			c.mu.Lock()
+			c.qProto(pay, true)
+			c.mu.Unlock()
+		}
 
 	} else {
 		log.Printf("no response channel found")
@@ -517,7 +557,7 @@ func (c *gbClient) processHandShake(message []byte) {
 	// TODO Finish this
 	// Send HandShake Response here
 	// --
-	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(c.ph.id))
+	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(c.ph.reqID), 0)
 	if err != nil {
 		log.Printf("prepareSelfInfoSend failed: %v", err)
 	}
@@ -552,7 +592,7 @@ func (c *gbClient) processHandShake(message []byte) {
 func (c *gbClient) processHandShakeResp(message []byte) {
 
 	c.rh.rm.Lock()
-	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	responseChan, exists := c.rh.resp[int(c.ph.reqID)]
 	c.rh.rm.Unlock()
 
 	msg := make([]byte, len(message))
@@ -589,8 +629,10 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 
 func (c *gbClient) processOK(message []byte) {
 
+	log.Printf("resp id for ok == %v", int(c.ph.reqID))
+
 	c.rh.rm.Lock()
-	responseChan, exists := c.rh.resp[int(c.argBuf[2])]
+	responseChan, exists := c.rh.resp[int(c.ph.reqID)]
 	c.rh.rm.Unlock()
 
 	msg := make([]byte, len(message))
@@ -642,7 +684,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 		// TODO Package common error responses into a function (same with ok + responses)
 
-		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.id, uint16(len(gossipError)), NODE_HEADER_SIZE_V1, 0, 0)
+		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(gossipError)), NODE_HEADER_SIZE_V1, 0, 0)
 		errPacket := &nodePacket{
 			errHeader,
 			gossipError,
@@ -661,7 +703,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	}
 
-	header := constructNodeHeader(1, OK, c.ph.id, uint16(len(respOK)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(respOK)), NODE_HEADER_SIZE_V1, 0, 0)
 	packet := &nodePacket{
 		header,
 		respOK,
@@ -714,13 +756,13 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	}
 
 	// Move the tmpClient to connected as it has provided its info which we have now stored
-	err = c.srv.moveToConnected(c.cid, tmpC.sender)
-	if err != nil {
-		log.Printf("MoveToConnected failed in process info message: %v", err)
-	}
+	//err = c.srv.moveToConnected(c.cid, tmpC.sender)
+	//if err != nil {
+	//	log.Printf("MoveToConnected failed in process info message: %v", err)
+	//}
 
 	// TODO Monitor the server lock here and be mindful
-	c.srv.incrementNodeConnCount()
+	//c.srv.incrementNodeConnCount()
 
 	return
 

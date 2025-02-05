@@ -348,7 +348,6 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 	case NODE:
 		s.serverLock.Lock()
 		s.nodeStore[name] = client
-		log.Printf("%s added %s to node store ------------------------", s.ServerName, name)
 		s.serverLock.Unlock()
 		client.flags.set(CONNECTED)
 		delete(s.tmpClientStore, client.cid)
@@ -706,7 +705,9 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 	return rsp
 }
 
-func (c *gbClient) responseCleanup(rsp *response, respID byte) {
+// TODO Need to change cleanup in line with the new qProtoWithResponse - need to run in background and cleanup once channels are drained or timeout
+
+func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 	c.rh.rm.Lock()
 	defer c.rh.rm.Unlock()
 
@@ -723,7 +724,7 @@ func (c *gbClient) responseCleanup(rsp *response, respID byte) {
 	log.Printf("responseCleanup - cleaned up response ID %d", respID)
 }
 
-// TODO need to make a cleanup function to defer cleanup of resources and close channels and return hanging ID's
+// TODO need to make generic wait for response that a caller can use to wait
 
 func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, error) {
 	select {
@@ -745,14 +746,15 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, 
 
 // Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
-func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush bool, sendNow bool) ([]byte, error) {
+func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []byte, flush bool, sendNow bool) (<-chan []byte, <-chan error) {
 
-	respID := proto[2]
+	//respID := binary.BigEndian.Uint16(proto[2:4])
+	//log.Printf("resp ID == %v", respID)
 
 	// TODO Do we need locks here
 	c.mu.Lock()
-	responseChannel := c.addResponseChannel(int(respID))
-	defer c.responseCleanup(responseChannel, respID)
+	responseChannel := c.addResponseChannel(int(id))
+	//defer c.responseCleanup(responseChannel, id)
 	c.mu.Unlock()
 
 	if sendNow && !flush {
@@ -766,14 +768,6 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 		// Wait for the response with timeout
 		// We have to block and wait until we get a signal to continue the process which requested a response
 
-		ok, err := c.waitForResponse(ctx, responseChannel)
-
-		if err != nil {
-			return nil, err
-		}
-		// If no error we may want to run the callback function here??
-		return ok, nil
-
 	} else if sendNow {
 		// Client lock to flush outbound
 		c.mu.Lock()
@@ -783,17 +777,9 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, proto []byte, flush b
 
 		// Wait for the response with timeout
 		// We have to block and wait until we get a signal to continue the process which requested a response
-
-		ok, err := c.waitForResponse(ctx, responseChannel)
-		if err != nil {
-			return nil, err
-		}
-		log.Printf("GOT RESPONSE WOOOOO")
-		// If no error we may want to run the callback function here??
-		return ok, nil
 	}
 
-	return nil, fmt.Errorf("response error - exiting")
+	return responseChannel.ch, responseChannel.err
 }
 
 //===================================================================================

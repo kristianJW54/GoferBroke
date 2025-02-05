@@ -314,17 +314,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	s.clusterMapLock.Lock()
 
-	//for k, v := range tmpP.keyValues {
-	//	log.Printf("-------------------------------------->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> %s-%+s", k, v.value)
-	//}
-
-	// Check ADDR specifically
-	//if addr, exists := tmpP.keyValues[_ADDRESS_]; exists {
-	//	log.Printf("ADDR in tmpParticipant: Name=%s, ADDR=%s", name, string(addr.value))
-	//} else {
-	//	log.Printf("ERROR: ADDR missing in tmpParticipant for %s!", name)
-	//}
-
 	// Step 1: Add participant to the participants map
 	newParticipant := &Participant{
 		name:      name,
@@ -355,10 +344,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		}
 		heap.Push(&newParticipant.deltaQ, dq)
 	}
-
-	log.Printf("--------------------------------------------------Before adding to map: Name=%s, Addr=%s", name, tmpP.keyValues["ADDR"].value)
 	s.clusterMap.participants[name] = newParticipant
-	//log.Printf("---------------------------------------------------------------------------------After adding to map: Name=%s, Addr=%s", name, s.clusterMap.participants[name].keyValues["ADDR"].value)
 
 	mv, err := newParticipant.getMaxVersion()
 	if err != nil {
@@ -444,7 +430,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 
 	// Construct the packet
-	header := constructNodeHeader(1, GOSS_SYN, reqID, uint16(len(digest)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, GOSS_SYN, reqID, 0, uint16(len(digest)), NODE_HEADER_SIZE_V1, 0, 0)
 	packet := &nodePacket{
 		header,
 		digest,
@@ -463,18 +449,26 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 
 	// Send the digest and wait for a response
-	resp, err := conn.qProtoWithResponse(ctx, cereal, true, true)
+	respChan, errChan := conn.qProtoWithResponse(ctx, reqID, cereal, true, true)
 	if err != nil {
-		// Explicitly handle context cancellations
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			log.Printf("sendDigest - context canceled for node: %v", err)
-			return nil, err
-		}
-
-		return nil, fmt.Errorf("sendDigest - qProtoWithResponse error: %w", err)
+		log.Printf("sendDigest - qProtoWithResponse setup error: %v", err)
+		return nil, err
 	}
 
-	return resp, nil
+	select {
+	case resp := <-respChan:
+		log.Printf("sendDigest - received response: %s", string(resp))
+		return resp, nil
+
+	case err := <-errChan:
+		log.Printf("sendDigest - received error: %v", err)
+		return nil, err
+
+	case <-ctx.Done():
+		log.Printf("sendDigest - context canceled for node: %v", ctx.Err())
+		return nil, ctx.Err()
+	}
+
 }
 
 //=======================================================
@@ -698,7 +692,6 @@ func (s *GBServer) startGossipProcess() bool {
 				// TODO Currently the context.Err() is nil when we get stuck in the skip loop
 
 				log.Printf("%s - Skipping gossip round because a round is already active", s.ServerName)
-				log.Printf("logging the context and shutting down signal here because im confused %v %v", s.serverContext.Err(), s.flags.isSet(SHUTTING_DOWN))
 
 				continue
 			}
@@ -817,11 +810,10 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 			log.Printf("%s - Gossip round canceled: %v", s.ServerName, ctx.Err())
 			return
 		case <-done:
-			log.Printf("%s - Node gossip task completed", s.ServerName)
+			//log.Printf("%s - Node gossip task completed", s.ServerName)
+			return
 		}
 	}
-
-	log.Printf("%s gossip round complete", s.ServerName)
 
 	return
 
@@ -847,8 +839,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 	//s.serverLock.Unlock()
 	if !exists {
-		log.Printf("%s - Node %s not found in gossip store =================================", s.ServerName, node)
-
 		err := s.connectToNodeInMap(ctx, node)
 		if err != nil {
 			log.Printf("error in gossip with node %s ----> %v", conn.gbc.RemoteAddr(), err)
@@ -886,6 +876,10 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	}
 
 	log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
+
+	//------------- GOSS_SYN_ACK Stage 2 -------------//
+
+	//----
 
 	//------------- Handle Completion -------------
 

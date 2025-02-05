@@ -657,16 +657,16 @@ type seqReqPool struct {
 	reqPool *sync.Pool
 }
 
-func newSeqReqPool(poolSize uint8) *seqReqPool {
-	if poolSize > 255 {
-		poolSize = 255
+func newSeqReqPool(poolSize uint16) *seqReqPool {
+	if poolSize > 65535 {
+		poolSize = 65535
 	} else if poolSize == 0 {
-		poolSize = 10
+		poolSize = 100
 	}
 
-	sequence := make(chan uint8, poolSize)
+	sequence := make(chan uint16, poolSize)
 	for i := 1; i < int(poolSize)+1; i++ {
-		sequence <- uint8(i)
+		sequence <- uint16(i)
 	}
 
 	return &seqReqPool{
@@ -685,16 +685,16 @@ func newSeqReqPool(poolSize uint8) *seqReqPool {
 	}
 }
 
-func (s *GBServer) acquireReqID() (uint8, error) {
+func (s *GBServer) acquireReqID() (uint16, error) {
 	id := s.nodeReqPool.reqPool.Get()
 	if id == nil {
 		return 0, fmt.Errorf("no id available")
 	}
 	//log.Printf("acquiring id - %v", id)
-	return id.(uint8), nil
+	return id.(uint16), nil
 }
 
-func (s *GBServer) releaseReqID(id uint8) {
+func (s *GBServer) releaseReqID(id uint16) {
 	//log.Printf("Releasing sequence ID %d back to the pool", id)
 	s.nodeReqPool.reqPool.Put(id)
 }

@@ -1,5 +1,7 @@
 package src
 
+import "log"
+
 const (
 	START = iota
 	VERSION1
@@ -51,7 +53,8 @@ type stateMachine struct {
 type parseHeader struct {
 	version      uint8
 	command      uint8
-	id           uint8
+	reqID        uint16
+	respID       uint16
 	keyLength    int
 	valueLength  int
 	msgLength    int
@@ -386,7 +389,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 
-			//log.Printf("%s = final message --> %s\n\n", c.srv.ServerName, string(c.msgBuf))
+			log.Printf("%s = final message --> %s\n\n", c.srv.ServerName, string(c.msgBuf))
 
 			c.processMessage(c.msgBuf)
 
