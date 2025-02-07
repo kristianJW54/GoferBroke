@@ -2,6 +2,7 @@ package src
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 )
 
@@ -35,13 +36,35 @@ const (
 // Node Response Errors
 //=====================================================================
 
+// Error message constants
+const gossipErrorMsg = "11 -x- Gossip deferred -x-\r\n"
+
 var gossipError = []byte("11 -x- Gossip deferred -x-\r\n")
+
+// Create an error object for internal use
+
+var GossipError = errors.New(gossipErrorMsg)
+
+func errorToBytes(errMsg error) []byte {
+	if errMsg == nil {
+		return nil
+	}
+	return []byte(errMsg.Error())
+}
+
+func bytesToError(errMsg []byte) error {
+	if len(errMsg) == 0 {
+		return nil
+	}
+	return errors.New(string(errMsg))
+}
 
 //=====================================================================
 // Node Response Success
 //=====================================================================
 
-var respOK = []byte("1 -+- OK -+-\r\n")
+var OKRequester = []byte("1 -+- OK -+-\r\n")
+var OKResponder = []byte("2 -+- OK RESP -+-\r\n")
 
 //------------------------
 //Packet constructor and serialisation

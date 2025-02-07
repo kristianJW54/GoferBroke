@@ -356,12 +356,14 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 
 	// TODO -- We should be able to specify a responder ID here now which will chain the request-response cycle
 
-	//respID, err := s.acquireReqID()
-	//if err != nil {
-	//	return err
-	//}
+	respID, err := s.acquireReqID()
+	if err != nil {
+		return err
+	}
 
-	hdr := constructNodeHeader(1, INFO_ALL, c.ph.reqID, 1, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
+	log.Printf("respID in onboard == %v", respID)
+
+	hdr := constructNodeHeader(1, INFO_ALL, c.ph.reqID, respID, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
 
 	packet := &nodePacket{
 		hdr,
@@ -376,18 +378,32 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 	//TODO Wait for response is causing a deadlock - need to look at if we want to chain request-response cycle
 	// if queue with response is used
 
-	c.mu.Lock()
-	c.qProto(pay1, true)
-	c.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+	//defer cancel()
 
-	// Move the tmpClient to connected as it has provided its info which we have now stored
-	err = c.srv.moveToConnected(c.cid, cd.sender)
-	if err != nil {
-		log.Printf("MoveToConnected failed in process info message: %v", err)
-	}
+	resp := c.qProtoWithResponse(ctx, respID, pay1, true, true)
 
-	// TODO Monitor the server lock here and be mindful
-	c.srv.incrementNodeConnCount()
+	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
+
+		defer cancel()
+		if err != nil {
+			log.Printf("error in onboardNewJoiner: %v", err)
+		}
+
+		log.Printf("response from onboardNewJoiner: %v", string(bytes))
+		err = c.srv.moveToConnected(c.cid, cd.sender)
+		if err != nil {
+			log.Printf("MoveToConnected failed in process info message: %v", err)
+		}
+
+		// TODO Monitor the server lock here and be mindful
+		c.srv.incrementNodeConnCount()
+
+	})
+
+	//c.mu.Lock()
+	//c.qProto(pay1, true)
+	//c.mu.Unlock()
 
 	return nil
 
@@ -415,6 +431,7 @@ func (c *gbClient) processArg(arg []byte) error {
 	}
 
 	c.argBuf = arg
+	log.Printf("response ID in processArg: %v", c.ph.respID)
 	//log.Printf("arg == %v", c.argBuf)
 
 	return nil
@@ -450,6 +467,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processGossAck(message)
 	case OK:
 		c.processOK(message)
+	case OK_RESP:
+		c.processOKResp(message)
 	case ERR_RESP:
 		c.processErrResp(message)
 	default:
@@ -498,23 +517,23 @@ func (c *gbClient) processInfoAll(message []byte) {
 	select {
 	case rsp.ch <- msg:
 		log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
-		//if c.ph.respID != 0 {
-		//	log.Printf("we have a responder to respond to -- %v", c.ph.respID)
-		//	header := constructNodeHeader(1, OK, 0, c.ph.respID, uint16(len(respOK)), NODE_HEADER_SIZE_V1, 0, 0)
-		//	packet := &nodePacket{
-		//		header,
-		//		respOK,
-		//	}
-		//
-		//	pay, err := packet.serialize()
-		//	if err != nil {
-		//		log.Printf("error serialising packet - %v", err)
-		//	}
-		//
-		//	c.mu.Lock()
-		//	c.qProto(pay, true)
-		//	c.mu.Unlock()
-		//}
+		if c.ph.respID != 0 {
+			log.Printf("we have a responder to respond to -- %v", c.ph.respID)
+			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1, 0, 0)
+			packet := &nodePacket{
+				header,
+				OKResponder,
+			}
+
+			pay, err := packet.serialize()
+			if err != nil {
+				log.Printf("error serialising packet - %v", err)
+			}
+
+			c.mu.Lock()
+			c.qProto(pay, true)
+			c.mu.Unlock()
+		}
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 		return
@@ -621,6 +640,33 @@ func (c *gbClient) processOK(message []byte) {
 
 }
 
+func (c *gbClient) processOKResp(message []byte) {
+
+	log.Printf("OK --------> resp id for ok == %v", int(c.ph.respID))
+
+	rsp, err := c.getResponseChannel(c.ph.respID)
+	if err != nil {
+		log.Printf("getResponseChannel failed: %v", err)
+	}
+
+	if rsp == nil {
+		return
+	}
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
+	select {
+	case rsp.ch <- msg:
+		log.Printf("Info message sent to response channel for reqID %d", c.ph.respID)
+		return
+	default:
+		log.Printf("Warning: response channel full for reqID %d", c.ph.respID)
+		return
+	}
+
+}
+
 func (c *gbClient) processGossAck(message []byte) {
 
 }
@@ -658,7 +704,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(gossipError)), NODE_HEADER_SIZE_V1, 0, 0)
 		errPacket := &nodePacket{
 			errHeader,
-			gossipError,
+			errorToBytes(GossipError),
 		}
 
 		errPay, err := errPacket.serialize()
@@ -674,10 +720,10 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	}
 
-	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(respOK)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1, 0, 0)
 	packet := &nodePacket{
 		header,
-		respOK,
+		OKRequester,
 	}
 
 	pay, err := packet.serialize()

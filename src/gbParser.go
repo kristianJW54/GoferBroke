@@ -26,6 +26,7 @@ const (
 
 	// Response types
 	OK
+	OK_RESP
 	EOS
 	ERR_RESP
 )
@@ -123,6 +124,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.state = INFO
 			case OK:
 				c.state = OK
+			case OK_RESP:
+				c.state = OK_RESP
 			case INFO_ALL:
 				c.state = INFO_ALL
 			case HANDSHAKE:
@@ -164,6 +167,34 @@ func (c *gbClient) parsePacket(packet []byte) {
 			}
 
 		case OK:
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				var arg []byte
+				if c.argBuf != nil {
+					arg = c.argBuf
+					c.argBuf = nil
+				} else {
+					arg = packet[c.position : i-c.drop]
+				}
+				c.processArg(arg)
+
+				c.drop = 0
+				c.position = i + 1
+				c.state = MSG_PAYLOAD
+
+				if c.msgBuf == nil {
+					i = c.position + c.ph.msgLength - 2
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case OK_RESP:
 			switch b {
 			case '\r':
 				c.drop = 1

@@ -752,9 +752,8 @@ func (c *gbClient) waitForResponseAndBlock(ctx context.Context, rsp *response) (
 
 func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, handleResponse func([]byte, error)) {
 
-	defer c.responseCleanup(rsp, uint16(rsp.id))
-
 	go func() {
+		defer c.responseCleanup(rsp, uint16(rsp.id))
 		log.Printf("waitForResponseAsync - waiting for response for ID %d", rsp.id)
 
 		resp, err := c.waitForResponse(ctx, rsp)
