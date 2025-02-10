@@ -24,49 +24,11 @@ type node struct {
 	// Info
 	tcpAddr   *net.TCPAddr
 	direction string
-
-	gossipFlags gossipFlags
 }
 
 //===================================================================================
 // Node Connection
 //===================================================================================
-
-type gossipFlags int
-
-// Flags
-const (
-	GOSS_SYN_SENT = 1 << iota
-	GOSS_SYN_REC
-	GOSS_SYN_ACK_SENT
-	GOSS_SYN_ACK_REC
-	GOSS_ACK_SENT
-	GOSS_ACK_REC
-)
-
-//goland:noinspection GoMixedReceiverTypes
-func (gf *gossipFlags) set(g gossipFlags) {
-	*gf |= g
-}
-
-//goland:noinspection GoMixedReceiverTypes
-func (gf *gossipFlags) clear(g gossipFlags) {
-	*gf &= ^g
-}
-
-//goland:noinspection GoMixedReceiverTypes
-func (gf gossipFlags) isSet(g gossipFlags) bool {
-	return gf&g != 0
-}
-
-//goland:noinspection GoMixedReceiverTypes
-func (gf *gossipFlags) setIfNotSet(g gossipFlags) bool {
-	if *gf&g == 0 {
-		*gf |= g
-		return true
-	}
-	return false
-}
 
 //-------------------------------
 // Creating a node as a client from a connection
@@ -95,12 +57,11 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	client.initClient()
 	client.mu.Unlock()
 
-	// We temporarily store the client connection here until we have completed the info exchange and recieved a response.
-	// TODO storing tmp client - finish phasing out map store
+	// We temporarily store the client connection here until we have completed the info exchange and received a response.
 	s.tmpConnStore.Store(client.cid, client)
 
-	//May want to update some node connection  metrics which will probably need a write lock from here
-	// Node count + connection map
+	//May want to update some node connection metrics which will probably need a write lock from here
+	// Start time, reference count etc
 
 	// Track the goroutine for the read loop using startGoRoutine
 	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
@@ -112,17 +73,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 		client.writeLoop()
 	})
 
-	// Only log if the connection was initiated by this server (to avoid duplicate logs)
-	if initiated {
-		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.LocalAddr())
-
-	} else {
-		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, client.name, clientType, conn.RemoteAddr())
-
-	}
-
 	return client
 
 }
@@ -131,49 +81,48 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // Connecting to seed server
 //-------------------------------
 
-// TODO Think about reconnection here - do we want to handle that in this method? Or have a reconnectToSeed() method?
-
 // connectToSeed is called by the server in a go-routine. It blocks on response to wait for the seed server to respond with a signal
 // that it has completed INFO exchange. If an error occurs through context, or response error from seed server, then connectToSeed
 // will return that error and trigger logic to either retry or exit the process
 func (s *GBServer) connectToSeed() error {
 
-	ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second)
+	ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second) // TODO will be configurable
 	defer cancel()
+
+	// TODO Do we need any DNS Lookups or resolving here?
 
 	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("error connecting to server: %s", err)
+		return fmt.Errorf("connect to seed - net dial: %s", err)
 	}
 
-	respID, err := s.acquireReqID()
+	reqID, err := s.acquireReqID()
 	if err != nil {
-		return err
+		return fmt.Errorf("connect to seed - acquire request ID: %s", err)
 	}
 
-	pay1, err := s.prepareSelfInfoSend(INFO, int(respID), 0)
+	pay1, err := s.prepareSelfInfoSend(INFO, int(reqID), 0)
 	if err != nil {
 		return err
 	}
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	resp := client.qProtoWithResponse(ctx, respID, pay1, false, true)
-	//if err != nil {
-	//	return fmt.Errorf("%s response error in connect to seed: %s", s.ServerName, err)
-	//}
+	resp := client.qProtoWithResponse(reqID, pay1, false, true)
 
 	r, err := client.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
 		return err
 	}
+
 	// If we receive no error we can assume the response was received and continue
+	// --->
 
 	delta, err := deserialiseDelta(r)
 	if err != nil {
-		return err
+		return fmt.Errorf("connect to seed - deserialising data: %s", err)
 	}
 
 	// Now we add the delta to our cluster map
@@ -181,7 +130,91 @@ func (s *GBServer) connectToSeed() error {
 
 		err := s.addParticipantFromTmp(name, participant)
 		if err != nil {
-			return err
+			return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
+		}
+	}
+
+	// Now we can remove from tmp map and add to client store including connected flag
+	err = s.moveToConnected(client.cid, delta.sender)
+	if err != nil {
+		return err
+	}
+
+	client.mu.Lock()
+	client.name = delta.sender
+	client.mu.Unlock()
+
+	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
+	s.incrementNodeConnCount()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	return nil
+
+}
+
+func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
+
+	s.clusterMapLock.RLock()
+	participant := s.clusterMap.participants[node]
+
+	addr := participant.keyValues[_ADDRESS_].value
+	s.clusterMapLock.RUnlock()
+
+	parts := strings.Split(string(addr), ":")
+
+	ip, err := net.ResolveIPAddr("ip", parts[0])
+	if err != nil {
+		return fmt.Errorf("connectToNodeInMap resolving ip address: %s", err)
+	}
+
+	port := parts[1]
+
+	nodeAddr := net.JoinHostPort(ip.String(), port)
+
+	log.Printf("connecting to node %s at %s", node, nodeAddr)
+
+	// Dial here
+	conn, err := net.Dial("tcp", nodeAddr)
+	if err != nil {
+		return fmt.Errorf("connectToNodeInMap - net dial: %s", err)
+	}
+
+	reqID, err := s.acquireReqID()
+	if err != nil {
+		return fmt.Errorf("connectToNodeInMap - acquire request ID: %s", err)
+	}
+
+	pay1, err := s.prepareSelfInfoSend(HANDSHAKE, int(reqID), 0)
+	if err != nil {
+		return err
+	}
+
+	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
+
+	resp := client.qProtoWithResponse(reqID, pay1, false, true)
+
+	r, err := client.waitForResponseAndBlock(ctx, resp)
+	if err != nil {
+		return fmt.Errorf("connectToNodeInMap - wait for response: %s", err)
+	}
+	// If we receive no error we can assume the response was received and continue
+
+	delta, err := deserialiseDelta(r)
+	if err != nil {
+		return fmt.Errorf("connectToNodeInMap - deserialising data: %s", err)
+	}
+
+	// Now we add the delta to our cluster map
+	for name, participant := range delta.delta {
+
+		err := s.addParticipantFromTmp(name, participant)
+		if err != nil {
+			return fmt.Errorf("connectToNodeInMap - adding participant from tmp: %s", err)
 		}
 	}
 
@@ -189,7 +222,7 @@ func (s *GBServer) connectToSeed() error {
 	//s.serverLock.Lock()
 	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
-		return err
+		return fmt.Errorf("connectToNodeInMap - moving connection to connected: %s", err)
 	}
 	//s.serverLock.Unlock()
 
@@ -203,80 +236,9 @@ func (s *GBServer) connectToSeed() error {
 
 	select {
 	case <-ctx.Done():
-		log.Println("connect to seed cancelled because of context")
 		return ctx.Err()
 	default:
 	}
-
-	return nil
-
-}
-
-func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
-
-	// Must clean up resources if we get timeout or error response (example - seq ID)
-
-	s.clusterMapLock.RLock()
-	participant := s.clusterMap.participants[node]
-
-	addr := participant.keyValues[_ADDRESS_].value
-	s.clusterMapLock.RUnlock()
-
-	parts := strings.Split(string(addr), ":")
-
-	ip, err := net.ResolveIPAddr("ip", parts[0])
-	if err != nil {
-		return fmt.Errorf("error in connectToNodeInMap while resolving ip address: %s", err)
-	}
-
-	port := parts[1]
-
-	nodeAddr := net.JoinHostPort(ip.String(), port)
-
-	log.Printf("connecting to node %s at %s", node, nodeAddr)
-
-	// Dial here
-	conn, err := net.Dial("tcp", nodeAddr)
-	if err != nil {
-		return fmt.Errorf("error connecting to server: %s", err)
-	}
-
-	info, err := s.prepareSelfInfoSend(HANDSHAKE, 0, 0)
-	if err != nil {
-		return err
-	}
-
-	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
-
-	// Flush is false because we have started a new client routine and write loop + signals may not be up yet
-	resp := client.qProtoWithResponse(ctx, 0, info, false, true)
-	//if err != nil {
-	//	return fmt.Errorf("%s response error in connect to seed: %s", s.ServerName, err)
-	//}
-
-	r, err := client.waitForResponseAndBlock(ctx, resp)
-	if err != nil {
-		return err
-	}
-	// If we receive no error we can assume the response was received and continue
-
-	// First de-serialise the delta and then we can move sender to store
-
-	delta, err := deserialiseDelta(r)
-
-	// From here we then move the temp client to node store and increment the node count
-	err = s.moveToConnected(client.cid, delta.sender)
-	if err != nil {
-		return err
-	}
-
-	client.mu.Lock()
-	client.name = delta.sender
-	client.mu.Unlock()
-
-	//we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
-
-	s.incrementNodeConnCount()
 
 	return nil
 
@@ -293,10 +255,8 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("prepareSelfInfoSend - serialising self info: %s", err)
 	}
-
-	log.Printf("seq %v", reqID)
 
 	s.clusterMapLock.RUnlock()
 
@@ -309,7 +269,7 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 	}
 	pay1, err := packet.serialize()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("prepareSelfInfoSend - serialize: %s", err)
 	}
 
 	return pay1, nil
@@ -325,7 +285,7 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 
 // Compute how many nodes we need to send and if we need to split it up
 // We will know how many crucial internal state deltas we'll need to send so the total size can be estimated?
-// From there gossip will up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
+// From there gossip will be up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
 // for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
 
 func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
@@ -342,7 +302,8 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 		// With the digest of what it has been given so far to complete it's joining
 		// A mini bootstrapped gossip between joiner and seeds
 
-		// TODO If cluster too large - will need to stream data and use metadata to track progress
+		//TODO If cluster too large - will need to stream data and use metadata to track progress
+		// Or we send a subset and allow the node to continue to dial the subset in order to let it's map grow
 	}
 
 	s.clusterMapLock.Lock()
@@ -354,14 +315,10 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 
 	s.clusterMapLock.Unlock()
 
-	// TODO -- We should be able to specify a responder ID here now which will chain the request-response cycle
-
 	respID, err := s.acquireReqID()
 	if err != nil {
 		return err
 	}
-
-	log.Printf("respID in onboard == %v", respID)
 
 	hdr := constructNodeHeader(1, INFO_ALL, c.ph.reqID, respID, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
 
@@ -381,7 +338,7 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
 	//defer cancel()
 
-	resp := c.qProtoWithResponse(ctx, respID, pay1, true, true)
+	resp := c.qProtoWithResponse(respID, pay1, true, true)
 
 	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
 
@@ -401,6 +358,15 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 
 	})
 
+	////log.Printf("response from onboardNewJoiner: %v", string(bytes))
+	//err = c.srv.moveToConnected(c.cid, cd.sender)
+	//if err != nil {
+	//	log.Printf("MoveToConnected failed in process info message: %v", err)
+	//}
+	//
+	//// TODO Monitor the server lock here and be mindful
+	//c.srv.incrementNodeConnCount()
+	//
 	//c.mu.Lock()
 	//c.qProto(pay1, true)
 	//c.mu.Unlock()
@@ -431,7 +397,7 @@ func (c *gbClient) processArg(arg []byte) error {
 	}
 
 	c.argBuf = arg
-	log.Printf("response ID in processArg: %v", c.ph.respID)
+	log.Printf("%s response ID in processArg: %v", c.srv.ServerName, c.ph.reqID)
 	//log.Printf("arg == %v", c.argBuf)
 
 	return nil
@@ -488,11 +454,13 @@ func (c *gbClient) processErrResp(message []byte) {
 		return
 	}
 
+	msgErr := bytesToError(message)
+
 	msg := make([]byte, len(message))
 	copy(msg, message)
 
 	select {
-	case rsp.err <- fmt.Errorf("%s", msg): // Non-blocking
+	case rsp.err <- msgErr: // Non-blocking
 		log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -534,6 +502,7 @@ func (c *gbClient) processInfoAll(message []byte) {
 			c.qProto(pay, true)
 			c.mu.Unlock()
 		}
+		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 		return
@@ -552,6 +521,7 @@ func (c *gbClient) processHandShake(message []byte) {
 	// TODO Finish this
 	// Send HandShake Response here
 	// --
+	log.Printf("%s -----------------> handshake request ID = %v", c.srv.ServerName, c.ph.reqID)
 	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(c.ph.reqID), 0)
 	if err != nil {
 		log.Printf("prepareSelfInfoSend failed: %v", err)
@@ -586,16 +556,12 @@ func (c *gbClient) processHandShake(message []byte) {
 
 func (c *gbClient) processHandShakeResp(message []byte) {
 
-	responseChan, exists := c.rh.resp.Load(c.ph.reqID)
-	if !exists {
-		log.Printf("No response channel found for reqID %d", c.ph.reqID)
-		return
+	rsp, err := c.getResponseChannel(c.ph.reqID)
+	if err != nil {
+		log.Printf("getResponseChannel failed: %v", err)
 	}
 
-	// Type assertion to ensure we have the correct type
-	rsp, ok := responseChan.(*response)
-	if !ok {
-		log.Printf("Invalid type assertion for response channel, reqID: %d", c.ph.reqID)
+	if rsp == nil {
 		return
 	}
 
@@ -604,7 +570,7 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
+		log.Printf("%s Info message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -631,7 +597,7 @@ func (c *gbClient) processOK(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
+		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)

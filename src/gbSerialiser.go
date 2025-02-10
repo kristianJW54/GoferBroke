@@ -104,14 +104,7 @@ type clusterDelta struct {
 
 // TODO Look at flattening or refining the data structure passed to the serialiser for faster performance
 
-// TODO Look at efficiency - can we do this in once pass with byte.Buffer?
-
 // TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
-
-// TODO Should be able to pass size and skip loop step if we have it - if not, calc size ourselves in here
-
-// TODO NEED --> A serialise self-info delta
-// TODO NEED --> To add senders name into the packet at beginning for ID purposes as maps in go are not inherently ordered
 
 func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 
@@ -206,6 +199,8 @@ func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 	return deltaBuf, nil
 
 }
+
+// TODO Need to serialise system critical deltas first and then fill the buffer until MTU is reached
 
 // Lock should be held on entry
 func (s *GBServer) serialiseClusterDelta() ([]byte, error) {

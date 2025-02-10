@@ -293,6 +293,7 @@ func (s *GBServer) StartServer() {
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	s.startGoRoutine(s.ServerName, "gossip-process",
 		func() {
+			defer s.gossipCleanup()
 			s.gossipProcess(s.serverContext)
 		})
 
@@ -752,15 +753,14 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 
 	c, exists := s.nodeConnStore.Load(node)
 
-	gbc, ok := c.(*gbClient)
-	if !ok {
-		return nil, false, fmt.Errorf("%s - getNodeConnFromStore type assertion error for node %s - should be type gbClient got %T", s.ServerName, node, c)
-	}
-
+	// Need to check if exists first
 	if !exists {
-		return nil, false, fmt.Errorf("node %s not in store -- proceeding to dial", node)
+		return nil, false, nil
+	} else {
+		gbc, ok := c.(*gbClient)
+		if !ok {
+			return nil, false, fmt.Errorf("%s - getNodeConnFromStore type assertion error for node %s - should be type gbClient got %T", s.ServerName, node, c)
+		}
+		return gbc, true, nil
 	}
-
-	return gbc, true, nil
-
 }

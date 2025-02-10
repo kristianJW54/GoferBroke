@@ -51,6 +51,14 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 	return goss
 }
 
+func (s *GBServer) gossipCleanup() {
+
+	close(s.gossip.gossipControlChannel)
+	close(s.gossip.gossipSemaphore)
+	s.gossip.gossipingWith.Clear()
+
+}
+
 //===================================================================================
 // Cluster Map
 //===================================================================================
@@ -450,7 +458,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 
 	// Send the digest and wait for a response
-	resp := conn.qProtoWithResponse(ctx, reqID, cereal, true, true)
+	resp := conn.qProtoWithResponse(reqID, cereal, true, true)
 	//if err != nil {
 	//	log.Printf("sendDigest - qProtoWithResponse setup error: %v", err)
 	//	return nil, err
@@ -787,6 +795,11 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
+	defer func() {
+		s.endGossip()
+		s.clearGossipingWithMap()
+	}()
+
 	if s.flags.isSet(SHUTTING_DOWN) {
 		log.Printf("pulled from gossip with node")
 		return
@@ -831,8 +844,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
 		} else {
 			log.Printf("Error in gossip round (stage %d): %v", stage, err)
-			s.endGossip()
-			s.clearGossipingWithMap()
 			return
 		}
 		return

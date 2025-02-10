@@ -786,12 +786,9 @@ func (c *gbClient) getResponseChannel(id uint16) (*response, error) {
 
 // Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
-func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []byte, flush bool, sendNow bool) *response {
+func (c *gbClient) qProtoWithResponse(id uint16, proto []byte, flush bool, sendNow bool) *response {
 
-	// TODO Do we need locks here
-	c.mu.Lock()
 	responseChannel := c.addResponseChannel(int(id))
-	c.mu.Unlock()
 
 	if sendNow && !flush {
 

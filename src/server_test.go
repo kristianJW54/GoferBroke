@@ -115,7 +115,7 @@ func TestGossipSignal(t *testing.T) {
 
 	gbs2.serverContext.Done()
 	gbs.serverContext.Done()
-	//gbs3.serverContext.Done()
+	gbs3.serverContext.Done()
 
 	go gbs2.Shutdown()
 	go gbs.Shutdown()
