@@ -18,6 +18,8 @@ import (
 // Gossip
 //===================================================================================
 
+// Will need to make a gossip cleanup which we can defer in the main server go-routine
+
 type gossip struct {
 	gossInterval         time.Duration
 	nodeSelection        uint8
@@ -440,7 +442,6 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 		return nil, fmt.Errorf("sendDigest - serialize error: %w", err)
 	}
 
-	// Introduce an artificial delay before sending the request
 	select {
 	case <-ctx.Done():
 		return nil, fmt.Errorf("sendDigest - context canceled before sending digest: %w", ctx.Err())
@@ -463,20 +464,6 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	log.Printf("r = %s", r)
 
 	return r, nil
-
-	//select {
-	//case resp := <-respChan:
-	//	log.Printf("sendDigest - received response: %s", string(resp))
-	//	return resp, nil
-	//
-	//case err := <-errChan:
-	//	log.Printf("sendDigest - received error: %v", err)
-	//	return nil, err
-	//
-	//case <-ctx.Done():
-	//	log.Printf("sendDigest - context canceled for node: %v", ctx.Err())
-	//	return nil, ctx.Err()
-	//}
 
 }
 
@@ -594,8 +581,6 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		defer s.gossip.gossSignal.L.Unlock()
 		s.flags.clear(GOSSIP_SIGNALLED)
 		s.flags.set(GOSSIP_EXITED)
-		//close(s.gossip.gossipControlChannel)
-		//close(s.gossip.gossipSemaphore)
 		s.gossip.gossSignal.Broadcast()
 	})
 	defer stopCondition()
@@ -732,37 +717,6 @@ func (s *GBServer) startGossipProcess() bool {
 //--------------------
 // Gossip Round
 
-//TODO ISSUE --> Sometimes gossip round gets caught in a skipping round loop which has something
-// to do with the tryGossip checks on isGossiping as well as the concurrency of context cancellation between nodes
-// e.g - when running TestGossipSignal test - shutting down node 2 will sometimes leave node 2 in a skipping round loop
-// Narrowed down to the problem being that we need to kick back up to the main gossip process by return false on startGossipProcess()
-// Doing that is the difficult bit because sometimes we don't detect the ctx signal or the tryGossip check loops
-// See Logs:
-
-//TODO ISSUE UPDATE --> Turns out that sometimes shutdown isn't being registered as called under certain conditions meaning the
-// server is unaware of a shutdown happening - shutdown could be signalled again..?
-
-// 2025/01/25 10:29:39 test-server-2@1737800976 - Gossip process stopped due to context cancellation - waiting for rounds to finish
-//2025/01/25 10:29:39 test-server-2@1737800976 - Gossip already inactive
-//2025/01/25 10:29:39 test-server-2@1737800976 - gossip process exiting due to context cancellation
-//2025/01/25 10:29:39 test-server-1@1737800975 - Gossip started // TODO <-- test-server-1 misses it's ctx signal
-//2025/01/25 10:29:39 test-server-1@1737800975 - Gossiping with node test-server-2@1737800976 (stage 1)
-//2025/01/25 10:29:40 test-server-1@1737800975 - Gossip already active
-//2025/01/25 10:29:40 test-server-1@1737800975 - Skipping gossip round because a round is already active
-//2025/01/25 10:29:41 test-server-1@1737800975 - Gossip already active
-//2025/01/25 10:29:41 test-server-1@1737800975 - Skipping gossip round because a round is already active
-//2025/01/25 10:29:43 waitForResponse - context canceled for response ID 1
-//2025/01/25 10:29:43 responseCleanup - cleaned up response ID 1
-//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip already active
-//2025/01/25 10:29:43 sendDigest - context canceled for node: context deadline exceeded
-//2025/01/25 10:29:43 test-server-1@1737800975 - Skipping gossip round because a round is already active
-//2025/01/25 10:29:43 Error in gossip round (stage 1): context deadline exceeded
-//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip round canceled: context deadline exceeded
-//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip ended
-//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip already inactive
-//2025/01/25 10:29:43 test-server-1@1737800975 - Gossip already inactive
-//2025/01/25 10:29:44 test-server-1@1737800975 - Gossip started // TODO <-- We shouldn't be starting again here
-
 // TODO Think about introducing a gossip result struct for a channel to feed back errors
 // type GossipResult struct {
 //    Node string
@@ -839,9 +793,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	}
 
 	//------------- Dial Check -------------//
-
-	//TODO Look at respIDs as a req->resp cycle can only be 1-1. After a completed cycle a new resp ID must be acquired
-	// This means that a node responding to a request cannot generate a new ID to put in the header as it must echo the one received first
 
 	//s.serverLock.Lock()
 	conn, exists, err := s.getNodeConnFromStore(node)
