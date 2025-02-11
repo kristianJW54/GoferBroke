@@ -1,7 +1,6 @@
 package src
 
 import (
-	"container/heap"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -496,20 +495,6 @@ func initSelfParticipant(name, addr string) *Participant {
 	}
 	p.keyValues[_HEARTBEAT_] = heartbeatDelta
 
-	// Add deltas to heap and initialise
-	dq := make(deltaHeap, len(p.keyValues))
-	i := 0
-	for _, v := range p.keyValues {
-		dq[i] = &deltaQueue{
-			index:   i,
-			key:     v.key,
-			version: v.version,
-		}
-		i++
-	}
-	heap.Init(&dq)
-	p.deltaQ = dq
-
 	return p
 
 }
@@ -751,6 +736,7 @@ func (s *GBServer) clearNodeConnCount() {
 // TODO Finish implementing - need to do a dial check so nodes can dial or if a valid error then return that instead
 func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 
+	log.Printf("%s searching for %s", s.ServerName, node)
 	c, exists := s.nodeConnStore.Load(node)
 
 	// Need to check if exists first

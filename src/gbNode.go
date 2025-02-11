@@ -295,7 +295,7 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 	//TODO we will use a hybrid bootstrap approach by selecting a random number of participants to download to the new joining node
 	// This will be based on how many nodes are in the map
 
-	if len(s.clusterMap.participantQ) > 100 {
+	if len(s.clusterMap.participants) > 100 {
 		log.Printf("lots of participants - may need more efficient snapshot transfer")
 		// In this case we would send an INFO_ACK to tell the joining node that more info will come
 		// The joining node can then reach out to other seed servers or send another request to this seed server
@@ -335,41 +335,41 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 	//TODO Wait for response is causing a deadlock - need to look at if we want to chain request-response cycle
 	// if queue with response is used
 
-	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
-	//defer cancel()
-
-	resp := c.qProtoWithResponse(respID, pay1, true, true)
-
-	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
-
-		defer cancel()
-		if err != nil {
-			log.Printf("error in onboardNewJoiner: %v", err)
-		}
-
-		log.Printf("response from onboardNewJoiner: %v", string(bytes))
-		err = c.srv.moveToConnected(c.cid, cd.sender)
-		if err != nil {
-			log.Printf("MoveToConnected failed in process info message: %v", err)
-		}
-
-		// TODO Monitor the server lock here and be mindful
-		c.srv.incrementNodeConnCount()
-
-	})
-
-	////log.Printf("response from onboardNewJoiner: %v", string(bytes))
-	//err = c.srv.moveToConnected(c.cid, cd.sender)
-	//if err != nil {
-	//	log.Printf("MoveToConnected failed in process info message: %v", err)
-	//}
+	//ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+	////defer cancel()
 	//
-	//// TODO Monitor the server lock here and be mindful
-	//c.srv.incrementNodeConnCount()
+	//resp := c.qProtoWithResponse(respID, pay1, true, true)
 	//
-	//c.mu.Lock()
-	//c.qProto(pay1, true)
-	//c.mu.Unlock()
+	//c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
+	//
+	//	defer cancel()
+	//	if err != nil {
+	//		log.Printf("error in onboardNewJoiner: %v", err)
+	//	}
+	//
+	//	log.Printf("response from onboardNewJoiner: %v", string(bytes))
+	//	err = c.srv.moveToConnected(c.cid, cd.sender)
+	//	if err != nil {
+	//		log.Printf("MoveToConnected failed in process info message: %v", err)
+	//	}
+	//
+	//	// TODO Monitor the server lock here and be mindful
+	//	c.srv.incrementNodeConnCount()
+	//
+	//})
+
+	//log.Printf("response from onboardNewJoiner: %v", string(bytes))
+	err = c.srv.moveToConnected(c.cid, cd.sender)
+	if err != nil {
+		log.Printf("MoveToConnected failed in process info message: %v", err)
+	}
+
+	// TODO Monitor the server lock here and be mindful
+	c.srv.incrementNodeConnCount()
+
+	c.mu.Lock()
+	c.qProto(pay1, true)
+	c.mu.Unlock()
 
 	return nil
 
@@ -484,24 +484,24 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
-		if c.ph.respID != 0 {
-			log.Printf("we have a responder to respond to -- %v", c.ph.respID)
-			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1, 0, 0)
-			packet := &nodePacket{
-				header,
-				OKResponder,
-			}
-
-			pay, err := packet.serialize()
-			if err != nil {
-				log.Printf("error serialising packet - %v", err)
-			}
-
-			c.mu.Lock()
-			c.qProto(pay, true)
-			c.mu.Unlock()
-		}
+		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
+		//if c.ph.respID != 0 {
+		//	log.Printf("we have a responder to respond to -- %v", c.ph.respID)
+		//	header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1, 0, 0)
+		//	packet := &nodePacket{
+		//		header,
+		//		OKResponder,
+		//	}
+		//
+		//	pay, err := packet.serialize()
+		//	if err != nil {
+		//		log.Printf("error serialising packet - %v", err)
+		//	}
+		//
+		//	c.mu.Lock()
+		//	c.qProto(pay, true)
+		//	c.mu.Unlock()
+		//}
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)

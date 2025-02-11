@@ -122,7 +122,7 @@ func TestGossipSignal(t *testing.T) {
 	go gbs3.Shutdown()
 	//go gbs4.Shutdown()
 
-	//for _, value := range gbs.clusterMap.participants {
+	//for _, value := range gbs3.clusterMap.participants {
 	//	log.Printf("name = %s", value.name)
 	//	for key, value := range value.keyValues {
 	//		log.Printf("value = %s-%s", key, value.value)

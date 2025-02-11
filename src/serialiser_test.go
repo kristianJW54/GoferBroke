@@ -72,17 +72,7 @@ func TestSerialiseDigest(t *testing.T) {
 
 		// Populate participant's keyValues and deltaQ
 		for key, delta := range keyValues {
-			i := 0
-			dq := &deltaQueue{
-				index:   i,
-				key:     delta.key,
-				version: delta.version,
-			}
-
-			i++
-
 			participant.keyValues[key] = delta
-			heap.Push(&participant.deltaQ, dq)
 		}
 
 		// Add participant to the ClusterMap
@@ -310,16 +300,11 @@ func TestMySerialization(t *testing.T) {
 	// Add participant to the ClusterMap
 	gbs.clusterMap.participants["node1"] = participant
 
-	mv, err := participant.getMaxVersion()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	pq := &participantQueue{
 		index:           1,
 		name:            participant.name,
 		availableDeltas: 0,
-		maxVersion:      mv,
+		maxVersion:      0,
 	}
 
 	heap.Push(&gbs.clusterMap.participantQ, pq)

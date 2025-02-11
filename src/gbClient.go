@@ -925,14 +925,8 @@ func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) 
 			value:     value,
 		}
 
-		dq := &deltaQueue{
-			key:     newDelta.key,
-			version: newDelta.version,
-		}
-
 		//s.selfInfo.valueIndex = append(s.selfInfo.valueIndex, string(key))
 		s.selfInfo.keyValues[string(key)] = newDelta
-		s.selfInfo.deltaQ.Push(&dq)
 
 	}
 

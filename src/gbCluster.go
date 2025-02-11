@@ -98,7 +98,8 @@ type Seed struct {
 // TODO Dynamically allocate max version when adding or removing deltas
 
 type Delta struct {
-	index     int
+	index int
+	// TODO Look into trying to remove key field or at least use it as this caused a minor headache when switching from heap back to map for serialising
 	key       string
 	valueType byte // Type could be internal, config, state, client
 	version   int64
@@ -106,6 +107,9 @@ type Delta struct {
 	// Could add user defined metadata later on??
 }
 
+// deltaQueue is used during gossip exchanges when a node receives a digest to compare against its cluster map it will
+// select deltas from participants that are most outdated. Deltas are then added to a temporary heap in order to sort by max-version
+// before serialising
 type deltaQueue struct {
 	index   int
 	key     string
@@ -115,18 +119,22 @@ type deltaQueue struct {
 type deltaHeap []*deltaQueue
 
 type Participant struct {
-	name      string // Possibly can remove
-	keyValues map[string]*Delta
-	deltaQ    deltaHeap // This should be kept sorted to the highest version
-	paValue   float64   // Not to be gossiped
-	pm        sync.RWMutex
+	name       string // Possibly can remove
+	keyValues  map[string]*Delta
+	deltaQ     deltaHeap // This should be kept sorted to the highest version
+	paValue    float64   // Not to be gossiped
+	maxVersion int64
+	pm         sync.RWMutex
 }
 
 type ClusterMap struct {
 	seedServer   *Seed
 	participants map[string]*Participant
 	participantQ participantHeap
-	phiAccMap    map[string]*phiAccrual
+
+	// TODO Need to find a more efficient way of selecting random nodes to gossip with from the map rather than storing an array
+	participantArray []string
+	phiAccMap        map[string]*phiAccrual
 	// TODO Move cluster map lock from server to here
 }
 
@@ -134,7 +142,7 @@ type participantQueue struct {
 	index           int
 	name            string
 	availableDeltas int
-	maxVersion      int64 // Simply reference from deltaQ as maxVersion
+	maxVersion      int64
 }
 
 type participantHeap []*participantQueue
@@ -277,24 +285,14 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
 		make(participantHeap, 0),
+		make([]string, 0),
 		make(map[string]*phiAccrual),
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
 	cm.participants[name] = participant
-	mv, err := participant.getMaxVersion()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Create a participantQueue entry and push it to the heap
-	pq := &participantQueue{
-		name:            name,
-		availableDeltas: 0,  // Initialize to 0
-		maxVersion:      mv, // Initialize to 0
-	}
-	heap.Push(&cm.participantQ, pq)
+	cm.participantArray = append(cm.participantArray, participant.name)
 
 	return cm
 
@@ -307,18 +305,6 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 //=======================================================
 // Participant Handling
-
-// Cluster Lock must be held on entry
-func (p *Participant) getMaxVersion() (int64, error) {
-
-	maxVersion := p.deltaQ[0]
-	if maxVersion == nil {
-		return 0, nil
-	}
-
-	return maxVersion.version, nil
-
-}
 
 //Add/Remove Participant
 
@@ -350,27 +336,15 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		}
 	}
 
-	// Populate the delta heap
-	for key, delta := range tmpP.keyValues {
-		dq := &deltaQueue{
-			key:     key,
-			version: delta.version,
-		}
-		heap.Push(&newParticipant.deltaQ, dq)
-	}
 	s.clusterMap.participants[name] = newParticipant
+	s.clusterMap.participantArray = append(s.clusterMap.participantArray, newParticipant.name)
 
-	mv, err := newParticipant.getMaxVersion()
-	if err != nil {
-		return err
-	}
-
-	// Add to the participant heap
-	s.clusterMap.participantQ.Push(&participantQueue{
-		name:            name,
-		availableDeltas: 0,
-		maxVersion:      mv,
-	})
+	//for key, value := range s.clusterMap.participants {
+	//	log.Printf("key: %s", key)
+	//	for _, v := range value.keyValues {
+	//		log.Printf("value: %s", v.value)
+	//	}
+	//}
 
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
@@ -402,10 +376,10 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 	// First we need to determine if the Digest fits within MTU
 
 	// Check how many participants first - anymore than 40 will definitely exceed MTU
-	if len(s.clusterMap.participantQ) > 40 {
-		return nil, fmt.Errorf("too many participants")
-		// TODO Implement overfill strategy for digest
-	}
+	//if len(s.clusterMap.participants) > 40 {
+	//	return nil, fmt.Errorf("too many participants")
+	//	// TODO Implement overfill strategy for digest
+	//}
 
 	// TODO We need to run max version lazy updates on participants we have selected to be in the digest
 
@@ -472,8 +446,6 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-
-	log.Printf("r = %s", r)
 
 	return r, nil
 
@@ -746,10 +718,10 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	defer s.clearGossipingWithMap()
 
 	ns := s.gossip.nodeSelection
-	pl := len(s.clusterMap.participantQ) - 1
+	pl := len(s.clusterMap.participantArray) - 1
 
 	if int(ns) > pl {
-		// Or pl = 1
+		log.Printf("OH NOOOOOOOO")
 		return
 	}
 
@@ -764,8 +736,10 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	for i := 0; i < int(ns); i++ {
 
 		s.clusterMapLock.Lock()
+
 		num := rand.Intn(pl) + 1
-		node := s.clusterMap.participantQ[num]
+		selectedNode := s.clusterMap.participantArray[num]
+		log.Printf("%s- SELECTED --> %s", s.ServerName, selectedNode)
 
 		// TODO Check exist and dial if not --> then throw error if neither work
 		s.clusterMapLock.Unlock()
@@ -773,7 +747,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() { done <- struct{}{} }()
 
-			s.gossipWithNode(ctx, node.name)
+			s.gossipWithNode(ctx, selectedNode)
 		})
 
 	}
@@ -817,6 +791,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//s.serverLock.Unlock()
 	// TODO Fix nil pointer deference here
 	if err == nil && !exists {
+		log.Printf("DIALLING")
 		err := s.connectToNodeInMap(ctx, node)
 		if err != nil {
 			log.Printf("error in gossip with node %s ----> %v", node, err)
