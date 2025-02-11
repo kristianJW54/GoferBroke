@@ -93,6 +93,10 @@ type Seed struct {
 
 // TODO Need to majorly optimise cluster map for reduced memory - fast lookup and sorted storing
 
+// TODO Remove Delta Heap
+// TODO Re-purpose participantQ to allocate dynamically when gossiping to add participants based on most available deltas and if same then max version as decider
+// TODO Dynamically allocate max version when adding or removing deltas
+
 type Delta struct {
 	index     int
 	key       string
