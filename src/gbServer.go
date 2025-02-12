@@ -110,9 +110,11 @@ type GBServer struct {
 
 	// Options - for config - tls etc...
 
+	//TODO Need to carefully handle self info to avoid contention with cluster map during gossip - May need to just have cluster map
+	// with special selfInfo methods which update and manage the servers own info within the cluster map
 	//Server Info for gossip
 	selfInfo   *Participant
-	clusterMap ClusterMap //Need pointer?
+	clusterMap ClusterMap
 
 	// Configurations and extensibility should be handled in Options which will be embedded here
 	//Distributed Info
@@ -750,3 +752,11 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 		return gbc, true, nil
 	}
 }
+
+//==================================================
+// Self Info Handling + Monitoring
+//==================================================
+
+// TODO think about where we need to place and handle updating our selfInfo map which is part of the cluster map we gossip about ourselves
+// Example - every increase in node count will need to be updated in self info and max version updated
+// Equally for heartbeats on every successful gossip with a node - the heartbeat and value should be updated

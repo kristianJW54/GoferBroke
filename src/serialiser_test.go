@@ -65,26 +65,31 @@ func TestSerialiseDigest(t *testing.T) {
 
 		// Create a participant
 		participant := &Participant{
-			name:      participantName,
-			keyValues: make(map[string]*Delta),
-			deltaQ:    make(deltaHeap, 0),
+			name:       participantName,
+			keyValues:  make(map[string]*Delta),
+			maxVersion: 0,
+			deltaQ:     make(deltaHeap, 0),
 		}
 
-		// Populate participant's keyValues and deltaQ
+		var maxVersion int64
+		maxVersion = 0
+
+		// Populate participant's keyValues
 		for key, delta := range keyValues {
+
 			participant.keyValues[key] = delta
+
+			if delta.version > maxVersion {
+				maxVersion = delta.version
+			}
+
 		}
+
+		participant.maxVersion = maxVersion
 
 		// Add participant to the ClusterMap
 		gbs.clusterMap.participants[participantName] = participant
 
-		// Add participant to the participantHeap
-		pq := &participantQueue{
-			name:            participantName,
-			availableDeltas: len(participant.keyValues), // Mock availableDeltas
-			maxVersion:      time.Now().Unix(),
-		}
-		heap.Push(&gbs.clusterMap.participantQ, pq)
 	}
 
 	cereal, err := gbs.serialiseClusterDigest()
@@ -94,9 +99,10 @@ func TestSerialiseDigest(t *testing.T) {
 
 	log.Printf("serialised digest = %v", cereal)
 
-	digest, err := deSerialiseDigest(cereal)
+	sender, digest, err := deSerialiseDigest(cereal)
 
 	for _, value := range digest {
+		log.Printf("sender = %s", sender)
 		log.Printf("%v:%v", value.nodeName, value.maxVersion)
 	}
 

@@ -339,13 +339,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	s.clusterMap.participants[name] = newParticipant
 	s.clusterMap.participantArray = append(s.clusterMap.participantArray, newParticipant.name)
 
-	//for key, value := range s.clusterMap.participants {
-	//	log.Printf("key: %s", key)
-	//	for _, v := range value.keyValues {
-	//		log.Printf("value: %s", v.value)
-	//	}
-	//}
-
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
 	tmpP.vi = nil
@@ -355,9 +348,28 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	return nil
 }
 
-//=======================================================
-// Delta Comparisons
-//=======================================================
+//=======================================================================
+// Preparing Cluster Map for Gossip Exchanges with Depth + Flow-Control
+//=======================================================================
+
+//func (s *GBServer) prepareDeltaAgainstDigest(digest []*fullDigest, mtu int) error {
+//
+//	// Clear participant heap if it hasn't been already
+//	s.clusterMap.participantQ = participantHeap{}
+//
+//	for participantName, participant := range s.clusterMap.participants {
+//
+//		availableDeltaCount := 0
+//
+//		// Count the outdated deltas for this participant
+//		for key, value := range participant.keyValues {
+//			digestVersion, exists := digest
+//		}
+//
+//
+//	}
+//
+//}
 
 //=======================================================
 // GOSS_SYN Prep

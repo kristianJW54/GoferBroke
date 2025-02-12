@@ -84,11 +84,13 @@ func cerealPoolPut(b []byte) {
 
 // TODO look at whether we can separate sender name out of the array to avoid duplication
 
-type fullDigest struct {
+type digest struct {
 	senderName string
 	nodeName   string
 	maxVersion int64
 }
+
+type fullDigest map[string]*digest
 
 //-------------------
 
@@ -490,64 +492,64 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
-func deSerialiseDigest(digest []byte) ([]*fullDigest, error) {
+func deSerialiseDigest(digestRaw []byte) (senderName string, fd fullDigest, err error) {
 
 	//CLRF Check
 	//if bytes.HasSuffix(digest, []byte(CLRF)) {
 	//	bytes.Trim(digest, CLRF)
 	//}
 
-	length := len(digest)
-	lengthMeta := binary.BigEndian.Uint32(digest[1:5])
+	length := len(digestRaw)
+	lengthMeta := binary.BigEndian.Uint32(digestRaw[1:5])
 	//log.Println("lengthMeta = ", lengthMeta)
 	if length != int(lengthMeta) {
-		return nil, fmt.Errorf("length does not match")
+		return "", nil, fmt.Errorf("length does not match")
 	}
 
-	sizeMeta := binary.BigEndian.Uint16(digest[5:7])
+	sizeMeta := binary.BigEndian.Uint16(digestRaw[5:7])
 	//log.Println("sizeMeta = ", sizeMeta)
 
-	digestMap := make([]*fullDigest, sizeMeta)
+	digestMap := make(fullDigest)
 
 	offset := 7
 
 	// Extract senders name
-	senderLen := int(digest[offset])
-	senderName := digest[offset+1 : offset+1+senderLen]
+	senderLen := int(digestRaw[offset])
+	sender := digestRaw[offset+1 : offset+1+senderLen]
 
 	offset++
 	offset += senderLen
 
 	for i := 0; i < int(sizeMeta); i++ {
-		fd := &fullDigest{
-			senderName: string(senderName),
+		fd := &digest{
+			senderName: string(sender),
 		}
 
-		nameLen := int(digest[offset])
+		nameLen := int(digestRaw[offset])
 
 		start := offset + 1
 		end := start + nameLen
-		name := string(digest[start:end])
+		name := string(digestRaw[start:end])
 		fd.nodeName = name
 
 		offset += 1
 		offset += nameLen
 
 		// Extract maxVersion
-		maxVersion := binary.BigEndian.Uint64(digest[offset : offset+8])
+		maxVersion := binary.BigEndian.Uint64(digestRaw[offset : offset+8])
 
 		// Convert maxVersion to time
 		maxVersionTime := time.Unix(int64(maxVersion), 0)
 
 		fd.maxVersion = maxVersionTime.Unix()
 
-		digestMap[i] = fd
+		digestMap[name] = fd
 
 		offset += 8
 
 	}
 
-	return digestMap, nil
+	return string(sender), digestMap, nil
 }
 
 //=======================================================

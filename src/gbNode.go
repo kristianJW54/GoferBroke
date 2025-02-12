@@ -646,12 +646,12 @@ func (c *gbClient) processGossSyn(message []byte) {
 	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
 	// if we need to defer gossip round or continue
 
-	delta, err := deSerialiseDigest(message)
+	sender, _, err := deSerialiseDigest(message)
 	if err != nil {
 		log.Printf("error serialising digest - %v", err)
 	}
 
-	senderName := delta[0].senderName
+	senderName := sender
 
 	// Does the sending node need to defer?
 	// If it does - then we must construct an error response, so it can exit out of it's round
