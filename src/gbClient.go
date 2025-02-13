@@ -925,8 +925,10 @@ func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) 
 			value:     value,
 		}
 
+		selfInfo := s.getSelfInfo()
+
 		//s.selfInfo.valueIndex = append(s.selfInfo.valueIndex, string(key))
-		s.selfInfo.keyValues[string(key)] = newDelta
+		selfInfo.keyValues[string(key)] = newDelta
 
 	}
 

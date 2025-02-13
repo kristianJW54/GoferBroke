@@ -108,7 +108,7 @@ type clusterDelta struct {
 
 // TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
 
-func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
+func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 
 	// Type = Delta - 1 byte Uint8
 	// Length of payload - 4 byte uint32
@@ -121,7 +121,7 @@ func (s *GBServer) serialiseSelfInfo() ([]byte, error) {
 	length += 1
 	length += len(s.ServerName)
 
-	self := s.selfInfo
+	self := participant
 	selfName := s.ServerName
 
 	// This seems like a duplication - but the same deserialise delta method will be used to deconstruct into a tmpClusterDelta

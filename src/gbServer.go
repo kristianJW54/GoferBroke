@@ -113,7 +113,6 @@ type GBServer struct {
 	//TODO Need to carefully handle self info to avoid contention with cluster map during gossip - May need to just have cluster map
 	// with special selfInfo methods which update and manage the servers own info within the cluster map
 	//Server Info for gossip
-	selfInfo   *Participant
 	clusterMap ClusterMap
 
 	// Configurations and extensibility should be handled in Options which will be embedded here
@@ -167,7 +166,9 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		log.Fatal(err)
 	}
 
+	// Generates a server name object with name, uuid and time unix
 	serverID := NewServerID(serverName, uuid)
+	// Joins the object to a string name
 	srvName := serverID.String()
 
 	// Creation steps
@@ -178,18 +179,14 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 	// Init gossip
 	goss := initGossipSettings(1*time.Second, 1) // TODO Node selection changing for tests
 
-	createdAt := time.Now()
-
 	seq := newSeqReqPool(10)
-
-	selfInfo := initSelfParticipant(srvName, addr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
 		ServerID:            *serverID,
 		ServerName:          srvName,
-		initialised:         createdAt.Unix(),
+		initialised:         int64(serverID.timeUnix),
 		addr:                addr,
 		nodeTCPAddr:         nodeTCPAddr,
 		clientTCPAddr:       clientAddr,
@@ -200,9 +197,6 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		gbConfig:    gbConfig,
 		seedAddr:    make([]*net.TCPAddr, 0),
 		clientStore: make(map[uint64]*gbClient),
-
-		selfInfo:   selfInfo,
-		clusterMap: *initClusterMap(srvName, nodeTCPAddr, selfInfo),
 
 		gossip:     goss,
 		isOriginal: false,
@@ -228,6 +222,10 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 // have successfully launched
 func (s *GBServer) StartServer() {
 
+	// TODO Check if server context is nil
+	//TODO Check if the initialisation time of the server is different to when StartServer has been called - if so
+	// re-initClusterMap
+
 	// Reset the context to handle reconnect scenarios
 	s.serverLock.Lock()
 	s.resetContext()
@@ -237,6 +235,10 @@ func (s *GBServer) StartServer() {
 	s.updateTime()
 	srvName := s.String()
 	s.ServerName = srvName
+	//s.clusterMapLock.Lock()
+	selfInfo := initSelfParticipant(srvName, s.addr)
+	s.clusterMap = *initClusterMap(srvName, s.nodeTCPAddr, selfInfo)
+	//s.clusterMapLock.Unlock()
 
 	//s.serverLock.Lock()
 
@@ -760,3 +762,9 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 // TODO think about where we need to place and handle updating our selfInfo map which is part of the cluster map we gossip about ourselves
 // Example - every increase in node count will need to be updated in self info and max version updated
 // Equally for heartbeats on every successful gossip with a node - the heartbeat and value should be updated
+
+func (s *GBServer) updateHeartBeat() error {
+
+	return nil
+
+}

@@ -63,6 +63,57 @@ func (s *GBServer) gossipCleanup() {
 // Cluster Map
 //===================================================================================
 
+/*
+====================== CLUSTER MAP LOCKING STRATEGY ======================
+
+🔹 General Locking Rules:
+1️⃣ **Always acquire ClusterMap.mu first** when modifying the ClusterMap.
+2️⃣ **Release ClusterMap.mu before locking Participant.pm** to prevent deadlocks.
+3️⃣ **Never hold ClusterMap.mu while locking Participant.pm** (avoids circular waits).
+4️⃣ **Use RWMutex**:
+   - `ClusterMap.RLock()` for read operations (e.g., looking up participants).
+   - `ClusterMap.Lock()` for write operations (e.g., adding/removing participants).
+   - `Participant.pm.Lock()` only for modifying a specific participant.
+
+🔹 Safe Locking Order:
+✅ **Read a participant (safe)**
+   1. `ClusterMap.RLock()`
+   2. Lookup participant
+   3. `ClusterMap.RUnlock()`
+   4. `Participant.pm.Lock()`
+   5. Modify participant
+   6. `Participant.pm.Unlock()`
+
+✅ **Modify a participant (safe)**
+   1. `ClusterMap.RLock()`
+   2. Lookup participant
+   3. `ClusterMap.RUnlock()`
+   4. `Participant.pm.Lock()`
+   5. Modify participant
+   6. `Participant.pm.Unlock()`
+
+✅ **Add a participant (safe)**
+   1. `ClusterMap.Lock()`
+   2. Add participant to map
+   3. `ClusterMap.Unlock()`
+
+✅ **Remove a participant (safe)**
+   1. `ClusterMap.Lock()`
+   2. Lookup participant
+   3. Remove from map
+   4. `ClusterMap.Unlock()` ✅ (Release before locking `Participant.pm`)
+   5. `Participant.pm.Lock()`
+   6. Perform cleanup - if needed
+   7. `Participant.pm.Unlock()`
+
+🚨 **Avoid Deadlocks:**
+❌ **Never do this:** `ClusterMap.Lock()` → `Participant.pm.Lock()`
+   - This can cause a circular wait if another goroutine holds `Participant.pm.Lock()`
+     and then tries to acquire `ClusterMap.Lock()`.
+
+=======================================================================
+*/
+
 const (
 	HEARTBEAT_V = iota
 	ADDR_V
@@ -294,7 +345,33 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 	cm.participants[name] = participant
 	cm.participantArray = append(cm.participantArray, participant.name)
 
+	log.Printf("part name == %s", cm.participants[name].name)
+
 	return cm
+
+}
+
+//------------------------------------------
+// Handling Self Info - Thread safe and for high concurrency
+
+func (s *GBServer) getSelfInfo() *Participant {
+	s.clusterMapLock.RLock()
+	defer s.clusterMapLock.RUnlock()
+	return s.clusterMap.participants[s.ServerName]
+}
+
+func (s *GBServer) updateSelfInfo(updateFunc func(participant *Participant)) {
+
+	if s.clusterMapLock.TryLock() {
+		defer s.clusterMapLock.Unlock()
+		panic("Deadlock risk: UpdateParticipant should not hold ClusterMap lock when locking a participant!")
+	}
+
+	self := s.getSelfInfo()
+
+	self.pm.Lock()
+	updateFunc(self)
+	self.pm.Unlock()
 
 }
 
@@ -308,6 +385,7 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 //Add/Remove Participant
 
+// -- TODO Look at weak pointers for tmpP in order to release to GC as soon as possible
 // -- TODO do we need to think about comparisons here?
 // Thread safe
 func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) error {
@@ -384,7 +462,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // Thread safe
 func (s *GBServer) generateDigest() ([]byte, error) {
 
-	s.clusterMapLock.Lock()
+	s.clusterMapLock.RLock()
 	// First we need to determine if the Digest fits within MTU
 
 	// Check how many participants first - anymore than 40 will definitely exceed MTU
@@ -406,7 +484,7 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 		// TODO Implement overfill strategy for digest
 	}
 
-	s.clusterMapLock.Unlock()
+	s.clusterMapLock.RUnlock()
 
 	// If not, we need to decide if we will stream or do a random subset of participants (increasing propagation time)
 
@@ -747,14 +825,13 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	for i := 0; i < int(ns); i++ {
 
-		s.clusterMapLock.Lock()
+		s.clusterMapLock.RLock()
 
 		num := rand.Intn(pl) + 1
 		selectedNode := s.clusterMap.participantArray[num]
-		log.Printf("%s- SELECTED --> %s", s.ServerName, selectedNode)
 
 		// TODO Check exist and dial if not --> then throw error if neither work
-		s.clusterMapLock.Unlock()
+		s.clusterMapLock.RUnlock()
 
 		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() { done <- struct{}{} }()

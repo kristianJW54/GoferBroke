@@ -250,15 +250,16 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 // running a check on our ServerID + address
 func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, error) {
 
-	s.clusterMapLock.RLock()
-
+	//s.clusterMapLock.RLock()
+	self := s.getSelfInfo()
+	log.Printf("self name == %s", self.name)
 	//Need to serialise the tmpCluster
-	cereal, err := s.serialiseSelfInfo()
+	cereal, err := s.serialiseSelfInfo(self)
 	if err != nil {
 		return nil, fmt.Errorf("prepareSelfInfoSend - serialising self info: %s", err)
 	}
 
-	s.clusterMapLock.RUnlock()
+	//s.clusterMapLock.RUnlock()
 
 	// Construct header
 	header := constructNodeHeader(1, uint8(command), uint16(reqID), uint16(respID), uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
@@ -306,14 +307,14 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 		// Or we send a subset and allow the node to continue to dial the subset in order to let it's map grow
 	}
 
-	s.clusterMapLock.Lock()
+	s.clusterMapLock.RLock()
 
 	msg, err := s.serialiseClusterDelta()
 	if err != nil {
 		return err
 	}
 
-	s.clusterMapLock.Unlock()
+	s.clusterMapLock.RUnlock()
 
 	respID, err := s.acquireReqID()
 	if err != nil {
@@ -397,7 +398,7 @@ func (c *gbClient) processArg(arg []byte) error {
 	}
 
 	c.argBuf = arg
-	log.Printf("%s response ID in processArg: %v", c.srv.ServerName, c.ph.reqID)
+	//log.Printf("%s response ID in processArg: %v", c.srv.ServerName, c.ph.reqID)
 	//log.Printf("arg == %v", c.argBuf)
 
 	return nil
@@ -521,7 +522,7 @@ func (c *gbClient) processHandShake(message []byte) {
 	// TODO Finish this
 	// Send HandShake Response here
 	// --
-	log.Printf("%s -----------------> handshake request ID = %v", c.srv.ServerName, c.ph.reqID)
+	//log.Printf("%s -----------------> handshake request ID = %v", c.srv.ServerName, c.ph.reqID)
 	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(c.ph.reqID), 0)
 	if err != nil {
 		log.Printf("prepareSelfInfoSend failed: %v", err)
@@ -531,15 +532,15 @@ func (c *gbClient) processHandShake(message []byte) {
 	c.qProto(info, true)
 	c.mu.Unlock()
 
-	for key, value := range tmpC.delta {
-		log.Printf("%s ---> %s - %+v", c.srv.ServerName, key, value)
-		err := c.srv.addParticipantFromTmp(key, value)
-		if err != nil {
-			log.Printf("AddParticipantFromTmp failed: %v", err)
-			//send err response
-		}
-
-	}
+	//for key, value := range tmpC.delta {
+	//	log.Printf("%s ---> %s - %+v", c.srv.ServerName, key, value)
+	//	err := c.srv.addParticipantFromTmp(key, value)
+	//	if err != nil {
+	//		log.Printf("AddParticipantFromTmp failed: %v", err)
+	//		//send err response
+	//	}
+	//
+	//}
 
 	// Move the tmpClient to connected as it has provided its info which we have now stored
 	err = c.srv.moveToConnected(c.cid, tmpC.sender)
@@ -581,7 +582,7 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 
 func (c *gbClient) processOK(message []byte) {
 
-	log.Printf("resp id for ok == %v", int(c.ph.reqID))
+	//log.Printf("resp id for ok == %v", int(c.ph.reqID))
 
 	rsp, err := c.getResponseChannel(c.ph.reqID)
 	if err != nil {
@@ -608,7 +609,7 @@ func (c *gbClient) processOK(message []byte) {
 
 func (c *gbClient) processOKResp(message []byte) {
 
-	log.Printf("OK --------> resp id for ok == %v", int(c.ph.respID))
+	//log.Printf("OK --------> resp id for ok == %v", int(c.ph.respID))
 
 	rsp, err := c.getResponseChannel(c.ph.respID)
 	if err != nil {
@@ -737,15 +738,6 @@ func (c *gbClient) processInfoMessage(message []byte) {
 		}
 
 	}
-
-	//// Move the tmpClient to connected as it has provided its info which we have now stored
-	//err = c.srv.moveToConnected(c.cid, tmpC.sender)
-	//if err != nil {
-	//	log.Printf("MoveToConnected failed in process info message: %v", err)
-	//}
-	//
-	//// TODO Monitor the server lock here and be mindful
-	//c.srv.incrementNodeConnCount()
 
 	return
 

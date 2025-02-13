@@ -15,7 +15,6 @@ func TestSerialiseDigestMTU(t *testing.T) {
 	// Mock server setup
 	gbs := &GBServer{
 		ServerName: "test-server",
-		selfInfo:   &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
 		},
@@ -52,7 +51,6 @@ func TestSerialiseDigest(t *testing.T) {
 
 	// Mock server setup
 	gbs := &GBServer{
-		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 5), // 5 Participants for the test
 			participantQ: make(participantHeap, 0),
@@ -173,7 +171,6 @@ func BenchmarkMySerialization(b *testing.B) {
 
 	// Mock server setup
 	gbs := &GBServer{
-		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
 			participantQ: make(participantHeap, 0),
@@ -274,7 +271,6 @@ func TestMySerialization(t *testing.T) {
 
 	// Mock server setup
 	gbs := &GBServer{
-		selfInfo: &Participant{},
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
 			participantQ: make(participantHeap, 0),
@@ -357,9 +353,11 @@ func TestSerialiseDeltaLiveServer(t *testing.T) {
 
 	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 
+	selfInfo := gbs.getSelfInfo()
+
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
-	log.Printf("p name = %v | values %v", gbs.selfInfo.name, gbs.selfInfo.keyValues[_ADDRESS_])
+	log.Printf("p name = %v | values %v", selfInfo.name, selfInfo.keyValues[_ADDRESS_])
 
 	// Serialise the testClusterDelta with the participant index and value index
 	gbs.clusterMapLock.RLock()

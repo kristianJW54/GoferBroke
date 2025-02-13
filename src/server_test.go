@@ -215,9 +215,11 @@ func TestServerRunningOneNodes(t *testing.T) {
 
 	go gbs.StartServer()
 
+	selfInfo := gbs.getSelfInfo()
+
 	time.Sleep(1 * time.Second)
-	t.Logf("self name: %s", gbs.selfInfo.name)
-	for k, value := range gbs.selfInfo.keyValues {
+	t.Logf("self name: %s", selfInfo.name)
+	for k, value := range selfInfo.keyValues {
 		t.Logf("key: %s value: %v", k, value)
 	}
 
