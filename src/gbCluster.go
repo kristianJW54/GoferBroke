@@ -3,6 +3,7 @@ package src
 import (
 	"container/heap"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -360,18 +361,23 @@ func (s *GBServer) getSelfInfo() *Participant {
 	return s.clusterMap.participants[s.ServerName]
 }
 
-func (s *GBServer) updateSelfInfo(updateFunc func(participant *Participant)) {
+func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) error {
 
-	if s.clusterMapLock.TryLock() {
-		defer s.clusterMapLock.Unlock()
-		panic("Deadlock risk: UpdateParticipant should not hold ClusterMap lock when locking a participant!")
+	if !s.clusterMapLock.TryLock() { // If TryLock fails, another thread has the lock
+		return fmt.Errorf("selfInfo update skipped: ClusterMap lock is held elsewhere")
 	}
+	s.clusterMapLock.Unlock()
 
 	self := s.getSelfInfo()
 
 	self.pm.Lock()
-	updateFunc(self)
+	err := updateFunc(self, timeOfUpdate)
+	if err != nil {
+		return err
+	}
 	self.pm.Unlock()
+
+	return nil
 
 }
 
@@ -918,6 +924,31 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	}
 
 	log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
+	log.Printf("receiving ok for a gossip round 😃 updating our heartbeat...")
+
+	// TODO Refactor - this is here for testing functionality - complete lock testing on cluster_test.go
+
+	self := s.getSelfInfo()
+	heartbeatBytes := self.keyValues[_HEARTBEAT_].value
+	heartbeatInt := int64(binary.BigEndian.Uint64(heartbeatBytes))
+
+	log.Printf("current heartbeat: %v", heartbeatInt)
+
+	err = s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
+		err := updateHeartBeat(participant, timeOfUpdate)
+		if err != nil {
+			log.Printf("Error in gossip round (stage %d): %v", stage, err)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("Error in gossip round (stage %d): %v", stage, err)
+	}
+
+	heartbeatBytes = self.keyValues[_HEARTBEAT_].value
+	heartbeatInt = int64(binary.BigEndian.Uint64(heartbeatBytes))
+
+	log.Printf("new heartbeat = %v", heartbeatInt)
 
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 

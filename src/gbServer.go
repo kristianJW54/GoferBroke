@@ -763,7 +763,10 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 // Example - every increase in node count will need to be updated in self info and max version updated
 // Equally for heartbeats on every successful gossip with a node - the heartbeat and value should be updated
 
-func (s *GBServer) updateHeartBeat() error {
+func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
+
+	binary.BigEndian.PutUint64(self.keyValues[_HEARTBEAT_].value, uint64(timeOfUpdate))
+	self.keyValues[_HEARTBEAT_].version = timeOfUpdate
 
 	return nil
 
