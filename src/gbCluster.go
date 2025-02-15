@@ -3,7 +3,6 @@ package src
 import (
 	"container/heap"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -363,11 +362,6 @@ func (s *GBServer) getSelfInfo() *Participant {
 
 func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) error {
 
-	if !s.clusterMapLock.TryLock() { // If TryLock fails, another thread has the lock
-		return fmt.Errorf("selfInfo update skipped: ClusterMap lock is held elsewhere")
-	}
-	s.clusterMapLock.Unlock()
-
 	self := s.getSelfInfo()
 
 	self.pm.Lock()
@@ -375,6 +369,7 @@ func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participan
 	if err != nil {
 		return err
 	}
+	self.maxVersion = timeOfUpdate
 	self.pm.Unlock()
 
 	return nil
@@ -545,6 +540,70 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 
 	return r, nil
 
+}
+
+//=======================================================
+// GOSS_SYN_ACK Prep
+//=======================================================
+
+func (s *GBServer) compareDigestReceived(digest *fullDigest) error {
+
+	// Here we are not looking at participants we are missing - that will be sent to use when we send our digest
+	// We are focusing on what we have that the other node does not based on their digest we are receiving
+
+	d := digest
+
+	for key, values := range *d {
+		s.clusterMapLock.RLock()
+		part, exists := s.clusterMap.participants[key]
+		s.clusterMapLock.RUnlock()
+		if !exists {
+			log.Printf("participant not in cluster map comparison")
+			continue
+		}
+
+		//log.Printf("participant %s - [%s(%v)-%s(%v)", key, key, values.maxVersion, part.name, part.maxVersion)
+
+		// TODO For now the log will keep showing because the node we send our delta back to is not yet applying our updates so their state will not change yet
+		if values.maxVersion < part.maxVersion {
+			log.Printf("%s --> participant %s max version outdated - including in delta  [%s(%v)-%s(%v)", s.ServerName, values.senderName, key, values.maxVersion, part.name, part.maxVersion)
+		} else {
+			log.Printf("participant %s max version ok :)", key)
+		}
+
+	}
+
+	return nil
+
+}
+
+// TODO Change output to byte as we will be serialising the delta after comparing and populating the queues
+func (s *GBServer) compareAndBuildDelta(digest *fullDigest) ([]string, error) {
+
+	// Compare here
+	err := s.compareDigestReceived(digest)
+	if err != nil {
+		return nil, err
+	}
+	// Populate queues
+
+	// Serialise
+
+	// Return
+
+	return []string{"nothing yet"}, nil
+}
+
+func (s *GBServer) prepareGossSynAck(digest *fullDigest) error {
+
+	delta, err := s.compareAndBuildDelta(digest)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("delta = %s", delta)
+
+	return nil
 }
 
 //=======================================================
@@ -909,10 +968,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	stage = 1
 	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
 
-	//// Stage 1: Send Digest
-	//s.clusterMapLock.Lock()
+	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
-	//s.clusterMapLock.Unlock()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
@@ -924,15 +981,12 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	}
 
 	log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
-	log.Printf("receiving ok for a gossip round 😃 updating our heartbeat...")
 
-	// TODO Refactor - this is here for testing functionality - complete lock testing on cluster_test.go
+	//------------- GOSS_SYN_ACK Stage 2 -------------//
 
-	self := s.getSelfInfo()
-	heartbeatBytes := self.keyValues[_HEARTBEAT_].value
-	heartbeatInt := int64(binary.BigEndian.Uint64(heartbeatBytes))
+	//----
 
-	log.Printf("current heartbeat: %v", heartbeatInt)
+	//------------- Handle Completion -------------
 
 	err = s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
 		err := updateHeartBeat(participant, timeOfUpdate)
@@ -944,17 +998,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	if err != nil {
 		log.Printf("Error in gossip round (stage %d): %v", stage, err)
 	}
-
-	heartbeatBytes = self.keyValues[_HEARTBEAT_].value
-	heartbeatInt = int64(binary.BigEndian.Uint64(heartbeatBytes))
-
-	log.Printf("new heartbeat = %v", heartbeatInt)
-
-	//------------- GOSS_SYN_ACK Stage 2 -------------//
-
-	//----
-
-	//------------- Handle Completion -------------
 
 	select {
 	case <-ctx.Done():

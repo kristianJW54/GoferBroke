@@ -99,7 +99,7 @@ func TestSerialiseDigest(t *testing.T) {
 
 	sender, digest, err := deSerialiseDigest(cereal)
 
-	for _, value := range digest {
+	for _, value := range *digest {
 		log.Printf("sender = %s", sender)
 		log.Printf("%v:%v", value.nodeName, value.maxVersion)
 	}
@@ -383,6 +383,12 @@ func TestSerialiseDeltaLiveServer(t *testing.T) {
 			t.Logf("key-%s(%d)(%s)", k, value.valueType, value.value)
 		}
 	}
+
+}
+
+func TestSerialiseQueuesPopulating(t *testing.T) {
+
+	//--
 
 }
 

@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"sync"
 	"time"
 )
 
@@ -19,70 +18,8 @@ const (
 	CLIENT_D
 )
 
-const (
-	CerealPoolSmall  = 512
-	CerealPoolMedium = 1024
-	CerealPoolLarge  = 2048
-)
-
-var cerealPoolSmall = &sync.Pool{
-	New: func() any {
-		b := [CerealPoolSmall]byte{}
-		return &b
-	},
-}
-
-var cerealPoolMedium = &sync.Pool{
-	New: func() any {
-		b := [CerealPoolMedium]byte{}
-		return &b
-	},
-}
-
-var cerealPoolLarge = &sync.Pool{
-	New: func() any {
-		b := [CerealPoolLarge]byte{}
-		return &b
-	},
-}
-
-func cerealPoolGet(size int) []byte {
-	var buf []byte
-	switch {
-	case size <= CerealPoolSmall:
-		//log.Printf("Acquiring small node pool")
-		buf = cerealPoolSmall.Get().(*[CerealPoolSmall]byte)[:size] // Slice to the correct size
-	case size <= CerealPoolMedium:
-		//log.Printf("Acquiring medium node pool")
-		buf = cerealPoolMedium.Get().(*[CerealPoolMedium]byte)[:size] // Slice to the correct size
-	default:
-		//log.Printf("Acquiring large node pool")
-		buf = cerealPoolLarge.Get().(*[CerealPoolLarge]byte)[:size] // Slice to the correct size
-	}
-	return buf
-}
-
-func cerealPoolPut(b []byte) {
-	switch cap(b) {
-	case CerealPoolSmall:
-		//log.Printf("returning small buffer to pool - %v", len(b))
-		b := (*[CerealPoolSmall]byte)(b[0:CerealPoolSmall])
-		nbPoolSmall.Put(b)
-	case CerealPoolMedium:
-		b := (*[CerealPoolMedium]byte)(b[0:CerealPoolMedium])
-		nbPoolMedium.Put(b)
-	case CerealPoolLarge:
-		b := (*[CerealPoolLarge]byte)(b[0:CerealPoolLarge])
-		nbPoolLarge.Put(b)
-	default:
-
-	}
-}
-
 //-------------------
 //Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
-
-// TODO look at whether we can separate sender name out of the array to avoid duplication
 
 type digest struct {
 	senderName string
@@ -104,9 +41,9 @@ type clusterDelta struct {
 	delta  map[string]*tmpParticipant
 }
 
-// TODO Look at flattening or refining the data structure passed to the serialiser for faster performance
-
-// TODO Cluster logic - should be able to pass names and pull only those deltas - then make temps and serialise
+//=========================================================
+// Serialise based on digest received and populate queues
+//=========================================================
 
 func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 
@@ -492,7 +429,7 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
-func deSerialiseDigest(digestRaw []byte) (senderName string, fd fullDigest, err error) {
+func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err error) {
 
 	//CLRF Check
 	//if bytes.HasSuffix(digest, []byte(CLRF)) {
@@ -549,7 +486,7 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd fullDigest, err 
 
 	}
 
-	return string(sender), digestMap, nil
+	return string(sender), &digestMap, nil
 }
 
 //=======================================================

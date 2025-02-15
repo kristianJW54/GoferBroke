@@ -647,7 +647,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
 	// if we need to defer gossip round or continue
 
-	sender, _, err := deSerialiseDigest(message)
+	sender, digest, err := deSerialiseDigest(message)
 	if err != nil {
 		log.Printf("error serialising digest - %v", err)
 	}
@@ -685,6 +685,19 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 		return
 
+	}
+
+	//TODO Here we now do our comparison of the digest to build our delta + to send the combined packet
+	// 1. Compare + build delta
+	// 2. Populate participant Queue and Delta Queue based on comparison and MTU
+	// 3. Serialise from the Queues
+	// 4. Combine both serialised digest + delta to send
+
+	srv := c.srv
+
+	err = srv.prepareGossSynAck(digest)
+	if err != nil {
+		log.Printf("prepareGossSynAck failed: %v", err)
 	}
 
 	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1, 0, 0)
