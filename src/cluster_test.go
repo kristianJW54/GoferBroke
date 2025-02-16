@@ -14,7 +14,6 @@ func TestUpdateHeartBeat(t *testing.T) {
 		ServerName: "mock-server-1",
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
-			participantQ: make(participantHeap, 0),
 		},
 	}
 
@@ -72,7 +71,6 @@ func TestClusterMapLocks(t *testing.T) {
 		ServerName: "mock-server-1",
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
-			participantQ: make(participantHeap, 0),
 		},
 	}
 

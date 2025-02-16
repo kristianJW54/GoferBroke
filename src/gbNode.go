@@ -252,7 +252,6 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 
 	//s.clusterMapLock.RLock()
 	self := s.getSelfInfo()
-	log.Printf("self name == %s", self.name)
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo(self)
 	if err != nil {

@@ -181,7 +181,6 @@ type Participant struct {
 type ClusterMap struct {
 	seedServer   *Seed
 	participants map[string]*Participant
-	participantQ participantHeap
 
 	// TODO Need to find a more efficient way of selecting random nodes to gossip with from the map rather than storing an array
 	participantArray []string
@@ -335,7 +334,6 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
-		make(participantHeap, 0),
 		make([]string, 0),
 		make(map[string]*phiAccrual),
 	}
@@ -344,8 +342,6 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 	cm.participants[name] = participant
 	cm.participantArray = append(cm.participantArray, participant.name)
-
-	log.Printf("part name == %s", cm.participants[name].name)
 
 	return cm
 
@@ -546,34 +542,72 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 // GOSS_SYN_ACK Prep
 //=======================================================
 
-func (s *GBServer) compareDigestReceived(digest *fullDigest) error {
+func (s *GBServer) compareDigestReceived(digest *fullDigest) (ph participantHeap, size int, err error) {
 
 	// Here we are not looking at participants we are missing - that will be sent to use when we send our digest
 	// We are focusing on what we have that the other node does not based on their digest we are receiving
 
 	d := digest
 
-	for key, values := range *d {
-		s.clusterMapLock.RLock()
-		part, exists := s.clusterMap.participants[key]
-		s.clusterMapLock.RUnlock()
-		if !exists {
-			log.Printf("participant not in cluster map comparison")
-			continue
+	sizeOfQueue := 0
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	// Initialise an empty participantHeap as a value so as not to overwrite when we gossip with other nodes concurrently
+	partQueue := make(participantHeap, 0, len(cm.participants))
+
+	for name, participant := range cm.participants {
+
+		outdated := 0
+
+		// First check if we have a higher max version than the digest received + if we have a participant they do not
+		if peerDigest, exists := (*d)[name]; exists {
+			// If the participant is included in the digest then we to check the versions
+			if participant.maxVersion > peerDigest.maxVersion {
+				// If we are here then we need to go through the deltas and count the available ones + also get the size to pass to the serialiser
+
+				partEntrySize := 1 + len(name) + 2 // 1 byte for name length + name length + size of delta key-values
+
+				// Check if we are about to go over MTU
+				if sizeOfQueue+partEntrySize > MTU {
+					break
+				}
+
+				sizeOfQueue += partEntrySize
+
+				for key, values := range participant.keyValues {
+
+					// Now we get the size of the deltas to send and also the count of available deltas
+					deltaSize := 14 + len(key) + len(values.value) // 14 bytes for metadata + value length
+
+					if sizeOfQueue+deltaSize > MTU {
+						break
+					}
+
+					outdated++
+					sizeOfQueue += deltaSize
+
+				}
+			}
 		}
 
-		//log.Printf("participant %s - [%s(%v)-%s(%v)", key, key, values.maxVersion, part.name, part.maxVersion)
+		if outdated > 0 {
 
-		// TODO For now the log will keep showing because the node we send our delta back to is not yet applying our updates so their state will not change yet
-		if values.maxVersion < part.maxVersion {
-			log.Printf("%s --> participant %s max version outdated - including in delta  [%s(%v)-%s(%v)", s.ServerName, values.senderName, key, values.maxVersion, part.name, part.maxVersion)
-		} else {
-			log.Printf("participant %s max version ok :)", key)
+			// We add the participant to the participant heap
+			heap.Push(&partQueue, &participantQueue{
+				name:            name,
+				availableDeltas: outdated,
+				maxVersion:      participant.maxVersion,
+			})
 		}
 
 	}
 
-	return nil
+	heap.Init(&partQueue)
+
+	return partQueue, sizeOfQueue, nil
 
 }
 
@@ -581,9 +615,18 @@ func (s *GBServer) compareDigestReceived(digest *fullDigest) error {
 func (s *GBServer) compareAndBuildDelta(digest *fullDigest) ([]string, error) {
 
 	// Compare here
-	err := s.compareDigestReceived(digest)
+	partQueue, size, err := s.compareDigestReceived(digest)
 	if err != nil {
 		return nil, err
+	}
+
+	// TODO Need to include the server - senders name and the name + versions of each to compare with what is in the queue
+	log.Printf("size of queue to serialise is = %d", size)
+	if len(partQueue) > 0 {
+		firstEntry := partQueue[0] // Peek at the first entry without removing it
+		log.Printf("First participant in queue: %s, availableDeltas: %d", firstEntry.name, firstEntry.availableDeltas)
+	} else {
+		log.Printf("Participant queue is empty")
 	}
 	// Populate queues
 

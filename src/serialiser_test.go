@@ -53,7 +53,6 @@ func TestSerialiseDigest(t *testing.T) {
 	gbs := &GBServer{
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 5), // 5 Participants for the test
-			participantQ: make(participantHeap, 0),
 		},
 	}
 
@@ -173,7 +172,6 @@ func BenchmarkMySerialization(b *testing.B) {
 	gbs := &GBServer{
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
-			participantQ: make(participantHeap, 0),
 		},
 	}
 
@@ -201,15 +199,6 @@ func BenchmarkMySerialization(b *testing.B) {
 
 	// Add participant to the ClusterMap
 	gbs.clusterMap.participants["node1"] = participant
-
-	pq := &participantQueue{
-		index:           1,
-		name:            participant.name,
-		availableDeltas: 0,
-		maxVersion:      1640995200,
-	}
-
-	heap.Push(&gbs.clusterMap.participantQ, pq)
 
 	// Warm-up phase: Run once before the actual benchmarking to avoid initial overhead
 	_, _ = gbs.serialiseClusterDelta() // Marshal the participant of "cluster1" to remove startup costs
@@ -273,7 +262,6 @@ func TestMySerialization(t *testing.T) {
 	gbs := &GBServer{
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
-			participantQ: make(participantHeap, 0),
 		},
 	}
 
@@ -281,35 +269,19 @@ func TestMySerialization(t *testing.T) {
 	participant := &Participant{
 		name:      "node1",
 		keyValues: make(map[string]*Delta),
-		deltaQ:    make(deltaHeap, 0),
 	}
 
 	// Populate participant's keyValues and deltaQ
 	for key, delta := range keyValues {
 		i := 0
-		dq := &deltaQueue{
-			index:   i,
-			key:     key,
-			version: delta.version,
-		}
 
 		i++
 
 		participant.keyValues[key] = delta
-		heap.Push(&participant.deltaQ, dq)
 	}
 
 	// Add participant to the ClusterMap
 	gbs.clusterMap.participants["node1"] = participant
-
-	pq := &participantQueue{
-		index:           1,
-		name:            participant.name,
-		availableDeltas: 0,
-		maxVersion:      0,
-	}
-
-	heap.Push(&gbs.clusterMap.participantQ, pq)
 
 	// Serialize the cluster deltas
 	cereal, _ := gbs.serialiseClusterDelta()
