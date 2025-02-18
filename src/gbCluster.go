@@ -459,29 +459,42 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // Thread safe
 func (s *GBServer) generateDigest() ([]byte, error) {
 
+	// We need to determine if we have too many participants then we need to enter a subset strategy selection
 	s.clusterMapLock.RLock()
-	// First we need to determine if the Digest fits within MTU
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
 
-	// Check how many participants first - anymore than 40 will definitely exceed MTU
-	//if len(s.clusterMap.participants) > 40 {
-	//	return nil, fmt.Errorf("too many participants")
-	//	// TODO Implement overfill strategy for digest
-	//}
+	if len(cm.participantArray) > 20 {
+		log.Printf("selecting subset of participants for digest generation")
 
-	// TODO We need to run max version lazy updates on participants we have selected to be in the digest
+		var newPartArray [10]string
+
+		subsetSize := 0
+
+		// Weak pointer to newArray? clean up after?
+
+		// TODO make as lightweight as possible but need a subset selector which avoids selecting duplicates (same for node selection during gossip)
+
+		for i := 0; i < 10; i++ {
+			randNum := rand.Intn(len(cm.participantArray))
+			node := cm.participantArray[randNum]
+
+			if exists := cm.participants[node]; exists != nil {
+				newPartArray[i] = node
+
+				subsetSize += 1 + len(node) + 8
+			}
+
+		}
+
+		// Pass the newPartArray to the serialiseClusterDigestWithArray
+
+	}
 
 	b, err := s.serialiseClusterDigest()
 	if err != nil {
 		return nil, err
 	}
-
-	// Check len against MTU
-	if len(b) > MTU {
-		return nil, fmt.Errorf("MTU exceeded")
-		// TODO Implement overfill strategy for digest
-	}
-
-	s.clusterMapLock.RUnlock()
 
 	// If not, we need to decide if we will stream or do a random subset of participants (increasing propagation time)
 
@@ -542,6 +555,20 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 // GOSS_SYN_ACK Prep
 //=======================================================
 
+//func (s *GBServer) prepareDigestAck(digest *fullDigest) (selfDigest *fullDigest, size int, err error) {
+//
+//	d := digest
+//
+//	s.clusterMapLock.RLock()
+//	cm := s.clusterMap
+//	s.clusterMapLock.RUnlock()
+//
+//
+//
+//	return nil, 0, nil
+//
+//}
+
 func (s *GBServer) compareDigestReceived(digest *fullDigest) (ph participantHeap, size int, err error) {
 
 	// Here we are not looking at participants we are missing - that will be sent to use when we send our digest
@@ -564,10 +591,12 @@ func (s *GBServer) compareDigestReceived(digest *fullDigest) (ph participantHeap
 
 		// First check if we have a higher max version than the digest received + if we have a participant they do not
 		if peerDigest, exists := (*d)[name]; exists {
+
+			//log.Printf("DIGEST RECEIVED FROM %s - (%s-%v)", peerDigest.senderName, peerDigest.nodeName, peerDigest.maxVersion)
 			// If the participant is included in the digest then we to check the versions
 			if participant.maxVersion > peerDigest.maxVersion {
 				// If we are here then we need to go through the deltas and count the available ones + also get the size to pass to the serialiser
-
+				//log.Printf("%s has greater version than %s VERSION - (%v::%v)", s.ServerName, peerDigest.senderName, participant.maxVersion, peerDigest.maxVersion)
 				partEntrySize := 1 + len(name) + 2 // 1 byte for name length + name length + size of delta key-values
 
 				// Check if we are about to go over MTU
@@ -613,6 +642,12 @@ func (s *GBServer) compareDigestReceived(digest *fullDigest) (ph participantHeap
 
 // TODO Change output to byte as we will be serialising the delta after comparing and populating the queues
 func (s *GBServer) compareAndBuildDelta(digest *fullDigest) ([]string, error) {
+
+	// Prepare our own digest first as we need to know if digest reaches its cap, so we know how many deltas we can pack in the MTU
+	//selfDigest, size, err := s.prepareDigestAck(digest)
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	// Compare here
 	partQueue, size, err := s.compareDigestReceived(digest)

@@ -691,6 +691,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	// 2. Populate participant Queue and Delta Queue based on comparison and MTU
 	// 3. Serialise from the Queues
 	// 4. Combine both serialised digest + delta to send
+	// 5. If digest is too large and will cause the delta to be omitted then a subset may be chosen
 
 	srv := c.srv
 

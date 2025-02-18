@@ -367,8 +367,9 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	// Senders Name Length - 2 bytes
 	// Senders Name
 
-	//s.clusterMapLock.Lock()
-	//defer s.clusterMapLock.Unlock()
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
 
 	length := 7 + 2 //Including CLRF at the end
 
@@ -376,7 +377,7 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	length += 1
 	length += len(s.ServerName)
 
-	for _, v := range s.clusterMap.participants {
+	for _, v := range cm.participants {
 
 		length += 1
 		length += len(v.name)
@@ -407,6 +408,63 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 		//if len(value.name) > 255 {
 		//	return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.name)
 		//}
+		nameLen := len(v.name)
+		digestBuf[offset] = uint8(nameLen)
+		offset++
+		copy(digestBuf[offset:], v.name)
+		offset += nameLen
+		binary.BigEndian.PutUint64(digestBuf[offset:], uint64(v.maxVersion))
+		offset += 8
+
+	}
+	copy(digestBuf[offset:], CLRF)
+	offset += len(CLRF)
+
+	return digestBuf, nil
+
+}
+
+func (s *GBServer) serialiseClusterDigestWithArray(subsetArray []string, subsetSize int) ([]byte, error) {
+
+	// Need type = Digest - 1 byte Uint8
+	// Need length of payload - 4 byte uint32
+	// Need size of digest - 2 byte uint16
+	// Total metadata for digest byte array = 7
+
+	// Senders Name Length - 2 bytes
+	// Senders Name
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	length := subsetSize
+	length += 9
+
+	// Include sender's name
+	length += 1
+	length += len(s.ServerName)
+
+	digestBuf := make([]byte, length)
+
+	offset := 0
+
+	digestBuf[0] = DIGEST_TYPE
+	offset++
+	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
+	offset += 4
+	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(3)) // Number of participants
+	offset += 2
+
+	digestBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(digestBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	for _, value := range subsetArray {
+
+		v := cm.participants[value]
+
 		nameLen := len(v.name)
 		digestBuf[offset] = uint8(nameLen)
 		offset++

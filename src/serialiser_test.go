@@ -5,48 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"testing"
 	"time"
 )
 
-func TestSerialiseDigestMTU(t *testing.T) {
-
-	// Mock server setup
-	gbs := &GBServer{
-		ServerName: "test-server",
-		clusterMap: ClusterMap{
-			participants: make(map[string]*Participant, 1),
-		},
-	}
-
-	// Create a participant
-	participant := &Participant{
-		name:      "node1",
-		keyValues: make(map[string]*Delta),
-	}
-
-	// Add participant to the ClusterMap
-	gbs.clusterMap.participants["node1"] = participant
-
-	cereal, err := gbs.serialiseClusterDigest()
-	if err != nil {
-		log.Println("error ", err)
-	}
-
-	cerealLen := len(cereal)
-
-	log.Println(cerealLen)
-	log.Println(1500 / 37)
-
-}
-
 func TestSerialiseDigest(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
 	keyValues := map[string]*Delta{
-		"key1": &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("hello world")},
-		"key2": &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
+		"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
 	}
 
 	// Mock server setup
@@ -96,10 +69,9 @@ func TestSerialiseDigest(t *testing.T) {
 
 	log.Printf("serialised digest = %v", cereal)
 
-	sender, digest, err := deSerialiseDigest(cereal)
+	_, digest, err := deSerialiseDigest(cereal)
 
 	for _, value := range *digest {
-		log.Printf("sender = %s", sender)
 		log.Printf("%v:%v", value.nodeName, value.maxVersion)
 	}
 
@@ -112,6 +84,93 @@ func createDelta(valueType uint8, version int64, value string) *Delta {
 		version:   version,
 		value:     []byte(value),
 	}
+}
+
+func TestSerialiseDigestWithSubsetArray(t *testing.T) {
+
+	keyValues := map[string]*Delta{
+		"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+	}
+
+	// Mock server setup
+	gbs := &GBServer{
+		clusterMap: ClusterMap{
+			participants: make(map[string]*Participant, 5), // 5 Participants for the test
+		},
+	}
+
+	// Need to create multiple participants to be used as a subset
+	// Add 5 mock participants to the cluster
+	for i := 1; i <= 10; i++ {
+		participantName := fmt.Sprintf("node-test%d", i)
+
+		// Create a participant
+		participant := &Participant{
+			name:       participantName,
+			keyValues:  make(map[string]*Delta),
+			maxVersion: 0,
+			deltaQ:     make(deltaHeap, 0),
+		}
+
+		var maxVersion int64
+		maxVersion = 0
+
+		// Populate participant's keyValues
+		for key, delta := range keyValues {
+
+			participant.keyValues[key] = delta
+
+			if delta.version > maxVersion {
+				maxVersion = delta.version
+			}
+
+		}
+
+		participant.maxVersion = maxVersion
+
+		// Add participant to the ClusterMap + array
+		gbs.clusterMap.participants[participantName] = participant
+		gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, participantName)
+
+	}
+
+	// Create subset array
+	subsetArray := make([]string, 3)
+	selectedNodes := make(map[string]struct{})
+	subsetSize := 0
+
+	for i := 0; i < 3; i++ {
+		randNum := rand.Intn(len(gbs.clusterMap.participants))
+		node := gbs.clusterMap.participantArray[randNum]
+		if _, exists := selectedNodes[node]; exists {
+			continue // Skip duplicates
+		}
+		selectedNodes[node] = struct{}{}
+		subsetArray[i] = node
+
+		subsetSize += 1 + len(node) + 8
+	}
+
+	log.Printf("subset array = %+v", subsetArray)
+
+	newDigest, err := gbs.serialiseClusterDigestWithArray(subsetArray, subsetSize)
+	if err != nil {
+		log.Println("error ", err)
+	}
+
+	_, digest, err := deSerialiseDigest(newDigest)
+	if err != nil {
+		log.Println("error ", err)
+	}
+
+	for _, value := range *digest {
+		log.Printf("%v:%v", value.nodeName, value.maxVersion)
+	}
+
 }
 
 func BenchmarkJSONSerialization(b *testing.B) {
@@ -216,36 +275,6 @@ func BenchmarkMySerialization(b *testing.B) {
 			}
 		}
 	})
-}
-
-func TestDeltaHeap(t *testing.T) {
-	// Pre-filled slice of deltas (not yet a valid heap)
-	deltaQ := deltaHeap{
-		&deltaQueue{key: "key1", version: 1640995201},
-		&deltaQueue{key: "key2", version: 1640995203},
-		&deltaQueue{key: "key3", version: 1640995202},
-	}
-
-	// Initialize the heap
-	heap.Init(&deltaQ)
-
-	// Push a new element
-	heap.Push(&deltaQ, &deltaQueue{key: "key4", version: 1640995204})
-
-	// Verify the highest version is at the top
-	if deltaQ[0].version != 1640995204 {
-		t.Errorf("Expected highest version to be 1640995204, got %d", deltaQ[0].version)
-	}
-
-	// Pop elements to check order
-	expectedVersions := []int64{1640995204, 1640995203, 1640995202, 1640995201}
-	for _, expected := range expectedVersions {
-		delta := heap.Pop(&deltaQ).(*deltaQueue)
-		log.Println("delta = ", delta)
-		if delta.version != expected {
-			t.Errorf("Expected version %d, got %d", expected, delta.version)
-		}
-	}
 }
 
 func TestMySerialization(t *testing.T) {
