@@ -453,43 +453,59 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 //------------------
 // Generate Digest
 
-// TODO Consider a digest pool to use to ease pressure on the Garbage Collector
-// TODO We could serialise directly from the cluster map and make a byte digest - the receiver will then only have to build a tmpDigest
-
 // Thread safe
 func (s *GBServer) generateDigest() ([]byte, error) {
 
 	// We need to determine if we have too many participants then we need to enter a subset strategy selection
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
+	//defer s.clusterMapLock.RUnlock()
+
+	log.Printf("%s --> participant array = %v", s.ServerName, cm.participantArray)
+
+	// TODO Need to fix subset digest creation as we get an index error currently
+
+	//if len(cm.participantArray) > 2 {
+	//	log.Printf("selecting subset of participants for digest generation")
+	//
+	//	var newPartArray []string
+	//
+	//	selectedNodes := make(map[string]struct{}, len(newPartArray))
+	//	subsetSize := 0
+	//
+	//	// Weak pointer to newArray? clean up after?
+	//
+	//
+	//	for i := 0; i < 2; i++ {
+	//		randNum := rand.Intn(len(cm.participantArray))
+	//		node := cm.participantArray[randNum]
+	//
+	//		if exists := cm.participants[node]; exists != nil {
+	//
+	//			if _, ok := selectedNodes[node]; ok {
+	//				log.Printf("already in")
+	//				continue
+	//			}
+	//
+	//			newPartArray = append(newPartArray, node)
+	//			selectedNodes[node] = struct{}{}
+	//			subsetSize += 1 + len(node) + 8
+	//		}
+	//
+	//	}
+
+	//	s.clusterMapLock.RUnlock()
+	//
+	//	log.Printf("part array = %v", newPartArray)
+	//	// Pass the newPartArray to the serialiseClusterDigestWithArray
+	//	cereal, err := s.serialiseClusterDigestWithArray(newPartArray, subsetSize)
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//	return cereal, nil
+	//}
+
 	s.clusterMapLock.RUnlock()
-
-	if len(cm.participantArray) > 20 {
-		log.Printf("selecting subset of participants for digest generation")
-
-		var newPartArray [10]string
-
-		subsetSize := 0
-
-		// Weak pointer to newArray? clean up after?
-
-		// TODO make as lightweight as possible but need a subset selector which avoids selecting duplicates (same for node selection during gossip)
-
-		for i := 0; i < 10; i++ {
-			randNum := rand.Intn(len(cm.participantArray))
-			node := cm.participantArray[randNum]
-
-			if exists := cm.participants[node]; exists != nil {
-				newPartArray[i] = node
-
-				subsetSize += 1 + len(node) + 8
-			}
-
-		}
-
-		// Pass the newPartArray to the serialiseClusterDigestWithArray
-
-	}
 
 	b, err := s.serialiseClusterDigest()
 	if err != nil {

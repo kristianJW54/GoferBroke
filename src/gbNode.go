@@ -127,11 +127,14 @@ func (s *GBServer) connectToSeed() error {
 
 	// Now we add the delta to our cluster map
 	for name, participant := range delta.delta {
-
-		err := s.addParticipantFromTmp(name, participant)
-		if err != nil {
-			return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
+		log.Printf("checking for %s to see if we can add to cluster map ============================", name)
+		if _, exists := s.clusterMap.participants[name]; !exists {
+			err := s.addParticipantFromTmp(name, participant)
+			if err != nil {
+				return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
+			}
 		}
+		continue
 	}
 
 	// Now we can remove from tmp map and add to client store including connected flag
@@ -210,12 +213,17 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	}
 
 	// Now we add the delta to our cluster map
-	for name, participant := range delta.delta {
+	for name, part := range delta.delta {
+		log.Printf("checking for %s to see if we can add to cluster map ============================", name)
 
-		err := s.addParticipantFromTmp(name, participant)
-		if err != nil {
-			return fmt.Errorf("connectToNodeInMap - adding participant from tmp: %s", err)
+		if _, exists := s.clusterMap.participants[name]; !exists {
+			log.Printf("adding %s", name)
+			err := s.addParticipantFromTmp(name, part)
+			if err != nil {
+				return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
+			}
 		}
+		continue
 	}
 
 	// Now we can remove from tmp map and add to client store including connected flag
@@ -531,15 +539,18 @@ func (c *gbClient) processHandShake(message []byte) {
 	c.qProto(info, true)
 	c.mu.Unlock()
 
-	//for key, value := range tmpC.delta {
-	//	log.Printf("%s ---> %s - %+v", c.srv.ServerName, key, value)
-	//	err := c.srv.addParticipantFromTmp(key, value)
-	//	if err != nil {
-	//		log.Printf("AddParticipantFromTmp failed: %v", err)
-	//		//send err response
-	//	}
-	//
-	//}
+	for key, value := range tmpC.delta {
+		log.Printf("checking for %s to see if we can add to cluster map ============================", key)
+
+		if _, exists := c.srv.clusterMap.participants[key]; !exists {
+			err := c.srv.addParticipantFromTmp(key, value)
+			if err != nil {
+				log.Printf("AddParticipantFromTmp failed: %v", err)
+				//send err response
+			}
+		}
+		continue
+	}
 
 	// Move the tmpClient to connected as it has provided its info which we have now stored
 	err = c.srv.moveToConnected(c.cid, tmpC.sender)
@@ -743,13 +754,16 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	// We have to do this last because we will end up sending back the nodes own info
 
 	for key, value := range tmpC.delta {
+		log.Printf("checking for %s to see if we can add to cluster map ============================", key)
 
-		err := c.srv.addParticipantFromTmp(key, value)
-		if err != nil {
-			log.Printf("AddParticipantFromTmp failed: %v", err)
-			//send err response
+		if _, exists := c.srv.clusterMap.participants[key]; !exists {
+			err := c.srv.addParticipantFromTmp(key, value)
+			if err != nil {
+				log.Printf("AddParticipantFromTmp failed: %v", err)
+				//send err response
+			}
 		}
-
+		continue
 	}
 
 	return
