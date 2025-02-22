@@ -6,6 +6,31 @@ import (
 	"time"
 )
 
+/*
+Digest Header -> Then participant (Name-MaxVersion)
++----------+-------------------+--------------+------------+--------------------------------+
+|  Type    |  Payload Length   |  Digest Size |  CRLF      |  Sender's Name                 |
+| (1 byte) |  (4 bytes uint32) |  (2 bytes)   |  (2 bytes) |  (2 bytes length + variable)   |
++----------+-------------------+--------------+------------+--------------------------------+
+
+Delta Header -> Key-Value Deltas
++----------+-------------------+--------------+------------+--------------------------------+
+|  Type    |  Payload Length   |  Delta Size  |  CRLF      |  Sender's Name                 |
+| (1 byte) |  (4 bytes uint32) |  (2 bytes)   |  (2 bytes) |  (2 bytes length + variable)   |
++----------+-------------------+--------------+------------+--------------------------------+
+	Key-Value Meta Data
+	+---------------+-------------+-----------------+----------------+------------+----------------+------------------+
+	| Number of KVs | Key Length  |  Key            |  Version       | Value Type | Value Length   |  Value           |
+	| (2 bytes)     | (2 bytes)   | (variable)      |  (8 bytes)     | (1 byte)   |  (4 bytes)     |  (variable)      |
+	+---------------+-------------+-----------------+----------------+----------- +----------------+------------------+
+
+*/
+
+const (
+	CEREAL_DIGEST_HEADER_SIZE = 11
+	CEREAL_DELTA_HEADER_SIZE  = 11
+)
+
 const (
 	DIGEST_TYPE = iota + 1
 	DELTA_TYPE
@@ -157,8 +182,6 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 	length += len(s.ServerName)
 
 	pi := s.clusterMap.participants
-
-	//log.Printf("%s --- length of pi ========================== %v", s.ServerName, len(pi))
 
 	for _, p := range pi {
 
@@ -357,16 +380,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 
-	// TODO Needs to have efficient allocations
-
-	// Need type = Digest - 1 byte Uint8
-	// Need length of payload - 4 byte uint32
-	// Need size of digest - 2 byte uint16
-	// Total metadata for digest byte array = 7
-
-	// Senders Name Length - 2 bytes
-	// Senders Name
-
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
 	s.clusterMapLock.RUnlock()
@@ -426,14 +439,6 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 
 func (s *GBServer) serialiseClusterDigestWithArray(subsetArray []string, subsetSize int) ([]byte, error) {
 
-	// Need type = Digest - 1 byte Uint8
-	// Need length of payload - 4 byte uint32
-	// Need size of digest - 2 byte uint16
-	// Total metadata for digest byte array = 7
-
-	// Senders Name Length - 2 bytes
-	// Senders Name
-
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
 	s.clusterMapLock.RUnlock()
@@ -453,7 +458,7 @@ func (s *GBServer) serialiseClusterDigestWithArray(subsetArray []string, subsetS
 	offset++
 	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
 	offset += 4
-	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(3)) // Number of participants
+	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(len(subsetArray))) // Number of participants
 	offset += 2
 
 	digestBuf[offset] = uint8(len(s.ServerName))

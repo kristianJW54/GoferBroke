@@ -11,7 +11,9 @@ const (
 )
 
 const (
-	MTU = 1460 // Although we are using TCP to build a protocol on top - we should aim to fit gossip messages within MTU to avoid packet segmentation and increased network strain
+	MTU        = 1460 // Although we are using TCP to build a protocol on top - we should aim to fit gossip messages within MTU to avoid packet segmentation and increased network strain
+	MTU_DIGEST = MTU - 460
+	MTU_DELTA  = MTU - MTU_DIGEST
 )
 
 // Version + Header Sizes

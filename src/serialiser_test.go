@@ -352,7 +352,7 @@ func TestSerialiseDeltaLiveServer(t *testing.T) {
 
 	//log.Println(config)
 
-	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 
 	selfInfo := gbs.getSelfInfo()
 

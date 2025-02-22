@@ -127,7 +127,6 @@ func (s *GBServer) connectToSeed() error {
 
 	// Now we add the delta to our cluster map
 	for name, participant := range delta.delta {
-		log.Printf("checking for %s to see if we can add to cluster map ============================", name)
 		if _, exists := s.clusterMap.participants[name]; !exists {
 			err := s.addParticipantFromTmp(name, participant)
 			if err != nil {
@@ -214,8 +213,6 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	// Now we add the delta to our cluster map
 	for name, part := range delta.delta {
-		log.Printf("checking for %s to see if we can add to cluster map ============================", name)
-
 		if _, exists := s.clusterMap.participants[name]; !exists {
 			log.Printf("adding %s", name)
 			err := s.addParticipantFromTmp(name, part)
@@ -343,41 +340,41 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 	//TODO Wait for response is causing a deadlock - need to look at if we want to chain request-response cycle
 	// if queue with response is used
 
-	//ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
-	////defer cancel()
-	//
-	//resp := c.qProtoWithResponse(respID, pay1, true, true)
-	//
-	//c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
-	//
-	//	defer cancel()
-	//	if err != nil {
-	//		log.Printf("error in onboardNewJoiner: %v", err)
-	//	}
-	//
-	//	log.Printf("response from onboardNewJoiner: %v", string(bytes))
-	//	err = c.srv.moveToConnected(c.cid, cd.sender)
-	//	if err != nil {
-	//		log.Printf("MoveToConnected failed in process info message: %v", err)
-	//	}
-	//
-	//	// TODO Monitor the server lock here and be mindful
-	//	c.srv.incrementNodeConnCount()
-	//
-	//})
+	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+	//defer cancel()
 
-	//log.Printf("response from onboardNewJoiner: %v", string(bytes))
-	err = c.srv.moveToConnected(c.cid, cd.sender)
-	if err != nil {
-		log.Printf("MoveToConnected failed in process info message: %v", err)
-	}
+	resp := c.qProtoWithResponse(respID, pay1, true, true)
 
-	// TODO Monitor the server lock here and be mindful
-	c.srv.incrementNodeConnCount()
+	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
 
-	c.mu.Lock()
-	c.qProto(pay1, true)
-	c.mu.Unlock()
+		defer cancel()
+		if err != nil {
+			log.Printf("error in onboardNewJoiner: %v", err)
+		}
+
+		log.Printf("response from onboardNewJoiner: %v", string(bytes))
+		err = c.srv.moveToConnected(c.cid, cd.sender)
+		if err != nil {
+			log.Printf("MoveToConnected failed in process info message: %v", err)
+		}
+
+		// TODO Monitor the server lock here and be mindful
+		c.srv.incrementNodeConnCount()
+
+	})
+
+	////log.Printf("response from onboardNewJoiner: %v", string(bytes))
+	//err = c.srv.moveToConnected(c.cid, cd.sender)
+	//if err != nil {
+	//	log.Printf("MoveToConnected failed in process info message: %v", err)
+	//}
+	//
+	//// TODO Monitor the server lock here and be mindful
+	//c.srv.incrementNodeConnCount()
+	//
+	//c.mu.Lock()
+	//c.qProto(pay1, true)
+	//c.mu.Unlock()
 
 	return nil
 
@@ -492,24 +489,24 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
-		//if c.ph.respID != 0 {
-		//	log.Printf("we have a responder to respond to -- %v", c.ph.respID)
-		//	header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1, 0, 0)
-		//	packet := &nodePacket{
-		//		header,
-		//		OKResponder,
-		//	}
-		//
-		//	pay, err := packet.serialize()
-		//	if err != nil {
-		//		log.Printf("error serialising packet - %v", err)
-		//	}
-		//
-		//	c.mu.Lock()
-		//	c.qProto(pay, true)
-		//	c.mu.Unlock()
-		//}
+		log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
+		if c.ph.respID != 0 {
+			log.Printf("we have a responder to respond to -- %v", c.ph.respID)
+			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1, 0, 0)
+			packet := &nodePacket{
+				header,
+				OKResponder,
+			}
+
+			pay, err := packet.serialize()
+			if err != nil {
+				log.Printf("error serialising packet - %v", err)
+			}
+
+			c.mu.Lock()
+			c.qProto(pay, true)
+			c.mu.Unlock()
+		}
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -540,8 +537,6 @@ func (c *gbClient) processHandShake(message []byte) {
 	c.mu.Unlock()
 
 	for key, value := range tmpC.delta {
-		log.Printf("checking for %s to see if we can add to cluster map ============================", key)
-
 		if _, exists := c.srv.clusterMap.participants[key]; !exists {
 			err := c.srv.addParticipantFromTmp(key, value)
 			if err != nil {
@@ -754,8 +749,6 @@ func (c *gbClient) processInfoMessage(message []byte) {
 	// We have to do this last because we will end up sending back the nodes own info
 
 	for key, value := range tmpC.delta {
-		log.Printf("checking for %s to see if we can add to cluster map ============================", key)
-
 		if _, exists := c.srv.clusterMap.participants[key]; !exists {
 			err := c.srv.addParticipantFromTmp(key, value)
 			if err != nil {

@@ -13,6 +13,8 @@ import (
 
 //Server runs the core program and logic for a node and is the entry point to the system. Every node is a server.
 
+const ServerNameMaxLength = 32 - (8 + 1)
+
 //===================================================================================
 // Server Flags
 //===================================================================================
@@ -151,7 +153,11 @@ type GBServer struct {
 	grTracking
 }
 
-func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) *GBServer {
+func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
+
+	if len([]byte(serverName)) > ServerNameMaxLength {
+		return nil, fmt.Errorf("server name length exceeds %d", ServerNameMaxLength)
+	}
 
 	addr := net.JoinHostPort(nodeHost, nodePort)
 	nodeTCPAddr, err := net.ResolveTCPAddr("tcp", addr)
@@ -215,7 +221,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		},
 	}
 
-	return s
+	return s, nil
 }
 
 // StartServer should be run in a go-routine. Upon start, the server will check it's state and launch both internal and gossip processes once accept connection routines
@@ -740,7 +746,6 @@ func (s *GBServer) clearNodeConnCount() {
 // TODO Finish implementing - need to do a dial check so nodes can dial or if a valid error then return that instead
 func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 
-	log.Printf("%s searching for %s", s.ServerName, node)
 	c, exists := s.nodeConnStore.Load(node)
 
 	// Need to check if exists first

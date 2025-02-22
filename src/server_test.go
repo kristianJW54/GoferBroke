@@ -9,6 +9,32 @@ import (
 	"time"
 )
 
+func TestServerNameLengthError(t *testing.T) {
+
+	lc := net.ListenConfig{}
+
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
+			},
+		},
+	}
+
+	_, err := NewServer("test-server-name-long-error", 1, config, "localhost", "8081", "8080", lc)
+	if err == nil {
+		t.Errorf("TestServerNameLengthError should have returned an error")
+	}
+
+	log.Printf("error = %v", err)
+
+}
+
 func TestServerRunningTwoNodes(t *testing.T) {
 
 	lc := net.ListenConfig{}
@@ -26,8 +52,8 @@ func TestServerRunningTwoNodes(t *testing.T) {
 		},
 	}
 
-	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server-2", 2, config, "localhost", "8082", "8083", lc)
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server-2", 2, config, "localhost", "8082", "8083", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
@@ -99,9 +125,9 @@ func TestGossipSignal(t *testing.T) {
 		},
 	}
 
-	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
-	gbs3 := NewServer("test-server", 3, config, "localhost", "8085", "8083", lc)
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
+	gbs3, _ := NewServer("test-server", 3, config, "localhost", "8085", "8083", lc)
 	//gbs4 := NewServer("test-server-4", 4, config, "localhost", "8086", "8083", lc)
 
 	go gbs.StartServer()
@@ -157,8 +183,8 @@ func TestReconnectOfNode(t *testing.T) {
 		},
 	}
 
-	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
@@ -211,7 +237,7 @@ func TestServerRunningOneNodes(t *testing.T) {
 
 	log.Println(config)
 
-	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 
 	go gbs.StartServer()
 
@@ -259,8 +285,8 @@ func TestInfoSend(t *testing.T) {
 
 	//log.Println(config)
 
-	gbs := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-	gbs2 := NewServer("test-server 2", 1, config, "localhost", "8082", "8083", lc)
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server 2", 1, config, "localhost", "8082", "8083", lc)
 	go gbs.StartServer()
 	//time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
