@@ -352,7 +352,7 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 			log.Printf("error in onboardNewJoiner: %v", err)
 		}
 
-		log.Printf("response from onboardNewJoiner: %v", string(bytes))
+		//log.Printf("response from onboardNewJoiner: %v", string(bytes))
 		err = c.srv.moveToConnected(c.cid, cd.sender)
 		if err != nil {
 			log.Printf("MoveToConnected failed in process info message: %v", err)
@@ -466,7 +466,7 @@ func (c *gbClient) processErrResp(message []byte) {
 
 	select {
 	case rsp.err <- msgErr: // Non-blocking
-		log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
+		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 	}
@@ -489,7 +489,7 @@ func (c *gbClient) processInfoAll(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
+		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
 		if c.ph.respID != 0 {
 			log.Printf("we have a responder to respond to -- %v", c.ph.respID)
 			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1, 0, 0)
@@ -576,7 +576,7 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		log.Printf("%s Info message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
+		//log.Printf("%s Info message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -630,7 +630,7 @@ func (c *gbClient) processOKResp(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		log.Printf("Info message sent to response channel for reqID %d", c.ph.respID)
+		//log.Printf("Info message sent to response channel for reqID %d", c.ph.respID)
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.respID)
@@ -669,7 +669,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	if deferGossip {
 
-		log.Printf("%s making %s defer it's gossip", c.srv.ServerName, senderName)
+		//log.Printf("%s making %s defer it's gossip", c.srv.ServerName, senderName)
 
 		// TODO Package common error responses into a function (same with ok + responses)
 

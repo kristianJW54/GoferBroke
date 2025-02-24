@@ -459,7 +459,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 // Generate Digest
 
 // Thread safe
-func (s *GBServer) generateDigest() ([]byte, error) {
+func (s *GBServer) generateDigest() ([]byte, int, error) {
 
 	// We need to determine if we have too many participants then we need to enter a subset strategy selection
 	s.clusterMapLock.RLock()
@@ -473,56 +473,53 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 	if mtuEstimate > MTU_DIGEST {
 		// TODO Move the subset creation within here
 		// Create a subset here
-	}
+		if len(cm.participantArray) > 10 {
 
-	// TODO Need to fix subset digest creation as we get an index error currently
+			var newPartArray []string
 
-	if len(cm.participantArray) > 10 {
+			selectedNodes := make(map[string]struct{}, len(newPartArray))
+			subsetSize := 0
 
-		var newPartArray []string
+			// Weak pointer to newArray? clean up after?
 
-		selectedNodes := make(map[string]struct{}, len(newPartArray))
-		subsetSize := 0
+			for i := 0; i < 10; i++ {
+				randNum := rand.Intn(len(cm.participantArray))
+				node := cm.participantArray[randNum]
 
-		// Weak pointer to newArray? clean up after?
+				if exists := cm.participants[node]; exists != nil {
 
-		for i := 0; i < 10; i++ {
-			randNum := rand.Intn(len(cm.participantArray))
-			node := cm.participantArray[randNum]
+					if _, ok := selectedNodes[node]; ok {
+						continue
+					}
 
-			if exists := cm.participants[node]; exists != nil {
+					if subsetSize > MTU_DIGEST {
+						break
+					}
 
-				if _, ok := selectedNodes[node]; ok {
-					continue
+					newPartArray = append(newPartArray, node)
+					selectedNodes[node] = struct{}{}
+					subsetSize += 1 + len(node) + 8
 				}
 
-				if subsetSize > MTU_DIGEST {
-					break
-				}
-
-				newPartArray = append(newPartArray, node)
-				selectedNodes[node] = struct{}{}
-				subsetSize += 1 + len(node) + 8
 			}
 
+			// Pass the newPartArray to the serialiseClusterDigestWithArray
+			cereal, err := s.serialiseClusterDigestWithArray(newPartArray, subsetSize)
+			if err != nil {
+				return nil, 0, err
+			}
+			return cereal, subsetSize, nil
 		}
-
-		// Pass the newPartArray to the serialiseClusterDigestWithArray
-		cereal, err := s.serialiseClusterDigestWithArray(newPartArray, subsetSize)
-		if err != nil {
-			return nil, err
-		}
-		return cereal, nil
 	}
 
-	b, err := s.serialiseClusterDigest()
+	b, size, err := s.serialiseClusterDigest()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// If not, we need to decide if we will stream or do a random subset of participants (increasing propagation time)
 
-	return b, nil
+	return b, size, nil
 }
 
 //-------------------------
@@ -530,7 +527,7 @@ func (s *GBServer) generateDigest() ([]byte, error) {
 
 func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, error) {
 	// Generate the digest
-	digest, err := s.generateDigest()
+	digest, _, err := s.generateDigest()
 	if err != nil {
 		return nil, fmt.Errorf("sendDigest - generate digest error: %w", err)
 	}
@@ -561,10 +558,6 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 
 	// Send the digest and wait for a response
 	resp := conn.qProtoWithResponse(reqID, cereal, true, true)
-	//if err != nil {
-	//	log.Printf("sendDigest - qProtoWithResponse setup error: %v", err)
-	//	return nil, err
-	//}
 
 	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
@@ -579,14 +572,12 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 // GOSS_SYN_ACK Prep
 //=======================================================
 
-func (s *GBServer) compareDigestReceived(digest *fullDigest, remaining int) (ph participantHeap, size int, err error) {
+func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHeap, err error) {
 
 	// Here we are not looking at participants we are missing - that will be sent to use when we send our digest
 	// We are focusing on what we have that the other node does not based on their digest we are receiving
 
 	d := digest
-
-	sizeOfQueue := 0
 
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
@@ -597,75 +588,67 @@ func (s *GBServer) compareDigestReceived(digest *fullDigest, remaining int) (ph 
 
 	for name, participant := range cm.participants {
 
-		outdated := 0
+		available := 0
 
 		// First check if we have a higher max version than the digest received + if we have a participant they do not
 		if peerDigest, exists := (*d)[name]; exists {
-
-			//log.Printf("DIGEST RECEIVED FROM %s - (%s-%v)", peerDigest.senderName, peerDigest.nodeName, peerDigest.maxVersion)
 			// If the participant is included in the digest then we to check the versions
 			if participant.maxVersion > peerDigest.maxVersion {
-				// If we are here then we need to go through the deltas and count the available ones + also get the size to pass to the serialiser
-				//log.Printf("%s has greater version than %s VERSION - (%v::%v)", s.ServerName, peerDigest.senderName, participant.maxVersion, peerDigest.maxVersion)
-				partEntrySize := 1 + len(name) + 2 // 1 byte for name length + name length + size of delta key-values
-
-				// Check if we are about to go over MTU
-				if sizeOfQueue+partEntrySize > remaining {
-					break
-				}
-
-				sizeOfQueue += partEntrySize
-
-				for key, values := range participant.keyValues {
-
-					// TODO Should i be populating delta heaps here also?
-					// TODO How would we store and return them? Sync.Map with selected nodes as keys?
-
+				// If we are here then we need to go through the deltas and count them as available
+				for i := 0; i < len(participant.deltaQ); i++ {
 					// Now we get the size of the deltas to send and also the count of available deltas
-					deltaSize := 14 + len(key) + len(values.value) // 14 bytes for metadata + value length
-
-					if sizeOfQueue+deltaSize > remaining {
-						break
-					}
-
-					outdated++
-					sizeOfQueue += deltaSize
-
+					available++
 				}
 			}
 		}
-
-		if outdated > 0 {
-
+		if available > 0 {
 			// We add the participant to the participant heap
 			heap.Push(&partQueue, &participantQueue{
 				name:            name,
-				availableDeltas: outdated,
+				availableDeltas: available,
 				maxVersion:      participant.maxVersion,
 			})
 		}
-
 	}
-
+	// Initialise the heap here will order participants by most outdated and then by available deltas
 	heap.Init(&partQueue)
 
-	return partQueue, sizeOfQueue, nil
+	return partQueue, nil
 
 }
 
-// TODO Change output to byte as we will be serialising the delta after comparing and populating the queues
-func (s *GBServer) compareAndBuildDelta(digest *fullDigest) ([]string, error) {
+func (s *GBServer) buildDelta(ph *participantHeap) (string, err error) {
 
-	// Prepare our own digest first as we need to know if digest reaches its cap, so we know how many deltas we can pack in the MTU
+	// Need to go through each participant in the heap - add each delta to a heap order it - pop each delta
+	// and get it's size + node + metadata if within bounds, we can either serialise here OR
+	// we can store selected deltas in a map against node keys and return them along with a size and count ready to be passed
+	// to serialiser
+
+	return nil, nil
+}
+
+// TODO Change output to byte as we will be serialising the delta after comparing and populating the queues
+func (s *GBServer) prepareGossSynAck(digest *fullDigest) ([]string, error) {
+
+	// Prepare our own digest first as we need to know if digest reaches its cap, so we know how much space we have left for the Delta
+	_, sizeOfDigest, err := s.generateDigest()
+	if err != nil {
+		return nil, fmt.Errorf("compareAndBuildDelta - generate digest error: %w", err)
+	}
+
+	remaining := DEFAULT_MAX_GSA - sizeOfDigest
+	if remaining <= 0 {
+		return nil, fmt.Errorf("compareAndBuildDelta - invalid remaining size: %d", remaining)
+	}
+	log.Printf("remaining size: %d", remaining)
 
 	// Compare here - Will need to take a remaining size left over from generating our digest
-	partQueue, size, err := s.compareDigestReceived(digest, 10)
+	partQueue, err := s.generateParticipantHeap(digest)
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO Need to include the server - senders name and the name + versions of each to compare with what is in the queue
-	log.Printf("size of queue to serialise is = %d", size)
 	if len(partQueue) > 0 {
 		firstEntry := partQueue[0] // Peek at the first entry without removing it
 		log.Printf("First participant in queue: %s, availableDeltas: %d", firstEntry.name, firstEntry.availableDeltas)
@@ -681,14 +664,9 @@ func (s *GBServer) compareAndBuildDelta(digest *fullDigest) ([]string, error) {
 	return []string{"nothing yet"}, nil
 }
 
-func (s *GBServer) prepareGossSynAck(digest *fullDigest) error {
+func (s *GBServer) sendGossSynAck(digest *fullDigest) error {
 
-	delta, err := s.compareAndBuildDelta(digest)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("delta = %s", delta)
+	// serialise and send?
 
 	return nil
 }

@@ -7,6 +7,8 @@ Seed Server IP & Port
 Cluster:
 Number of sequence ID pool for responses
 Max number of nodes for the cluster
+Subset number of participants to choose up to 20
+Max delta size for client deltas
 
 Seed:
 Seed name

@@ -378,7 +378,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 }
 
-func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
+func (s *GBServer) serialiseClusterDigest() ([]byte, int, error) {
 
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
@@ -433,7 +433,7 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, error) {
 	copy(digestBuf[offset:], CLRF)
 	offset += len(CLRF)
 
-	return digestBuf, nil
+	return digestBuf, length, nil
 
 }
 

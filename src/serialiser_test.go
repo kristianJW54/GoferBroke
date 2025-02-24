@@ -62,7 +62,7 @@ func TestSerialiseDigest(t *testing.T) {
 
 	}
 
-	cereal, err := gbs.serialiseClusterDigest()
+	cereal, _, err := gbs.serialiseClusterDigest()
 	if err != nil {
 		log.Println("error ", err)
 	}

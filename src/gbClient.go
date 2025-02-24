@@ -698,7 +698,7 @@ func (c *gbClient) addResponseChannel(seqID int) *response {
 	}
 
 	c.rh.resp.Store(seqID, rsp) // Store safely in sync.Map
-	log.Printf("response channel made for %v", seqID)
+	//log.Printf("response channel made for %v", seqID)
 
 	return rsp
 }
@@ -713,7 +713,7 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 		close(rsp.err)
 		c.rh.resp.Delete(respID) // Remove safely
 
-		log.Printf("responseCleanup - cleaned up response ID %d", respID)
+		//log.Printf("responseCleanup - cleaned up response ID %d", respID)
 	}
 }
 
@@ -754,7 +754,7 @@ func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, hand
 
 	go func() {
 		defer c.responseCleanup(rsp, uint16(rsp.id))
-		log.Printf("waitForResponseAsync - waiting for response for ID %d", rsp.id)
+		//log.Printf("waitForResponseAsync - waiting for response for ID %d", rsp.id)
 
 		resp, err := c.waitForResponse(ctx, rsp)
 		handleResponse(resp, err)
@@ -902,6 +902,10 @@ func (c *gbClient) processDelta(message []byte) error {
 }
 
 func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) (int, error) {
+
+	if msgLen > DEFAULT_MAX_DELTA_SIZE {
+		return 0, fmt.Errorf("delta value is greater than the maximum allowed delta size")
+	}
 
 	switch delta[0] {
 	case 'V':

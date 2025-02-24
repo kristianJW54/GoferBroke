@@ -290,6 +290,7 @@ func (s *GBServer) StartServer() {
 
 	// Main routines will be :....
 	// - System monitoring
+	// -- Memory used and stored by node, max delta size...
 	// - Config changes
 	// - State changes
 	// - Use case assignments
