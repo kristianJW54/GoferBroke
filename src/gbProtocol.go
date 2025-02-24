@@ -10,6 +10,11 @@ const (
 	CLRF = "\r\n"
 )
 
+//TODO -- We are still going to have MTU size BUT, the protocol will look at max delta sizes (configured) in order to balance the protocol
+// There will be considerations, gossip rounds that go over MTU require TCP fragmentation so will incur network overhead - this will be on the user to balance
+// Digests will have to be carefully balanced to ensure that there is enough room for large enough deltas -- if there is a large delta there should be warnings and system
+// logs to track impact and encourage chunking from the user or hashing pointers etc.
+
 const (
 	MTU        = 1460 // Although we are using TCP to build a protocol on top - we should aim to fit gossip messages within MTU to avoid packet segmentation and increased network strain
 	MTU_DIGEST = MTU - 460
