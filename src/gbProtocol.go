@@ -22,8 +22,9 @@ const (
 )
 
 const (
-	DEFAULT_MAX_DELTA_SIZE = 1024 // TODO If config not set then we default to this
-	DEFAULT_MAX_GSA        = DEFAULT_MAX_DELTA_SIZE * 2
+	DEFAULT_MAX_DELTA_SIZE            = 1024 // TODO If config not set then we default to this
+	DEFAULT_MAX_GSA                   = DEFAULT_MAX_DELTA_SIZE * 2
+	DEFAULT_MAX_DELTA_PER_PARTICIPANT = 5
 )
 
 // Version + Header Sizes

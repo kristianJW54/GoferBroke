@@ -617,15 +617,53 @@ func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHe
 
 }
 
-func (s *GBServer) buildDelta(ph *participantHeap) (string, err error) {
+func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta map[string][]*Delta, err error) {
 
 	// Need to go through each participant in the heap - add each delta to a heap order it - pop each delta
 	// and get it's size + node + metadata if within bounds, we can either serialise here OR
 	// we can store selected deltas in a map against node keys and return them along with a size and count ready to be passed
 	// to serialiser
 
-	return nil, nil
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	sizeOfDelta := 0
+
+	selectedDeltas := make(map[string][]*Delta)
+
+	for ph.Len() > 0 && sizeOfDelta < remaining {
+
+		phEntry := heap.Pop(ph).(*participantQueue)
+		participant := cm.participants[phEntry.name]
+
+		// Make a delta heap for each participant
+		dh := make(deltaHeap, 0, len(participant.keyValues))
+		for _, delta := range participant.keyValues {
+
+			// TODO We also want to track and trace overloaded delta to see and monitor
+
+			overloaded := len(delta.value) > DEFAULT_MAX_DELTA_SIZE
+
+			// Overloaded check and trace here (only if they are gossiped?)
+
+			heap.Push(&dh, &deltaQueue{
+				key:      delta.key,
+				version:  delta.version,
+				overload: overloaded,
+			})
+
+		}
+		heap.Init(&dh) // Initialise the heap so we can pop most outdated version and process
+
+		// Make selected delta list here and populate
+
+	}
+
+	return selectedDeltas, nil
 }
+
+// TODO So during this process I want to log or track the amount of times we go over MTU - so log as warning but also take the count along with the trace of where and when
 
 // TODO Change output to byte as we will be serialising the delta after comparing and populating the queues
 func (s *GBServer) prepareGossSynAck(digest *fullDigest) ([]string, error) {

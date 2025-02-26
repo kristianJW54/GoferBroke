@@ -701,7 +701,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	srv := c.srv
 
-	err = srv.prepareGossSynAck(digest)
+	_, err = srv.prepareGossSynAck(digest)
 	if err != nil {
 		log.Printf("prepareGossSynAck failed: %v", err)
 	}

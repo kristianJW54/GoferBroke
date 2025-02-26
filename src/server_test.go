@@ -1,13 +1,43 @@
 package src
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"runtime"
 	"testing"
 	"time"
 )
+
+func TestRandomStringDelta(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	count := 0
+	go func() {
+		rand.New(rand.NewSource(time.Now().UnixNano()))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+
+				count++
+				interval := time.Duration(rand.Intn(3)+1) * time.Second
+				log.Printf("generating random string delta %v %v", count, interval)
+				time.Sleep(interval)
+
+				result := fmt.Sprintf("TEST STRING %d", count)
+				log.Println(result)
+			}
+		}
+	}()
+
+	time.Sleep(10 * time.Second)
+
+}
 
 func TestServerNameLengthError(t *testing.T) {
 

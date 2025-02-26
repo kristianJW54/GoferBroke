@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -299,6 +300,36 @@ func (s *GBServer) StartServer() {
 
 	// We wait for start up to complete here
 	s.startupSync.Wait()
+
+	// TODO Need a test process here which will be a simple string value update at intervals to test gossip propagation
+	// TODO Need to monitor the size and overload of string
+	go func() {
+
+		rand.New(rand.NewSource(time.Now().UnixNano()))
+		count := 0
+
+		for {
+			select {
+			case <-s.serverContext.Done():
+				return
+			default:
+				count++
+				interval := time.Duration(rand.Intn(3)+1) * time.Second
+
+				str := fmt.Sprintf("TEST STRING WHICH WE ARE UPDATING AT RANDOM INTERVALS TO PROPOGATE GOSSIP --> COUNT = %v INTERVAL %v", count, interval)
+				log.Printf("Updating string for %s - string = %s", s.ServerName, str)
+				time.Sleep(interval)
+
+				//s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
+				//
+				//
+				//
+				//})
+
+			}
+		}
+
+	}()
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	s.startGoRoutine(s.ServerName, "gossip-process",
