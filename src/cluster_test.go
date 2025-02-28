@@ -1,12 +1,110 @@
 package src
 
 import (
+	"container/heap"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestParticipantHeap(t *testing.T) {
+
+	gbs := GenerateDefaultTestServer()
+
+	participant := gbs.clusterMap.participants[gbs.name]
+	log.Printf("name = %s", gbs.name)
+
+	ph := make(participantHeap, 0, 5)
+
+	heap.Push(&ph, &participantQueue{
+		name:            gbs.name,
+		availableDeltas: 0,
+		maxVersion:      participant.maxVersion,
+	})
+
+	for i := 1; i <= 4; i++ {
+
+		partName := fmt.Sprintf("node%d", i)
+
+		p := &Participant{
+			name:       partName,
+			keyValues:  participant.keyValues,
+			maxVersion: participant.maxVersion,
+		}
+
+		mv := participant.maxVersion
+
+		gbs.clusterMap.participants[partName] = p
+
+		heap.Push(&ph, &participantQueue{
+			name:            partName,
+			availableDeltas: 0,
+			maxVersion:      mv,
+		})
+
+	}
+
+	heap.Init(&ph)
+
+	assertion := participant.maxVersion
+
+	versionCheck := heap.Pop(&ph).(*participantQueue).maxVersion
+
+	log.Printf("Version check: %v --> assertion: %v", versionCheck, assertion)
+
+	if versionCheck != assertion {
+		t.Errorf("Version check failed. Expected %d, got %d", assertion, versionCheck)
+	}
+
+}
+
+// TODO Delta heap test for ordering of deltas in most outdated first
+
+func TestDeltaHeap(t *testing.T) {
+
+	// Create keyValues with PBDelta messages
+	keyValues := map[string]*Delta{
+		"key6":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("A")},
+		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {valueType: INTERNAL_D, version: 1640995203, value: []byte("😃 Emoji support test.")},
+		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+	}
+
+	dh := make(deltaHeap, 5)
+
+	i := 0
+	for _, value := range keyValues {
+
+		dh[i] = &deltaQueue{
+			key:      value.key,
+			overload: false,
+			version:  value.version,
+			index:    i,
+		}
+		i++
+	}
+
+	heap.Init(&dh)
+
+	assertion := [5]int{1640995203, 1640995205, 1640995206, 1640995207, 1640995208}
+
+	for i := 0; i < len(assertion); i++ {
+
+		result := heap.Pop(&dh).(*deltaQueue).version
+		log.Println("result:", result)
+
+		if assertion[i] != int(result) {
+			t.Errorf("Expected %d, got %d", assertion[i], result)
+			return
+		} else {
+			log.Printf("Version %d --> assertion %d", assertion[i], result)
+		}
+	}
+}
 
 func TestUpdateHeartBeat(t *testing.T) {
 

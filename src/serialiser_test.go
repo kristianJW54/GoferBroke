@@ -1,7 +1,6 @@
 package src
 
 import (
-	"container/heap"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -38,7 +37,6 @@ func TestSerialiseDigest(t *testing.T) {
 			name:       participantName,
 			keyValues:  make(map[string]*Delta),
 			maxVersion: 0,
-			deltaQ:     make(deltaHeap, 0),
 		}
 
 		var maxVersion int64
@@ -113,7 +111,6 @@ func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 			name:       participantName,
 			keyValues:  make(map[string]*Delta),
 			maxVersion: 0,
-			deltaQ:     make(deltaHeap, 0),
 		}
 
 		var maxVersion int64
@@ -238,22 +235,11 @@ func BenchmarkMySerialization(b *testing.B) {
 	participant := &Participant{
 		name:      "node1",
 		keyValues: make(map[string]*Delta),
-		deltaQ:    make(deltaHeap, 0), // Initialize delta heap
 	}
 
 	// Populate participant's keyValues and deltaQ
 	for key, delta := range keyValues {
-		i := 0
-		dq := &deltaQueue{
-			index:   i,
-			key:     delta.key,
-			version: delta.version,
-		}
-
-		i++
-
 		participant.keyValues[key] = delta
-		heap.Push(&participant.deltaQ, dq)
 	}
 
 	// Add participant to the ClusterMap

@@ -109,10 +109,6 @@ func TestClientDelta(t *testing.T) {
 	gbs.clusterMapLock.RLock()
 	defer gbs.clusterMapLock.RUnlock()
 	//Check the cluster map is the same
-	clusterD := gbs.clusterMap
-	for _, value := range clusterD.participants[gbs.ServerName].deltaQ {
-		log.Printf("%s --> key = %v value = %s", gbs.ServerName, value, clusterD.participants[gbs.ServerName].keyValues[value.key].value)
-	}
 
 	go gbs.Shutdown()
 	time.Sleep(1 * time.Second)

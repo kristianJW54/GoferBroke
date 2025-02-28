@@ -316,15 +316,35 @@ func (s *GBServer) StartServer() {
 				count++
 				interval := time.Duration(rand.Intn(3)+1) * time.Second
 
-				str := fmt.Sprintf("TEST STRING WHICH WE ARE UPDATING AT RANDOM INTERVALS TO PROPOGATE GOSSIP --> COUNT = %v INTERVAL %v", count, interval)
-				log.Printf("Updating string for %s - string = %s", s.ServerName, str)
+				now := time.Now().Unix()
+				//log.Printf("Updating string for %s - string = %s", s.ServerName, str)
 				time.Sleep(interval)
+				str := fmt.Sprintf("TEST STRING WHICH WE ARE UPDATING AT RANDOM INTERVALS TO PROPOGATE GOSSIP --> COUNT = %v INTERVAL %v", count, interval)
 
-				//s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
-				//
-				//
-				//
-				//})
+				err := s.updateSelfInfo(now, func(participant *Participant, timeOfUpdate int64) error {
+
+					delta, exists := participant.keyValues["TEST"]
+					if exists {
+
+						delta.value = []byte(str)
+						delta.version = now
+
+					} else {
+						participant.keyValues["TEST"] = &Delta{
+							key:       "TEST",
+							value:     []byte(str),
+							valueType: INTERNAL_D,
+							version:   now,
+						}
+					}
+
+					return nil
+
+				})
+
+				if err != nil {
+					log.Printf("Error updating string for %s - string = %s", s.ServerName, str)
+				}
 
 			}
 		}
@@ -347,7 +367,7 @@ func (s *GBServer) StartServer() {
 //TODO - Thinking to add a tryShutdown which signals - logs time checks after a couple seconds and then checks
 // flags and signals, if nothing then it simply calls it again
 
-// Shutdown attempts to gracefully shutdown the server and terminate any running processes and go-routines. It will close listeners and client connections.
+// Shutdown attempts to gracefully shut down the server and terminate any running processes and go-routines. It will close listeners and client connections.
 func (s *GBServer) Shutdown() {
 
 	// Try to acquire the server lock

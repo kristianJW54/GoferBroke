@@ -173,8 +173,7 @@ type deltaHeap []*deltaQueue
 type Participant struct {
 	name       string // Possibly can remove
 	keyValues  map[string]*Delta
-	deltaQ     deltaHeap // This should be kept sorted to the highest version
-	paValue    float64   // Not to be gossiped
+	paValue    float64 // Not to be gossiped
 	maxVersion int64
 	pm         sync.RWMutex
 }
@@ -230,7 +229,7 @@ func (ph participantHeap) Len() int {
 
 //goland:noinspection GoMixedReceiverTypes
 func (ph participantHeap) Less(i, j int) bool {
-	return ph[i].availableDeltas > ph[j].availableDeltas
+	return ph[i].maxVersion > ph[j].maxVersion
 }
 
 //goland:noinspection GoMixedReceiverTypes
@@ -285,7 +284,7 @@ func (dh deltaHeap) Len() int {
 
 //goland:noinspection GoMixedReceiverTypes
 func (dh deltaHeap) Less(i, j int) bool {
-	return dh[i].version > dh[j].version
+	return dh[i].version < dh[j].version
 }
 
 //goland:noinspection GoMixedReceiverTypes
@@ -295,7 +294,7 @@ func (dh deltaHeap) Swap(i, j int) {
 }
 
 //goland:noinspection GoMixedReceiverTypes
-func (dh *deltaHeap) Push(x interface{}) {
+func (dh *deltaHeap) Push(x any) {
 	n := len(*dh)
 	item := x.(*deltaQueue)
 	item.index = n
@@ -303,7 +302,7 @@ func (dh *deltaHeap) Push(x interface{}) {
 }
 
 //goland:noinspection GoMixedReceiverTypes
-func (dh *deltaHeap) Pop() interface{} {
+func (dh *deltaHeap) Pop() any {
 	old := *dh
 	n := len(old)
 	x := old[n-1]
@@ -316,10 +315,11 @@ func (dh *deltaHeap) Pop() interface{} {
 //goland:noinspection GoMixedReceiverTypes
 func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 
-	item.version = version
 	if len(key) == 1 {
 		item.key = key[0]
 	}
+
+	item.version = version
 
 	heap.Fix(dh, item.index)
 
@@ -394,7 +394,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	newParticipant := &Participant{
 		name:      name,
 		keyValues: make(map[string]*Delta), // Allocate a new map
-		deltaQ:    make(deltaHeap, 0),
 	}
 
 	// Deep copy each key-value pair
@@ -584,21 +583,17 @@ func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHe
 	s.clusterMapLock.RUnlock()
 
 	// Initialise an empty participantHeap as a value so as not to overwrite when we gossip with other nodes concurrently
+
 	partQueue := make(participantHeap, 0, len(cm.participants))
 
 	for name, participant := range cm.participants {
 
 		available := 0
-
 		// First check if we have a higher max version than the digest received + if we have a participant they do not
 		if peerDigest, exists := (*d)[name]; exists {
 			// If the participant is included in the digest then we to check the versions
 			if participant.maxVersion > peerDigest.maxVersion {
-				// If we are here then we need to go through the deltas and count them as available
-				for i := 0; i < len(participant.deltaQ); i++ {
-					// Now we get the size of the deltas to send and also the count of available deltas
-					available++
-				}
+				available += len(participant.keyValues)
 			}
 		}
 		if available > 0 {
@@ -621,7 +616,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 	// Need to go through each participant in the heap - add each delta to a heap order it - pop each delta
 	// and get it's size + node + metadata if within bounds, we can either serialise here OR
-	// we can store selected deltas in a map against node keys and return them along with a size and count ready to be passed
+	// we can store selected deltas in a map against node keys and return them along with a size ready to be passed
 	// to serialiser
 
 	s.clusterMapLock.RLock()
@@ -630,8 +625,10 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 	sizeOfDelta := 0
 
+	// TODO Would prefer to pre-allocate if there is a way -- need to think about this here
 	selectedDeltas := make(map[string][]*Delta)
 
+	// TODO This is should have a set ceiling to avoid open ended loops running away from us
 	for ph.Len() > 0 && sizeOfDelta < remaining {
 
 		phEntry := heap.Pop(ph).(*participantQueue)
@@ -654,7 +651,9 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			})
 
 		}
-		heap.Init(&dh) // Initialise the heap so we can pop most outdated version and process
+		heap.Init(&dh) // Initialise the heap, so we can pop most outdated version and process
+
+		// We are to send the lowest version deltas, and we fit as many deltas in based on remaining space.
 
 		// Make selected delta list here and populate
 
@@ -675,9 +674,6 @@ func (s *GBServer) prepareGossSynAck(digest *fullDigest) ([]string, error) {
 	}
 
 	remaining := DEFAULT_MAX_GSA - sizeOfDigest
-	if remaining <= 0 {
-		return nil, fmt.Errorf("compareAndBuildDelta - invalid remaining size: %d", remaining)
-	}
 	log.Printf("remaining size: %d", remaining)
 
 	// Compare here - Will need to take a remaining size left over from generating our digest

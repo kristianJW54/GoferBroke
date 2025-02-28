@@ -67,3 +67,58 @@ func (g *grTracking) logActiveGoRoutines() {
 		return true // continue iteration
 	})
 }
+
+//==========================================================================================
+
+// For tests
+
+func GenerateDefaultTestServer() *GBServer {
+
+	// Create keyValues with PBDelta messages
+	keyValues := map[string]*Delta{
+		"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+	}
+
+	// Mock server setup
+	gbs := &GBServer{
+		clusterMap: ClusterMap{
+			participants: make(map[string]*Participant),
+		},
+	}
+
+	participantName := fmt.Sprintf("self%d", 1)
+	gbs.name = participantName
+
+	// Create a participant
+	participant := &Participant{
+		name:       participantName,
+		keyValues:  make(map[string]*Delta),
+		maxVersion: 0,
+	}
+
+	var maxVersion int64
+	maxVersion = 0
+
+	// Populate participant's keyValues
+	for key, delta := range keyValues {
+
+		participant.keyValues[key] = delta
+
+		if delta.version > maxVersion {
+			maxVersion = delta.version
+		}
+
+	}
+
+	participant.maxVersion = maxVersion
+
+	// Add participant to the ClusterMap
+	gbs.clusterMap.participants[participantName] = participant
+
+	return gbs
+
+}
