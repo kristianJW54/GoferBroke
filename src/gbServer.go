@@ -119,8 +119,9 @@ type GBServer struct {
 
 	// Configurations and extensibility should be handled in Options which will be embedded here
 	//Distributed Info
-	gossip     *gossip
-	isOriginal bool
+	gossip         *gossip
+	isOriginal     bool
+	discoveryPhase bool
 	// Metrics or values for gossip
 	// CPU Load
 	// Latency ...
@@ -240,13 +241,13 @@ func (s *GBServer) StartServer() {
 	s.flags.clear(SHUTTING_DOWN)
 	s.serverLock.Unlock()
 
-	if !s.gbConfig.internal.disableUpdateServerTimeStampOnStartup {
+	if !s.gbConfig.Internal.disableUpdateServerTimeStampOnStartup {
 		s.updateTime() // To sync to when the server is started
 		srvName := s.String()
 		s.ServerName = srvName
 	}
 
-	if s.gbConfig.internal.isTestMode {
+	if s.gbConfig.Internal.isTestMode {
 		// Add debug mode output
 		log.Printf("Server starting in test mode: %s\n", s.ServerName)
 	} else {
@@ -254,7 +255,7 @@ func (s *GBServer) StartServer() {
 
 	}
 	//s.clusterMapLock.Lock()
-	if s.gbConfig.internal.disableInitialiseSelf {
+	if s.gbConfig.Internal.disableInitialiseSelf {
 		log.Printf("Cluster Map and Self Info not initialised")
 	} else {
 		selfInfo := initSelfParticipant(s.ServerName, s.addr)
@@ -273,6 +274,7 @@ func (s *GBServer) StartServer() {
 		s.isOriginal = true
 	} else {
 		s.isOriginal = false
+		s.discoveryPhase = true
 	}
 
 	// Setting go routine tracking flag to true - mainly used in testing
@@ -311,7 +313,7 @@ func (s *GBServer) StartServer() {
 	s.startupSync.Wait()
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
-	if !s.gbConfig.internal.disableGossip {
+	if !s.gbConfig.Internal.disableGossip {
 		s.startGoRoutine(s.ServerName, "gossip-process",
 			func() {
 				defer s.gossipCleanup()
@@ -486,6 +488,7 @@ func initSelfParticipant(name, addr string) *Participant {
 		keyValues: make(map[string]*Delta),
 	}
 
+	// TODO Address needs more attention with configuration, different types of addresses and address key groups
 	// Add the _ADDRESS_ delta
 	addrDelta := &Delta{
 		key:       _ADDRESS_,

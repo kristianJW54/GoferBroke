@@ -26,8 +26,8 @@ const (
 
 type GbConfig struct {
 	SeedServers []Seeds `gb:"seed"`
-	cluster     *clusterOptions
-	internal    *internalOptions
+	Cluster     *ClusterOptions
+	Internal    *InternalOptions
 }
 
 type Seeds struct {
@@ -35,7 +35,7 @@ type Seeds struct {
 	SeedPort string
 }
 
-type clusterOptions struct {
+type ClusterOptions struct {
 	maxGossipSize               uint16
 	maxDeltaSize                uint16
 	maxNumberOfNodes            int
@@ -43,9 +43,11 @@ type clusterOptions struct {
 	maxSequenceIDPool           int
 	nodeSelectionPerGossipRound int
 	maxParticipantHeapSize      int
+	preferredAddrGroup          string
+	discoveryPercentage         int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
 }
 
-type internalOptions struct {
+type InternalOptions struct {
 	//
 	isTestMode                            bool
 	disableInitialiseSelf                 bool
@@ -54,8 +56,9 @@ type internalOptions struct {
 	debugMode                             bool
 	disableInternalGossipSystemUpdate     bool
 	disableUpdateServerTimeStampOnStartup bool
+	addressKeyGroup                       map[string][]string // Network group e.g. cloud, local, public and then list of ADDR keys e.g. IPv4, IPv6, WAN
+
 	// Need logging config also
 }
 
-type testConfig struct {
-}
+//=====================================================================

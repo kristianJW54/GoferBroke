@@ -7,6 +7,12 @@ import (
 )
 
 /*
+Discovery Header -> Then participant address info (Name-Address)
++-----------+
+|  Type		|
+| (1 bytes) |
++-----------+
+
 Digest Header -> Then participant (Name-MaxVersion)
 +----------+-------------------+--------------+------------+--------------------------------+
 |  Type    |  Payload Length   |  Digest Size |  CRLF      |  Sender's Name                 |

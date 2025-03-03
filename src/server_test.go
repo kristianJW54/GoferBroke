@@ -100,6 +100,8 @@ func TestGossipSignal(t *testing.T) {
 				SeedPort: port,
 			},
 		},
+		Internal: &InternalOptions{},
+		Cluster:  &ClusterOptions{},
 	}
 
 	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
@@ -142,7 +144,7 @@ func TestGossipDifferentStates(t *testing.T) {
 
 	lc := net.ListenConfig{}
 
-	testConfig := &internalOptions{
+	testConfig := &InternalOptions{
 		isTestMode:                            true,
 		disableGossip:                         false,
 		disableInitialiseSelf:                 false,
@@ -156,7 +158,7 @@ func TestGossipDifferentStates(t *testing.T) {
 				SeedPort: "8081",
 			},
 		},
-		internal: testConfig,
+		Internal: testConfig,
 	}
 
 	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)

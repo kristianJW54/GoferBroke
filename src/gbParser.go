@@ -6,8 +6,8 @@ const (
 
 	// Node Commands
 	INFO
-	INFO_ACK // Info Ack is acknowledging and responding with some cluster nodes and their critical deltas
-	INFO_ALL // Info All is acknowledging and responding with all cluster nodes and critical deltas
+	DISCOVERY // Info Ack is acknowledging and responding with some cluster nodes and their critical deltas
+	INFO_ALL  // Info All is acknowledging and responding with all cluster nodes and critical deltas
 	HANDSHAKE
 	HANDSHAKE_RESP
 	GOSS_SYN

@@ -127,7 +127,7 @@ const (
 
 // Internal Delta Keys [NOT TO BE USED EXTERNALLY]
 const (
-	_ADDRESS_      = "ADDR"
+	_ADDRESS_      = "TCP"
 	_CPU_USAGE_    = "CPU_USAGE"
 	_MEMORY_USAGE  = "MEMORY_USAGE"
 	_NODE_CONNS_   = "NODE_CONNS"
@@ -359,8 +359,9 @@ func (s *GBServer) getSelfInfo() *Participant {
 
 func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) error {
 
-	if s.gbConfig.internal.disableInternalGossipSystemUpdate {
-		return fmt.Errorf("internal systems gossip update is off")
+	if s.gbConfig.Internal.disableInternalGossipSystemUpdate {
+		log.Printf("internal systems gossip update is off")
+		return nil
 	}
 
 	self := s.getSelfInfo()
@@ -657,7 +658,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		}
 		heap.Init(&dh) // Initialise the heap, so we can pop most outdated version and process
 
-		// We are to send the lowest version deltas, and we fit as many deltas in based on remaining space.
+		// We are to send the highest version deltas, and we fit as many deltas in based on remaining space.
 
 		// First add the participant size to the sizeOfDelta
 		sizeOfDelta += 1 + len(participant.name) + 2 // 1 byte for name length + name + size of delta key-values
@@ -1026,6 +1027,10 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
+	if s.discoveryPhase {
+		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
+	}
+
 	for i := 0; i < int(ns); i++ {
 
 		s.clusterMapLock.RLock()
@@ -1132,7 +1137,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 		if err != nil {
 			log.Printf("Error in gossip round (stage %d): %v", stage, err)
 		}
-		return fmt.Errorf("update heartbeat failed %w", err)
+		return nil
 	})
 	if err != nil {
 		log.Printf("Error in gossip round (stage %d): %v", stage, err)

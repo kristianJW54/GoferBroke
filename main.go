@@ -36,6 +36,8 @@ func run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 					SeedPort: port,
 				},
 			},
+			Internal: &src.InternalOptions{},
+			Cluster:  &src.ClusterOptions{},
 		}
 		log.Println("Config initialized:", config)
 	} else {
@@ -49,6 +51,8 @@ func run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 					SeedPort: clusterPort,
 				},
 			},
+			Internal: &src.InternalOptions{},
+			Cluster:  &src.ClusterOptions{},
 		}
 		log.Println("Config initialized:", config)
 	}

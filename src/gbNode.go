@@ -159,6 +159,8 @@ func (s *GBServer) connectToSeed() error {
 
 }
 
+// TODO Re-visit as we need to do address checks and also defer or reach out to other nodes if we have no addr
+
 func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	s.clusterMapLock.RLock()
@@ -281,6 +283,16 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 
 }
 
+func (s *GBServer) prepareDiscoveryRequest(command int, reqID, respID int) ([]byte, error) {
+
+	// TODO finish method
+	// Need to access our cluster map
+	// Get list of participants that we have addresses for
+
+	return nil, nil
+
+}
+
 //=======================================================
 // Seed Server
 //=======================================================
@@ -296,20 +308,6 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 
 	s := c.srv
-
-	//TODO we will use a hybrid bootstrap approach by selecting a random number of participants to download to the new joining node
-	// This will be based on how many nodes are in the map
-
-	if len(s.clusterMap.participants) > 100 {
-		log.Printf("lots of participants - may need more efficient snapshot transfer")
-		// In this case we would send an INFO_ACK to tell the joining node that more info will come
-		// The joining node can then reach out to other seed servers or send another request to this seed server
-		// With the digest of what it has been given so far to complete it's joining
-		// A mini bootstrapped gossip between joiner and seeds
-
-		//TODO If cluster too large - will need to stream data and use metadata to track progress
-		// Or we send a subset and allow the node to continue to dial the subset in order to let it's map grow
-	}
 
 	s.clusterMapLock.RLock()
 
@@ -424,6 +422,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 	switch c.ph.command {
 	case INFO:
 		c.processInfoMessage(message)
+	case DISCOVERY:
+		c.processDiscovery(message)
 	case INFO_ALL:
 		c.processInfoAll(message)
 	case HANDSHAKE:
@@ -470,6 +470,12 @@ func (c *gbClient) processErrResp(message []byte) {
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 	}
+
+}
+
+func (c *gbClient) processDiscovery(message []byte) {
+
+	return
 
 }
 
