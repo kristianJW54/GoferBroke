@@ -1,43 +1,13 @@
 package src
 
 import (
-	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"runtime"
 	"testing"
 	"time"
 )
-
-func TestRandomStringDelta(t *testing.T) {
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	count := 0
-	go func() {
-		rand.New(rand.NewSource(time.Now().UnixNano()))
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-
-				count++
-				interval := time.Duration(rand.Intn(3)+1) * time.Second
-				log.Printf("generating random string delta %v %v", count, interval)
-				time.Sleep(interval)
-
-				result := fmt.Sprintf("TEST STRING %d", count)
-				log.Println(result)
-			}
-		}
-	}()
-
-	time.Sleep(10 * time.Second)
-
-}
 
 func TestServerNameLengthError(t *testing.T) {
 
@@ -115,6 +85,110 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 }
 
+func TestGossipSignal(t *testing.T) {
+
+	lc := net.ListenConfig{}
+
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   ip,
+				SeedPort: port,
+			},
+		},
+	}
+
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
+
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	go gbs2.StartServer()
+	time.Sleep(6 * time.Second)
+
+	gbs2.serverContext.Done()
+	gbs.serverContext.Done()
+
+	go gbs2.Shutdown()
+	go gbs.Shutdown()
+
+	time.Sleep(3 * time.Second)
+
+	gbs.logActiveGoRoutines()
+	gbs2.logActiveGoRoutines()
+
+}
+
+//======================================================
+// Testing gossip with different states for nodes
+//======================================================
+
+func TestGossipDifferentStates(t *testing.T) {
+
+	// TODO make some different cluster map states for nodes about other nodes
+
+	// Mock timestamps to use
+	// 1735988400 = Sat Jan 04 2025 11:00:00 GMT+0000
+	// 1735988535 = Sat Jan 04 2025 11:02:15 GMT+0000 --> + 2min 15sec
+	// 1735988555 = Sat Jan 04 2025 11:02:35 GMT+0000 --> + 2min 35sec
+	// 1735988625 = Sat Jan 04 2025 11:03:45 GMT+0000 --> + 3min 45sec
+	// 1735988700 = Sat Jan 04 2025 11:05:00 GMT+0000 --> + 5min
+
+	// TODO will need to change the participant timestamp and names to a standard
+
+	lc := net.ListenConfig{}
+
+	testConfig := &internalOptions{
+		isTestMode:                            true,
+		disableGossip:                         false,
+		disableInitialiseSelf:                 false,
+		disableInternalGossipSystemUpdate:     true,
+		disableUpdateServerTimeStampOnStartup: true,
+	}
+	config := &GbConfig{
+		SeedServers: []Seeds{
+			{
+				SeedIP:   "127.0.0.1",
+				SeedPort: "8081",
+			},
+		},
+		internal: testConfig,
+	}
+
+	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8080", lc)
+
+	UpdateServerNameAndTime(t, gbs, 1735988400)
+	UpdateServerNameAndTime(t, gbs2, 1735988401)
+
+	// TODO Give each node a different cluster map to converge on and gossip about
+
+	go gbs.StartServer()
+	go gbs2.StartServer()
+
+	time.Sleep(5 * time.Second)
+
+	go gbs.Shutdown()
+	go gbs2.Shutdown()
+
+	time.Sleep(1 * time.Second)
+
+}
+
+func UpdateServerNameAndTime(t testing.TB, node *GBServer, time uint64) {
+	t.Helper()
+
+	node.ServerID.timeUnix = time
+	node.ServerName = node.String()
+
+}
+
+//======================================================
+
 // Simulate Network Loss by Closing Existing Connections
 func (s *GBServer) simulateConnectionLoss() {
 	s.serverLock.Lock() // Lock to prevent changes to the connection map during operation
@@ -136,62 +210,6 @@ func (s *GBServer) simulateConnectionLoss() {
 	})
 
 	log.Println("All existing connections have been closed to simulate network loss")
-}
-
-func TestGossipSignal(t *testing.T) {
-
-	lc := net.ListenConfig{}
-
-	ip := "127.0.0.1" // Use the full IP address
-	port := "8081"
-
-	// Initialize config with the seed server address
-	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
-				SeedIP:   ip,
-				SeedPort: port,
-			},
-		},
-	}
-
-	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
-	gbs3, _ := NewServer("test-server", 3, config, "localhost", "8085", "8083", lc)
-	//gbs4 := NewServer("test-server-4", 4, config, "localhost", "8086", "8083", lc)
-
-	go gbs.StartServer()
-	time.Sleep(1 * time.Second)
-	go gbs2.StartServer()
-	time.Sleep(1 * time.Second)
-	go gbs3.StartServer()
-	//time.Sleep(1 * time.Second)
-	//go gbs4.StartServer()
-	time.Sleep(6 * time.Second)
-
-	gbs2.serverContext.Done()
-	gbs.serverContext.Done()
-	gbs3.serverContext.Done()
-
-	go gbs2.Shutdown()
-	go gbs.Shutdown()
-	go gbs3.Shutdown()
-	//go gbs4.Shutdown()
-
-	//for _, value := range gbs3.clusterMap.participants {
-	//	log.Printf("name = %s", value.name)
-	//	for key, value := range value.keyValues {
-	//		log.Printf("value = %s-%s", key, value.value)
-	//	}
-	//}
-
-	time.Sleep(3 * time.Second)
-
-	gbs.logActiveGoRoutines()
-	gbs2.logActiveGoRoutines()
-	gbs3.logActiveGoRoutines()
-	//gbs4.logActiveGoRoutines()
-
 }
 
 // TODO After node 2 reconnects - node 1 duplicates serialisation and adding to cluster causing move to connected failure

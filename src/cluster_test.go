@@ -95,7 +95,6 @@ func TestDeltaHeap(t *testing.T) {
 	for i := 0; i < len(assertion); i++ {
 
 		result := heap.Pop(&dh).(*deltaQueue).version
-		log.Println("result:", result)
 
 		if assertion[i] != int(result) {
 			t.Errorf("Expected %d, got %d", assertion[i], result)

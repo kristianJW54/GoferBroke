@@ -54,7 +54,7 @@ func run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 	}
 
 	// Create and start the server
-	gbs := src.NewServer(name, uuid, config, nodeIp, nodePort, "8080", lc)
+	gbs, _ := src.NewServer(name, uuid, config, nodeIp, nodePort, "8080", lc)
 
 	go func() {
 		log.Println("Starting server...")

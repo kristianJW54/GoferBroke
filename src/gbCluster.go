@@ -359,6 +359,10 @@ func (s *GBServer) getSelfInfo() *Participant {
 
 func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) error {
 
+	if s.gbConfig.internal.disableInternalGossipSystemUpdate {
+		return fmt.Errorf("internal systems gossip update is off")
+	}
+
 	self := s.getSelfInfo()
 
 	self.pm.Lock()
@@ -573,7 +577,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 
 func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHeap, err error) {
 
-	// Here we are not looking at participants we are missing - that will be sent to use when we send our digest
+	// Here we are not looking at participants we are missing - that will be sent to us when we send our digest
 	// We are focusing on what we have that the other node does not based on their digest we are receiving
 
 	d := digest
@@ -655,7 +659,33 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 		// We are to send the lowest version deltas, and we fit as many deltas in based on remaining space.
 
+		// First add the participant size to the sizeOfDelta
+		sizeOfDelta += 1 + len(participant.name) + 2 // 1 byte for name length + name + size of delta key-values
+
+		deltaList := make([]*Delta, 0)
+
 		// Make selected delta list here and populate
+
+		for dh.Len() > 0 {
+
+			d := heap.Pop(&dh).(*deltaQueue)
+			delta := participant.keyValues[d.key]
+			// Calc size to do a remaining check before committing to selecting
+			size := 14 + len(d.key) + len(delta.value)
+
+			if size+sizeOfDelta > remaining {
+				break
+			}
+
+			sizeOfDelta += size
+
+			deltaList = append(selectedDeltas[participant.name], delta)
+
+		}
+
+		if len(deltaList) > 0 {
+			selectedDeltas[participant.name] = deltaList
+		}
 
 	}
 
@@ -685,11 +715,20 @@ func (s *GBServer) prepareGossSynAck(digest *fullDigest) ([]string, error) {
 	// TODO Need to include the server - senders name and the name + versions of each to compare with what is in the queue
 	if len(partQueue) > 0 {
 		firstEntry := partQueue[0] // Peek at the first entry without removing it
-		log.Printf("First participant in queue: %s, availableDeltas: %d", firstEntry.name, firstEntry.availableDeltas)
+		log.Printf("%s ==== First participant in queue: %s, availableDeltas: %d", s.ServerName, firstEntry.name, firstEntry.availableDeltas)
 	} else {
 		log.Printf("Participant queue is empty")
 	}
 	// Populate delta queues
+	selectedDeltas, err := s.buildDelta(&partQueue, remaining)
+	if err != nil {
+		return nil, err
+	}
+
+	for p, sd := range selectedDeltas {
+		log.Printf("%s - participant --> %s", s.ServerName, p)
+		log.Printf("deltas --> %+v", sd)
+	}
 
 	// Serialise
 
@@ -997,6 +1036,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		// TODO Check exist and dial if not --> then throw error if neither work
 		s.clusterMapLock.RUnlock()
 
+		// TODO We need to collect the errors and make a decision on what to do with them based on the error itself
 		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() { done <- struct{}{} }()
 
@@ -1092,7 +1132,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 		if err != nil {
 			log.Printf("Error in gossip round (stage %d): %v", stage, err)
 		}
-		return nil
+		return fmt.Errorf("update heartbeat failed %w", err)
 	})
 	if err != nil {
 		log.Printf("Error in gossip round (stage %d): %v", stage, err)

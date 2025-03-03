@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -181,6 +180,8 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 	// Creation steps
 	// Gather server metrics
 
+	// Config setup //TODO
+
 	// TODO May want to look at net.Lookup host and ip and any other lookups or resolvers from either config or flags to ensure server address is correct
 
 	// Init gossip
@@ -239,18 +240,26 @@ func (s *GBServer) StartServer() {
 	s.flags.clear(SHUTTING_DOWN)
 	s.serverLock.Unlock()
 
-	s.updateTime()
-	srvName := s.String()
-	s.ServerName = srvName
+	if !s.gbConfig.internal.disableUpdateServerTimeStampOnStartup {
+		s.updateTime() // To sync to when the server is started
+		srvName := s.String()
+		s.ServerName = srvName
+	}
+
+	if s.gbConfig.internal.isTestMode {
+		// Add debug mode output
+		log.Printf("Server starting in test mode: %s\n", s.ServerName)
+	} else {
+		fmt.Printf("Server starting: %s\n", s.ServerName)
+
+	}
 	//s.clusterMapLock.Lock()
-	selfInfo := initSelfParticipant(srvName, s.addr)
-	s.clusterMap = *initClusterMap(srvName, s.nodeTCPAddr, selfInfo)
-	//s.clusterMapLock.Unlock()
-
-	//s.serverLock.Lock()
-
-	fmt.Printf("Server starting: %s\n", s.ServerName)
-	//fmt.Printf("Server address: %s, Seed address: %v\n", s.nodeTCPAddr, s.gbConfig.SeedServers)
+	if s.gbConfig.internal.disableInitialiseSelf {
+		log.Printf("Cluster Map and Self Info not initialised")
+	} else {
+		selfInfo := initSelfParticipant(s.ServerName, s.addr)
+		s.clusterMap = *initClusterMap(s.ServerName, s.nodeTCPAddr, selfInfo)
+	}
 
 	//Checks and other start up here
 	//Resolve config seed addr
@@ -301,63 +310,14 @@ func (s *GBServer) StartServer() {
 	// We wait for start up to complete here
 	s.startupSync.Wait()
 
-	// TODO Need a test process here which will be a simple string value update at intervals to test gossip propagation
-	// TODO Need to monitor the size and overload of string
-	go func() {
-
-		rand.New(rand.NewSource(time.Now().UnixNano()))
-		count := 0
-
-		for {
-			select {
-			case <-s.serverContext.Done():
-				return
-			default:
-				count++
-				interval := time.Duration(rand.Intn(3)+1) * time.Second
-
-				now := time.Now().Unix()
-				//log.Printf("Updating string for %s - string = %s", s.ServerName, str)
-				time.Sleep(interval)
-				str := fmt.Sprintf("TEST STRING WHICH WE ARE UPDATING AT RANDOM INTERVALS TO PROPOGATE GOSSIP --> COUNT = %v INTERVAL %v", count, interval)
-
-				err := s.updateSelfInfo(now, func(participant *Participant, timeOfUpdate int64) error {
-
-					delta, exists := participant.keyValues["TEST"]
-					if exists {
-
-						delta.value = []byte(str)
-						delta.version = now
-
-					} else {
-						participant.keyValues["TEST"] = &Delta{
-							key:       "TEST",
-							value:     []byte(str),
-							valueType: INTERNAL_D,
-							version:   now,
-						}
-					}
-
-					return nil
-
-				})
-
-				if err != nil {
-					log.Printf("Error updating string for %s - string = %s", s.ServerName, str)
-				}
-
-			}
-		}
-
-	}()
-
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
-	s.startGoRoutine(s.ServerName, "gossip-process",
-		func() {
-			defer s.gossipCleanup()
-			s.gossipProcess(s.serverContext)
-		})
-
+	if !s.gbConfig.internal.disableGossip {
+		s.startGoRoutine(s.ServerName, "gossip-process",
+			func() {
+				defer s.gossipCleanup()
+				s.gossipProcess(s.serverContext)
+			})
+	}
 }
 
 //=======================================================

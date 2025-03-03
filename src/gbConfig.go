@@ -1,14 +1,5 @@
 package src
 
-type GbConfig struct {
-	SeedServers []Seeds `gb:"seed"`
-}
-
-type Seeds struct {
-	SeedIP   string
-	SeedPort string
-}
-
 //=============================================================
 // Server Options + Config
 //=============================================================
@@ -31,6 +22,19 @@ const (
 	DEFAULT_MAX_DELTA_PER_PARTICIPANT = 5
 )
 
+// TODO May want a config mutex lock??
+
+type GbConfig struct {
+	SeedServers []Seeds `gb:"seed"`
+	cluster     *clusterOptions
+	internal    *internalOptions
+}
+
+type Seeds struct {
+	SeedIP   string
+	SeedPort string
+}
+
 type clusterOptions struct {
 	maxGossipSize               uint16
 	maxDeltaSize                uint16
@@ -43,4 +47,15 @@ type clusterOptions struct {
 
 type internalOptions struct {
 	//
+	isTestMode                            bool
+	disableInitialiseSelf                 bool
+	disableGossip                         bool
+	goRoutineTracking                     bool
+	debugMode                             bool
+	disableInternalGossipSystemUpdate     bool
+	disableUpdateServerTimeStampOnStartup bool
+	// Need logging config also
+}
+
+type testConfig struct {
 }
