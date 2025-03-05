@@ -3,6 +3,7 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -40,6 +41,8 @@ const (
 const (
 	DIGEST_TYPE = iota + 1
 	DELTA_TYPE
+	DREQ // Discovery Request - list of participants with known addresses
+	DRES // Discovery Response - list of participants with mapped addresses
 )
 
 const (
@@ -48,6 +51,13 @@ const (
 	INTERNAL_D
 	CLIENT_D
 )
+
+// Discovery for initial connection phase of a node
+type discovery struct {
+	senderName string
+	nodeName   string
+	addr       map[string]string // Mapping the addr key to the addr value -- addr key will be listed in addressKeyGroup
+}
 
 //-------------------
 //Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
@@ -168,6 +178,116 @@ func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 	}
 
 	return deltaBuf, nil
+
+}
+
+func (s *GBServer) serialiseKnownAddressNodes() ([]byte, error) {
+
+	// Type = Discovery_Req - 1 byte Uint8
+	// Length of Payload - 4 byte Uint32
+	// Size num of parts - 2 byte Uin16
+	// Senders Name - 1 + len(name)
+	// Data --> participant name len followed by name
+	// CLRF - 2 bytes
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	length := 7 + 2
+
+	// Include senders name
+	length += 1
+	length += len(s.ServerName)
+
+	pi := cm.participants
+
+	for _, p := range pi {
+		length += 1 + len(p.name)
+	}
+
+	offset := 0
+
+	deltaBuf := make([]byte, length)
+	deltaBuf[0] = DREQ
+	offset++
+	binary.BigEndian.PutUint32(deltaBuf[1:5], uint32(length))
+	offset += 4
+	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(pi)))
+	offset += 2
+
+	deltaBuf[offset] = uint8(len(s.ServerName))
+	offset += 1
+	copy(deltaBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	for _, p := range pi {
+		log.Println("selecting node --> ", p.name)
+		deltaBuf[offset] = uint8(len(p.name))
+		offset++
+		copy(deltaBuf[offset:], p.name)
+		offset += len(p.name)
+	}
+
+	// Append CRLF
+	copy(deltaBuf[offset:], CLRF) // Assuming CLRF is defined as []byte{13, 10}
+	offset += 2
+
+	// Validate buffer usage
+	if offset != length {
+		return nil, fmt.Errorf("buffer mismatch: calculated length %d, written offset %d", length, offset)
+	}
+
+	return deltaBuf, nil
+
+}
+
+func deserialiseKnownAddressNodes(data []byte) ([]string, error) {
+
+	if data[0] != DREQ {
+		return nil, fmt.Errorf("buffer mismatch: expected DREQ, got %x", data[0])
+	}
+
+	length := len(data)
+	metaLength := binary.BigEndian.Uint32(data[1:5])
+
+	if length != int(metaLength) {
+		return nil, fmt.Errorf("meta length does not match desired length - %x", length)
+	}
+
+	sizeMeta := binary.BigEndian.Uint16(data[5:7])
+
+	log.Printf("size = %v", sizeMeta)
+
+	offset := 7
+
+	// Extract senders name
+	senderLen := int(data[offset])
+	senderName := data[offset+1 : offset+1+senderLen]
+
+	offset++
+	offset += senderLen
+
+	dreq := make([]string, 1+sizeMeta)
+
+	dreq[0] = string(senderName)
+
+	for i := 1; i <= int(sizeMeta); i++ {
+
+		nameLen := int(data[offset])
+
+		start := offset + 1
+		end := start + nameLen
+		name := string(data[start:end])
+
+		dreq[i] = name
+
+		offset += 1
+		offset += nameLen
+
+	}
+
+	return dreq, nil
 
 }
 

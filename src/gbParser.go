@@ -5,9 +5,10 @@ const (
 	VERSION1
 
 	// Node Commands
-	INFO
-	DISCOVERY // Info Ack is acknowledging and responding with some cluster nodes and their critical deltas
-	INFO_ALL  // Info All is acknowledging and responding with all cluster nodes and critical deltas
+	NEW_JOIN
+	SELF_INFO
+	DISCOVERY_REQ
+	DISCOVERY_RES // Discovery is acknowledging and responding with as many nodes and addresses as possible to onboard the node
 	HANDSHAKE
 	HANDSHAKE_RESP
 	GOSS_SYN
@@ -120,14 +121,18 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 		case VERSION1:
 			switch b {
-			case INFO:
-				c.state = INFO
+			case NEW_JOIN:
+				c.state = NEW_JOIN
+			case SELF_INFO:
+				c.state = SELF_INFO
 			case OK:
 				c.state = OK
 			case OK_RESP:
 				c.state = OK_RESP
-			case INFO_ALL:
-				c.state = INFO_ALL
+			case DISCOVERY_REQ:
+				c.state = DISCOVERY_REQ
+			case DISCOVERY_RES:
+				c.state = DISCOVERY_RES
 			case HANDSHAKE:
 				c.state = HANDSHAKE
 			case HANDSHAKE_RESP:
@@ -138,7 +143,35 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.state = ERR_RESP
 			}
 
-		case INFO:
+		case NEW_JOIN:
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				var arg []byte
+				if c.argBuf != nil {
+					arg = c.argBuf
+					c.argBuf = nil
+				} else {
+					arg = packet[c.position : i-c.drop]
+				}
+				c.processArg(arg)
+
+				c.drop = 0
+				c.position = i + 1
+				c.state = MSG_PAYLOAD
+
+				if c.msgBuf == nil {
+					i = c.position + c.ph.msgLength - 2
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case SELF_INFO:
 			switch b {
 			case '\r':
 				c.drop = 1
@@ -250,7 +283,38 @@ func (c *gbClient) parsePacket(packet []byte) {
 				}
 			}
 
-		case INFO_ALL:
+		case DISCOVERY_REQ:
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				if packet[i-1] == 13 {
+					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
+					var arg []byte
+					if c.argBuf != nil {
+						arg = c.argBuf
+						c.argBuf = nil
+					} else {
+						arg = packet[c.position : i-c.drop]
+					}
+					c.processArg(arg)
+
+					c.drop = 0
+					c.position = i + 1
+					c.state = MSG_PAYLOAD
+
+					if c.msgBuf == nil {
+						i = c.position + c.ph.msgLength - 2
+					}
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case DISCOVERY_RES:
 			switch b {
 			case '\r':
 				c.drop = 1

@@ -50,6 +50,8 @@ func TestServerRunningTwoNodes(t *testing.T) {
 				SeedPort: port,
 			},
 		},
+		Internal: &InternalOptions{},
+		Cluster:  &ClusterOptions{},
 	}
 
 	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
@@ -106,22 +108,28 @@ func TestGossipSignal(t *testing.T) {
 
 	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
 	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
+	gbs3, _ := NewServer("test-server", 3, config, "localhost", "8085", "8084", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
+	time.Sleep(1 * time.Second)
+	go gbs3.StartServer()
 	time.Sleep(6 * time.Second)
 
 	gbs2.serverContext.Done()
+	gbs3.serverContext.Done()
 	gbs.serverContext.Done()
 
 	go gbs2.Shutdown()
+	go gbs3.Shutdown()
 	go gbs.Shutdown()
 
 	time.Sleep(3 * time.Second)
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
+	gbs3.logActiveGoRoutines()
 
 }
 

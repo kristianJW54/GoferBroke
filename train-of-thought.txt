@@ -6,3 +6,5 @@ For the gossip ticker - we need to have this adaptive to network load and node c
 
 Need to go through the entire gossip flow and check that we are not holding onto references longer than needed to
 free up for the gc as quickly as possible
+
+=== Need to maybe have a server process ref counter or checker to make sure we are not leaking pool requests or buffers or ids etc

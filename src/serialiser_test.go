@@ -10,6 +10,54 @@ import (
 	"time"
 )
 
+func TestSerialiseDREQ(t *testing.T) {
+
+	gbs := &GBServer{
+		ServerName: "main-server",
+		clusterMap: ClusterMap{
+			participants: make(map[string]*Participant, 5),
+		},
+	}
+
+	for i := 0; i < 5; i++ {
+		partName := fmt.Sprintf("node-test-%d", i)
+
+		// Create participant
+		part := &Participant{
+			name:       partName,
+			keyValues:  make(map[string]*Delta, 1),
+			maxVersion: 0,
+		}
+
+		part.keyValues[_ADDRESS_] = &Delta{
+			key:       _ADDRESS_,
+			version:   0,
+			valueType: ADDR_V,
+			value:     []byte("127.0.0.1"),
+		}
+
+		gbs.clusterMap.participants[partName] = part
+
+	}
+
+	cereal, err := gbs.serialiseKnownAddressNodes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log.Printf("%v", cereal)
+
+	result, err := deserialiseKnownAddressNodes(cereal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, value := range result {
+		log.Println(value)
+	}
+
+}
+
 func TestSerialiseDigest(t *testing.T) {
 
 	// Create keyValues with PBDelta messages

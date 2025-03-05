@@ -103,7 +103,7 @@ func (s *GBServer) connectToSeed() error {
 		return fmt.Errorf("connect to seed - acquire request ID: %s", err)
 	}
 
-	pay1, err := s.prepareSelfInfoSend(INFO, int(reqID), 0)
+	pay1, err := s.prepareSelfInfoSend(NEW_JOIN, int(reqID), 0)
 	if err != nil {
 		return err
 	}
@@ -283,7 +283,7 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 
 }
 
-func (s *GBServer) prepareDiscoveryRequest(command int, reqID, respID int) ([]byte, error) {
+func (s *GBServer) discoveryRequest(command int, reqID, respID int) ([]byte, error) {
 
 	// TODO finish method
 	// Need to access our cluster map
@@ -305,43 +305,24 @@ func (s *GBServer) prepareDiscoveryRequest(command int, reqID, respID int) ([]by
 // From there gossip will be up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
 // for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
 
-func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
+func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 	s := c.srv
-
-	s.clusterMapLock.RLock()
-
-	msg, err := s.serialiseClusterDelta()
-	if err != nil {
-		return err
-	}
-
-	s.clusterMapLock.RUnlock()
 
 	respID, err := s.acquireReqID()
 	if err != nil {
 		return err
 	}
 
-	hdr := constructNodeHeader(1, INFO_ALL, c.ph.reqID, respID, uint16(len(msg)), NODE_HEADER_SIZE_V1, 0, 0)
-
-	packet := &nodePacket{
-		hdr,
-		msg,
-	}
-
-	pay1, err := packet.serialize()
+	self, err := s.prepareSelfInfoSend(SELF_INFO, int(c.ph.reqID), int(respID))
 	if err != nil {
 		return err
 	}
 
-	//TODO Wait for response is causing a deadlock - need to look at if we want to chain request-response cycle
-	// if queue with response is used
-
 	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
 	//defer cancel()
 
-	resp := c.qProtoWithResponse(respID, pay1, true, true)
+	resp := c.qProtoWithResponse(respID, self, true, true)
 
 	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
 
@@ -360,19 +341,6 @@ func (c *gbClient) onboardNewJoiner(cd *clusterDelta) error {
 		c.srv.incrementNodeConnCount()
 
 	})
-
-	////log.Printf("response from onboardNewJoiner: %v", string(bytes))
-	//err = c.srv.moveToConnected(c.cid, cd.sender)
-	//if err != nil {
-	//	log.Printf("MoveToConnected failed in process info message: %v", err)
-	//}
-	//
-	//// TODO Monitor the server lock here and be mindful
-	//c.srv.incrementNodeConnCount()
-	//
-	//c.mu.Lock()
-	//c.qProto(pay1, true)
-	//c.mu.Unlock()
 
 	return nil
 
@@ -420,12 +388,10 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 	//GOSS_ACK
 	//TEST
 	switch c.ph.command {
-	case INFO:
-		c.processInfoMessage(message)
-	case DISCOVERY:
-		c.processDiscovery(message)
-	case INFO_ALL:
-		c.processInfoAll(message)
+	case NEW_JOIN:
+		c.processNewJoinMessage(message)
+	case SELF_INFO:
+		c.processSelfInfo(message)
 	case HANDSHAKE:
 		c.processHandShake(message)
 	case HANDSHAKE_RESP:
@@ -473,13 +439,44 @@ func (c *gbClient) processErrResp(message []byte) {
 
 }
 
-func (c *gbClient) processDiscovery(message []byte) {
+func (c *gbClient) processNewJoinMessage(message []byte) {
+
+	tmpC, err := deserialiseDelta(message)
+	if err != nil {
+		log.Printf("deserialise Delta failed: %v", err)
+		// Send err response
+	}
+
+	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
+	// Allow for an error response or retry if this is not correct
+
+	//=========================================
+
+	// TODO Do we need to do a seed check on ourselves first?
+
+	err = c.seedSendSelf(tmpC)
+	if err != nil {
+		log.Printf("onboardNewJoiner failed: %v", err)
+	}
+
+	// We have to do this last because we will end up sending back the nodes own info
+
+	for key, value := range tmpC.delta {
+		if _, exists := c.srv.clusterMap.participants[key]; !exists {
+			err := c.srv.addParticipantFromTmp(key, value)
+			if err != nil {
+				log.Printf("AddParticipantFromTmp failed: %v", err)
+				//send err response
+			}
+		}
+		continue
+	}
 
 	return
 
 }
 
-func (c *gbClient) processInfoAll(message []byte) {
+func (c *gbClient) processSelfInfo(message []byte) {
 
 	rsp, err := c.getResponseChannel(c.ph.reqID)
 	if err != nil {
@@ -518,6 +515,10 @@ func (c *gbClient) processInfoAll(message []byte) {
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 		return
 	}
+
+}
+
+func (c *gbClient) processDiscoveryReq(message []byte) {
 
 }
 
@@ -726,44 +727,6 @@ func (c *gbClient) processGossSyn(message []byte) {
 	c.mu.Lock()
 	c.qProto(pay, true)
 	c.mu.Unlock()
-
-	return
-
-}
-
-func (c *gbClient) processInfoMessage(message []byte) {
-
-	tmpC, err := deserialiseDelta(message)
-	if err != nil {
-		log.Printf("deserialise Delta failed: %v", err)
-		// Send err response
-	}
-
-	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
-	// Allow for an error response or retry if this is not correct
-	// TODO - then use method to add to cluster - must do check to see if it is in cluster already, if so we must call update instead
-
-	//=========================================
-
-	// TODO When we onboard new joiner we should wait for response before adding to cluster map
-
-	err = c.onboardNewJoiner(tmpC)
-	if err != nil {
-		log.Printf("onboardNewJoiner failed: %v", err)
-	}
-
-	// We have to do this last because we will end up sending back the nodes own info
-
-	for key, value := range tmpC.delta {
-		if _, exists := c.srv.clusterMap.participants[key]; !exists {
-			err := c.srv.addParticipantFromTmp(key, value)
-			if err != nil {
-				log.Printf("AddParticipantFromTmp failed: %v", err)
-				//send err response
-			}
-		}
-		continue
-	}
 
 	return
 
