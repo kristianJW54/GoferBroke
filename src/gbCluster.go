@@ -421,7 +421,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
-	tmpP.vi = nil
 
 	s.clusterMapLock.Unlock()
 
@@ -543,7 +542,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 
 	// Construct the packet
-	header := constructNodeHeader(1, GOSS_SYN, reqID, 0, uint16(len(digest)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, GOSS_SYN, reqID, 0, uint16(len(digest)), NODE_HEADER_SIZE_V1)
 	packet := &nodePacket{
 		header,
 		digest,

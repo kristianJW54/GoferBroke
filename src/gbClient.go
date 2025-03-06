@@ -671,6 +671,30 @@ func (c *gbClient) qProto(proto []byte, flush bool) {
 }
 
 //===================================================================================
+// Node Request Handling
+//===================================================================================
+
+func prepareRequest(data []byte, version, command int, resp, req uint16) ([]byte, error) {
+
+	switch version {
+	case 1:
+		header := constructNodeHeader(1, uint8(command), resp, req, uint16(len(data)), NODE_HEADER_SIZE_V1)
+		packet := &nodePacket{
+			header,
+			data,
+		}
+		payload, err := packet.serialize()
+		if err != nil {
+			return nil, cerealErr
+		}
+		return payload, nil
+	}
+
+	return nil, cerealErr
+
+}
+
+//===================================================================================
 // Node Response Handling
 //===================================================================================
 

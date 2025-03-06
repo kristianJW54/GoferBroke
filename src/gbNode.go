@@ -265,33 +265,46 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 		return nil, fmt.Errorf("prepareSelfInfoSend - serialising self info: %s", err)
 	}
 
-	//s.clusterMapLock.RUnlock()
-
-	// Construct header
-	header := constructNodeHeader(1, uint8(command), uint16(reqID), uint16(respID), uint16(len(cereal)), NODE_HEADER_SIZE_V1, 0, 0)
-	// Create packet
-	packet := &nodePacket{
-		header,
-		cereal,
-	}
-	pay1, err := packet.serialize()
+	pay, err := prepareRequest(cereal, 1, command, uint16(reqID), uint16(respID))
 	if err != nil {
-		return nil, fmt.Errorf("prepareSelfInfoSend - serialize: %s", err)
+		return nil, err
 	}
 
-	return pay1, nil
+	return pay, nil
 
 }
 
-func (s *GBServer) discoveryRequest(command int, reqID, respID int) ([]byte, error) {
+func (c *gbClient) discoveryRequest() ([]byte, error) {
 
-	// TODO finish method
-	// Need to access our cluster map
-	// Get list of participants that we have addresses for
+	srv := c.srv
 
-	return nil, nil
+	dreq, err := srv.serialiseKnownAddressNodes()
+	if err != nil {
+		return nil, fmt.Errorf("discoveryRequest - serialising known addresses: %s", err)
+	}
+
+	reqId, err := srv.acquireReqID()
+	if err != nil {
+		return nil, fmt.Errorf("discoveryRequest - acquire request ID: %s", err)
+	}
+
+	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, reqId, 0)
+	if err != nil {
+		return nil, fmt.Errorf("discoveryRequest - prepareRequest: %s", err)
+	}
+
+	resp := c.qProtoWithResponse(reqId, pay, true, true)
+
+	r, err := c.waitForResponseAndBlock(srv.serverContext, resp)
+	if err != nil {
+		return nil, fmt.Errorf("discoveryRequest - wait for response: %s", err)
+	}
+
+	return r, nil
 
 }
+
+// Conduct discovery method - which sends discovery request and handles the response - if we reach a point where we can exit discovery then change our status
 
 //=======================================================
 // Seed Server
@@ -494,8 +507,9 @@ func (c *gbClient) processSelfInfo(message []byte) {
 	case rsp.ch <- msg:
 		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
 		if c.ph.respID != 0 {
+			// TODO Refactor into simple sendOK() method
 			log.Printf("we have a responder to respond to -- %v", c.ph.respID)
-			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1, 0, 0)
+			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1)
 			packet := &nodePacket{
 				header,
 				OKResponder,
@@ -680,7 +694,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 		// TODO Package common error responses into a function (same with ok + responses)
 
-		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(gossipError)), NODE_HEADER_SIZE_V1, 0, 0)
+		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(gossipError)), NODE_HEADER_SIZE_V1)
 		errPacket := &nodePacket{
 			errHeader,
 			errorToBytes(GossipError),
@@ -713,7 +727,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 		log.Printf("prepareGossSynAck failed: %v", err)
 	}
 
-	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1, 0, 0)
+	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
 	packet := &nodePacket{
 		header,
 		OKRequester,

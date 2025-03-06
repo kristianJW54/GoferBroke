@@ -25,7 +25,7 @@ const (
 const (
 	PROTO_VERSION_1     uint8 = 1
 	HEADER_SIZE_V1            = 6
-	NODE_HEADER_SIZE_V1       = 14
+	NODE_HEADER_SIZE_V1       = 12
 )
 
 const (
@@ -36,8 +36,13 @@ const (
 
 // Response Codes ??/
 
-//TODO Consider implementing interface with serialisation methods and sending mehtods for packets
-// which packets can implement, then we can pass an interface to handle connection methods on server...?
+//=====================================================================
+// Errors
+//=====================================================================
+
+const packetCerealErr = "packet serialisation error"
+
+var cerealErr = errors.New(packetCerealErr)
 
 //=====================================================================
 // Node Response Errors
@@ -77,14 +82,12 @@ var OKResponder = []byte("2 -+- OK RESP -+-\r\n")
 //Packet constructor and serialisation
 
 type nodePacketHeader struct {
-	version             uint8
-	command             uint8
-	requestID           uint16
-	respID              uint16
-	msgSize             uint16
-	headerSize          uint16
-	streamBatchSize     uint8
-	streamBatchSequence uint8
+	version    uint8
+	command    uint8
+	requestID  uint16
+	respID     uint16
+	msgSize    uint16
+	headerSize uint16
 }
 
 type nodePacket struct {
@@ -92,8 +95,8 @@ type nodePacket struct {
 	data []byte
 }
 
-func constructNodeHeader(version, command uint8, reqID, respID, msgSize, headerSize uint16, batchSize, batchSequence uint8) *nodePacketHeader {
-	return &nodePacketHeader{version, command, reqID, respID, msgSize, headerSize, batchSize, batchSequence}
+func constructNodeHeader(version, command uint8, reqID, respID, msgSize, headerSize uint16) *nodePacketHeader {
+	return &nodePacketHeader{version, command, reqID, respID, msgSize, headerSize}
 }
 
 func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
@@ -114,10 +117,10 @@ func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
 
 	binary.BigEndian.PutUint16(header[6:8], nph.msgSize)
 	binary.BigEndian.PutUint16(header[8:10], nph.headerSize)
-	header[10] = nph.streamBatchSize
-	header[11] = nph.streamBatchSequence
-	header[12] = '\r'
-	header[13] = '\n'
+	//header[10] = nph.streamBatchSize
+	//header[11] = nph.streamBatchSequence
+	header[10] = '\r'
+	header[11] = '\n'
 
 	//log.Println("Header:", header)
 

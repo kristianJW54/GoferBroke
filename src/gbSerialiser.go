@@ -74,7 +74,6 @@ type fullDigest map[string]*digest
 
 type tmpParticipant struct {
 	keyValues map[string]*Delta
-	vi        []string
 }
 
 type clusterDelta struct {
@@ -222,7 +221,6 @@ func (s *GBServer) serialiseKnownAddressNodes() ([]byte, error) {
 	offset += len(s.ServerName)
 
 	for _, p := range pi {
-		log.Println("selecting node --> ", p.name)
 		deltaBuf[offset] = uint8(len(p.name))
 		offset++
 		copy(deltaBuf[offset:], p.name)
@@ -448,7 +446,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 		cDelta.delta[name] = &tmpParticipant{
 			make(map[string]*Delta, deltaSize),
-			make([]string, 0, deltaSize),
 		}
 
 		offset += 2
@@ -467,9 +464,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 			d := cDelta.delta[name]
 			d.keyValues[key] = &Delta{}
-
-			// Add key to the vi array
-			d.vi = append(d.vi, key)
 
 			// Version
 			v := binary.BigEndian.Uint64(delta[offset : offset+8])

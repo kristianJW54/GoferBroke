@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// Test discovery by test config and turning off gossip
+
 func TestParticipantHeap(t *testing.T) {
 
 	gbs := GenerateDefaultTestServer()
