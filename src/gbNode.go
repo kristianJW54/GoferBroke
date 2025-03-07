@@ -114,6 +114,7 @@ func (s *GBServer) connectToSeed() error {
 
 	r, err := client.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
+		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return err
 	}
 
@@ -204,6 +205,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	r, err := client.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
+		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return fmt.Errorf("connectToNodeInMap - wait for response: %s", err)
 	}
 	// If we receive no error we can assume the response was received and continue
@@ -274,11 +276,38 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 
 }
 
-func (c *gbClient) discoveryRequest() ([]byte, error) {
+func (s *GBServer) getKnownAddressNodes() ([]string, error) {
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	known := make([]string, 0)
+
+	for _, p := range cm.participants {
+		if _, exists := p.keyValues[_ADDRESS_]; exists {
+			known = append(known, p.name)
+		}
+	}
+	if len(known) == 0 {
+		return nil, knownInternalErrors[KNOWN_ADDR_CODE]
+	}
+	return known, nil
+}
+
+// Discovery Request for node during discovery phase - will take the gossip rounds context and timeout
+
+func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
 
 	srv := c.srv
 
-	dreq, err := srv.serialiseKnownAddressNodes()
+	//TODO we are doing _address_ checks in the serialiser but we may want something more robust to check standard tcp address known
+	// but also preferred address and address groups from config...?
+	knownNodes, err := srv.getKnownAddressNodes()
+	if err != nil {
+		return nil, fmt.Errorf("discoveryRequest - getKnownAddressNodes failed: %s", err)
+	}
+
+	dreq, err := srv.serialiseKnownAddressNodes(knownNodes)
 	if err != nil {
 		return nil, fmt.Errorf("discoveryRequest - serialising known addresses: %s", err)
 	}
@@ -295,8 +324,9 @@ func (c *gbClient) discoveryRequest() ([]byte, error) {
 
 	resp := c.qProtoWithResponse(reqId, pay, true, true)
 
-	r, err := c.waitForResponseAndBlock(srv.serverContext, resp)
+	r, err := c.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
+		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return nil, fmt.Errorf("discoveryRequest - wait for response: %s", err)
 	}
 
@@ -304,7 +334,21 @@ func (c *gbClient) discoveryRequest() ([]byte, error) {
 
 }
 
-// Conduct discovery method - which sends discovery request and handles the response - if we reach a point where we can exit discovery then change our status
+func (c *gbClient) conductDiscovery(ctx context.Context) error {
+
+	//resp, err := c.discoveryRequest(ctx)
+
+	// If we are assume we have a response
+	// addrNodes, amountOfNodesInWithAddr, err := deserialiseDiscoveryResponse()
+
+	// Do a check for proportion missing
+
+	// Add to our map
+
+	// Come out of discovery or not
+
+	return nil
+}
 
 //=======================================================
 // Seed Server
@@ -438,7 +482,7 @@ func (c *gbClient) processErrResp(message []byte) {
 		return
 	}
 
-	msgErr := bytesToError(message)
+	msgErr := BytesToError(message)
 
 	msg := make([]byte, len(message))
 	copy(msg, message)
@@ -466,7 +510,7 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 	//=========================================
 
 	// TODO Do we need to do a seed check on ourselves first?
-
+	log.Printf("REACHED")
 	err = c.seedSendSelf(tmpC)
 	if err != nil {
 		log.Printf("onboardNewJoiner failed: %v", err)
@@ -515,9 +559,9 @@ func (c *gbClient) processSelfInfo(message []byte) {
 				OKResponder,
 			}
 
-			pay, err := packet.serialize()
-			if err != nil {
-				log.Printf("error serialising packet - %v", err)
+			pay, gbErr := packet.serialize()
+			if gbErr != nil {
+				log.Printf("error serialising packet - %v", gbErr.ToError())
 			}
 
 			c.mu.Lock()
@@ -690,19 +734,17 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	if deferGossip {
 
-		//log.Printf("%s making %s defer it's gossip", c.srv.ServerName, senderName)
+		deferErr := knownNetworkErrors[GOSSIP_DEFERRED_CODE]
 
-		// TODO Package common error responses into a function (same with ok + responses)
-
-		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(gossipError)), NODE_HEADER_SIZE_V1)
+		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(deferErr.Error())), NODE_HEADER_SIZE_V1)
 		errPacket := &nodePacket{
 			errHeader,
-			errorToBytes(GossipError),
+			deferErr.ToBytes(),
 		}
 
-		errPay, err := errPacket.serialize()
-		if err != nil {
-			log.Printf("error serialising packet - %v", err)
+		errPay, gbErr := errPacket.serialize()
+		if gbErr != nil {
+			log.Printf("error serialising packet - %v", gbErr.ToError())
 		}
 
 		c.mu.Lock()
@@ -733,9 +775,9 @@ func (c *gbClient) processGossSyn(message []byte) {
 		OKRequester,
 	}
 
-	pay, err := packet.serialize()
-	if err != nil {
-		log.Printf("error serialising packet - %v", err)
+	pay, gbErr := packet.serialize()
+	if gbErr != nil {
+		log.Printf("error serialising packet - %v", gbErr.ToError())
 	}
 
 	c.mu.Lock()

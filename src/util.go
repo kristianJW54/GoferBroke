@@ -1,6 +1,7 @@
 package src
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"sync"
@@ -72,52 +73,73 @@ func (g *grTracking) logActiveGoRoutines() {
 
 // For tests
 
-func GenerateDefaultTestServer() *GBServer {
+func int64ToBytes(n int64) []byte {
+	buf := make([]byte, 8) // Allocate 8 bytes for int64
+	binary.BigEndian.PutUint64(buf, uint64(n))
+	return buf
+}
 
-	// Create keyValues with PBDelta messages
-	keyValues := map[string]*Delta{
-		"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
-	}
+var keyValues1 = map[string]*Delta{
+	"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+	"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+	"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+	"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+}
+
+var addressTestingKVs = map[string]*Delta{
+	_ADDRESS_: {valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+}
+
+var keyValues2 = map[string]*Delta{
+	_ADDRESS_:    {valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	_NODE_CONNS_: {valueType: NUM_NODE_CONN_V, version: 1640995205, value: []byte{0}},
+	_HEARTBEAT_:  {valueType: HEARTBEAT_V, version: 1640995206, value: int64ToBytes(1640995206)},
+}
+
+func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBServer {
 
 	// Mock server setup
 	gbs := &GBServer{
 		clusterMap: ClusterMap{
-			participants: make(map[string]*Participant),
+			participants:     make(map[string]*Participant, numParticipants),
+			participantArray: make([]string, numParticipants),
 		},
+		ServerName: "main-server",
 	}
 
-	participantName := fmt.Sprintf("self%d", 1)
-	gbs.name = participantName
-
-	// Create a participant
-	participant := &Participant{
-		name:       participantName,
+	mainPart := &Participant{
+		name:       "main-server",
 		keyValues:  make(map[string]*Delta),
 		maxVersion: 0,
 	}
 
-	var maxVersion int64
-	maxVersion = 0
+	gbs.clusterMap.participantArray[0] = mainPart.name
 
-	// Populate participant's keyValues
-	for key, delta := range keyValues {
+	mainPart.keyValues = kv
 
-		participant.keyValues[key] = delta
+	gbs.clusterMap.participants[gbs.ServerName] = mainPart
 
-		if delta.version > maxVersion {
-			maxVersion = delta.version
+	for i := 1; i < numParticipants; i++ {
+
+		participantName := fmt.Sprintf("node-test-%d", i)
+		gbs.name = participantName
+
+		// Create a participant
+		participant := &Participant{
+			name:       participantName,
+			keyValues:  make(map[string]*Delta),
+			maxVersion: 0,
 		}
 
+		gbs.clusterMap.participantArray[i] = gbs.name
+
+		participant.keyValues = kv
+
+		// Add participant to the ClusterMap
+		gbs.clusterMap.participants[participantName] = participant
+
 	}
-
-	participant.maxVersion = maxVersion
-
-	// Add participant to the ClusterMap
-	gbs.clusterMap.participants[participantName] = participant
 
 	return gbs
 

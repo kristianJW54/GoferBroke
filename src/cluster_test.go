@@ -14,7 +14,7 @@ import (
 
 func TestParticipantHeap(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer()
+	gbs := GenerateDefaultTestServer(keyValues1, 5)
 
 	participant := gbs.clusterMap.participants[gbs.name]
 	log.Printf("name = %s", gbs.name)

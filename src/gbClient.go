@@ -683,14 +683,14 @@ func prepareRequest(data []byte, version, command int, resp, req uint16) ([]byte
 			header,
 			data,
 		}
-		payload, err := packet.serialize()
-		if err != nil {
-			return nil, cerealErr
+		payload, gbErr := packet.serialize()
+		if gbErr != nil {
+			return nil, fmt.Errorf("prepareRequest: serialize failed: %v", gbErr.ToError())
 		}
 		return payload, nil
 	}
 
-	return nil, cerealErr
+	return nil, fmt.Errorf("prepareRequest: version is not 1")
 
 }
 

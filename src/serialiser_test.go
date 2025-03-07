@@ -10,51 +10,165 @@ import (
 	"time"
 )
 
-func TestSerialiseDREQ(t *testing.T) {
-
-	gbs := &GBServer{
-		ServerName: "main-server",
-		clusterMap: ClusterMap{
-			participants: make(map[string]*Participant, 5),
+func TestDiscoveryRequestSerialiser(t *testing.T) {
+	tests := []struct {
+		name          string
+		clusterMap    ClusterMap
+		expectedError bool
+		expectedLen   int
+	}{
+		{
+			name: "Normal Cluster Map",
+			clusterMap: func() ClusterMap {
+				cm := ClusterMap{participants: make(map[string]*Participant, 5)}
+				for i := 0; i < 5; i++ {
+					partName := fmt.Sprintf("node-%d", i)
+					part := &Participant{
+						name:       partName,
+						keyValues:  make(map[string]*Delta, 1),
+						maxVersion: 0,
+					}
+					part.keyValues[_ADDRESS_] = &Delta{
+						key:       _ADDRESS_,
+						version:   0,
+						valueType: ADDR_V,
+						value:     []byte("127.0.0.1"),
+					}
+					cm.participants[partName] = part
+				}
+				return cm
+			}(),
+			expectedError: false,
+			expectedLen:   6,
+		},
+		{
+			name: "1 Node Missing Address",
+			clusterMap: func() ClusterMap {
+				cm := ClusterMap{participants: make(map[string]*Participant, 5)}
+				for i := 0; i < 5; i++ {
+					partName := fmt.Sprintf("node-%d", i)
+					part := &Participant{
+						name:       partName,
+						keyValues:  make(map[string]*Delta, 1),
+						maxVersion: 0,
+					}
+					if i == 2 {
+						part.keyValues[_NODE_CONNS_] = &Delta{
+							key:       _NODE_CONNS_,
+							version:   0,
+							valueType: NUM_NODE_CONN_V,
+							value:     []byte{0},
+						}
+					} else {
+						part.keyValues[_ADDRESS_] = &Delta{
+							key:       _ADDRESS_,
+							version:   0,
+							valueType: ADDR_V,
+							value:     []byte("127.0.0.1"),
+						}
+					}
+					cm.participants[partName] = part
+				}
+				return cm
+			}(),
+			expectedError: false,
+			expectedLen:   5,
+		},
+		{
+			name: "No addresses",
+			clusterMap: func() ClusterMap {
+				cm := ClusterMap{participants: make(map[string]*Participant, 5)}
+				for i := 0; i < 5; i++ {
+					partName := fmt.Sprintf("node-%d", i)
+					part := &Participant{
+						name:       partName,
+						keyValues:  make(map[string]*Delta, 1),
+						maxVersion: 0,
+					}
+					part.keyValues[_NODE_CONNS_] = &Delta{
+						key:       _NODE_CONNS_,
+						version:   0,
+						valueType: NUM_NODE_CONN_V,
+						value:     []byte{0},
+					}
+					cm.participants[partName] = part
+				}
+				return cm
+			}(),
+			expectedError: true,
+			expectedLen:   0,
 		},
 	}
 
-	for i := 0; i < 5; i++ {
-		partName := fmt.Sprintf("node-test-%d", i)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gbs := &GBServer{
+				ServerName: "main-server",
+				clusterMap: tt.clusterMap,
+			}
 
-		// Create participant
-		part := &Participant{
-			name:       partName,
-			keyValues:  make(map[string]*Delta, 1),
-			maxVersion: 0,
-		}
+			// Step 1: Get Known Address Nodes
+			knownNodes, err := gbs.getKnownAddressNodes()
+			if (err != nil) != tt.expectedError {
+				t.Fatalf("GetKnownAddressNodes() error = %v, expected error %v", err, tt.expectedError)
+			}
+			if tt.expectedError {
+				// If an error was expected, stop the test here.
+				return
+			}
 
-		part.keyValues[_ADDRESS_] = &Delta{
-			key:       _ADDRESS_,
-			version:   0,
-			valueType: ADDR_V,
-			value:     []byte("127.0.0.1"),
-		}
+			// Step 2: Serialize Known Nodes
+			cereal, err := gbs.serialiseKnownAddressNodes(knownNodes)
+			if err != nil {
+				t.Fatalf("Error serialising known addresses: %v", err)
+			}
 
-		gbs.clusterMap.participants[partName] = part
+			// Step 3: Deserialize Known Nodes
+			result, err := deserialiseKnownAddressNodes(cereal)
+			if err != nil {
+				t.Fatalf("Error deserialising known addresses: %v", err)
+			}
 
+			// Step 4: Validate Results
+			if result[0] != gbs.ServerName {
+				t.Errorf("Expected result[0] to be %s, got %s", gbs.ServerName, result[0])
+			}
+
+			if len(result) != tt.expectedLen {
+				t.Errorf("Expected length to be %d, got %d", tt.expectedLen, len(result))
+			}
+
+		})
+	}
+}
+
+func TestSerialiseDiscoveryResponse(t *testing.T) {
+
+	gbs := GenerateDefaultTestServer(addressTestingKVs, 5)
+
+	knownAddr := make([]string, 2)
+
+	for i := 0; i < 2; i++ {
+		name := gbs.clusterMap.participantArray[i]
+		knownAddr[i] = name
 	}
 
-	cereal, err := gbs.serialiseKnownAddressNodes()
+	data, err := gbs.serialiseKnownAddressNodes(knownAddr)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Error serialising known addresses: %v", err)
 	}
 
-	log.Printf("%v", cereal)
-
-	result, err := deserialiseKnownAddressNodes(cereal)
+	parts, err := deserialiseKnownAddressNodes(data)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Error deserialising known addresses: %v", err)
 	}
 
-	for _, value := range result {
-		log.Println(value)
-	}
+	log.Printf("data = %+s", parts)
+
+	// First element is the sender
+	//gbs.serialiseDiscoveryResponse(parts)
+
+	//log
 
 }
 
@@ -121,15 +235,6 @@ func TestSerialiseDigest(t *testing.T) {
 		log.Printf("%v:%v", value.nodeName, value.maxVersion)
 	}
 
-}
-
-// Helper function to create a Delta
-func createDelta(valueType uint8, version int64, value string) *Delta {
-	return &Delta{
-		valueType: valueType,
-		version:   version,
-		value:     []byte(value),
-	}
 }
 
 func TestSerialiseDigestWithSubsetArray(t *testing.T) {

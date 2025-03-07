@@ -180,7 +180,7 @@ func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 
 }
 
-func (s *GBServer) serialiseKnownAddressNodes() ([]byte, error) {
+func (s *GBServer) serialiseKnownAddressNodes(knownNodes []string) ([]byte, error) {
 
 	// Type = Discovery_Req - 1 byte Uint8
 	// Length of Payload - 4 byte Uint32
@@ -201,8 +201,8 @@ func (s *GBServer) serialiseKnownAddressNodes() ([]byte, error) {
 
 	pi := cm.participants
 
-	for _, p := range pi {
-		length += 1 + len(p.name)
+	for _, p := range knownNodes {
+		length += 1 + len(pi[p].name)
 	}
 
 	offset := 0
@@ -212,7 +212,7 @@ func (s *GBServer) serialiseKnownAddressNodes() ([]byte, error) {
 	offset++
 	binary.BigEndian.PutUint32(deltaBuf[1:5], uint32(length))
 	offset += 4
-	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(pi)))
+	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(knownNodes)))
 	offset += 2
 
 	deltaBuf[offset] = uint8(len(s.ServerName))
@@ -220,11 +220,12 @@ func (s *GBServer) serialiseKnownAddressNodes() ([]byte, error) {
 	copy(deltaBuf[offset:], s.ServerName)
 	offset += len(s.ServerName)
 
-	for _, p := range pi {
-		deltaBuf[offset] = uint8(len(p.name))
+	for _, p := range knownNodes {
+
+		deltaBuf[offset] = uint8(len(pi[p].name))
 		offset++
-		copy(deltaBuf[offset:], p.name)
-		offset += len(p.name)
+		copy(deltaBuf[offset:], pi[p].name)
+		offset += len(pi[p].name)
 	}
 
 	// Append CRLF

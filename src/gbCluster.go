@@ -547,9 +547,9 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 		header,
 		digest,
 	}
-	cereal, err := packet.serialize()
-	if err != nil {
-		return nil, fmt.Errorf("sendDigest - serialize error: %w", err)
+	cereal, gbErr := packet.serialize()
+	if gbErr != nil {
+		return nil, fmt.Errorf("sendDigest - serialize error: %v", gbErr.ToError())
 	}
 
 	select {
