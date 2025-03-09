@@ -294,60 +294,9 @@ func (s *GBServer) getKnownAddressNodes() ([]string, error) {
 	return known, nil
 }
 
-// Discovery Request for node during discovery phase - will take the gossip rounds context and timeout
+func (s *GBServer) buildAddrGroupMap() (map[string][]string, error) {
 
-func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
-
-	srv := c.srv
-
-	//TODO we are doing _address_ checks in the serialiser but we may want something more robust to check standard tcp address known
-	// but also preferred address and address groups from config...?
-	knownNodes, err := srv.getKnownAddressNodes()
-	if err != nil {
-		return nil, fmt.Errorf("discoveryRequest - getKnownAddressNodes failed: %s", err)
-	}
-
-	dreq, err := srv.serialiseKnownAddressNodes(knownNodes)
-	if err != nil {
-		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
-	}
-
-	reqId, err := srv.acquireReqID()
-	if err != nil {
-		return nil, WrapGBError(DiscoveryReqErr, err)
-	}
-
-	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, reqId, 0)
-	if err != nil {
-		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
-	}
-
-	resp := c.qProtoWithResponse(reqId, pay, true, true)
-
-	r, err := c.waitForResponseAndBlock(ctx, resp)
-	if err != nil {
-		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
-		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
-	}
-
-	return r, nil
-
-}
-
-func (c *gbClient) conductDiscovery(ctx context.Context) error {
-
-	//resp, err := c.discoveryRequest(ctx)
-
-	// If we are assume we have a response
-	// addrNodes, amountOfNodesInWithAddr, err := deserialiseDiscoveryResponse()
-
-	// Do a check for proportion missing
-
-	// Add to our map
-
-	// Come out of discovery or not
-
-	return nil
+	return nil, nil
 }
 
 //=======================================================
@@ -449,6 +398,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processNewJoinMessage(message)
 	case SELF_INFO:
 		c.processSelfInfo(message)
+	case DISCOVERY_REQ:
+		c.processDiscoveryReq(message)
 	case HANDSHAKE:
 		c.processHandShake(message)
 	case HANDSHAKE_RESP:
@@ -577,6 +528,20 @@ func (c *gbClient) processSelfInfo(message []byte) {
 }
 
 func (c *gbClient) processDiscoveryReq(message []byte) {
+
+	// First de-serialise the discovery request
+	parts, err := deserialiseKnownAddressNodes(message)
+	if err != nil {
+		log.Printf("deserialise KnownAddressNodes failed: %v", err)
+	}
+
+	log.Printf("parts = %v", parts)
+
+	// then we prepare the info to send back
+	// -- compare against our map to see what participants we can send
+	// -- serialise
+
+	// then we send it
 
 }
 

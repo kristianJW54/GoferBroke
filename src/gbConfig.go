@@ -57,6 +57,7 @@ type InternalOptions struct {
 	disableInternalGossipSystemUpdate     bool
 	disableUpdateServerTimeStampOnStartup bool
 	addressKeyGroup                       map[string][]string // Network group e.g. cloud, local, public and then list of ADDR keys e.g. IPv4, IPv6, WAN
+	addressKeys                           []string
 
 	// Need logging config also
 }

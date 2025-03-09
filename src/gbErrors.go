@@ -3,6 +3,7 @@ package src
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -313,6 +314,16 @@ func HandleError(err error, callback func(gbError []*GBError)) {
 
 	callback(gbErr)
 
+}
+
+func RecoverFromPanic() error {
+	if r := recover(); r != nil {
+		// Convert the recovered panic into a structured GBError
+		sysErr := WrapSystemError(fmt.Errorf("panic recovered: %v", r))
+		log.Println("Recovered from panic:", sysErr) // Optional logging
+		return sysErr
+	}
+	return nil
 }
 
 // Network Error codes

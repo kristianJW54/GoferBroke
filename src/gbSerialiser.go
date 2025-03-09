@@ -27,8 +27,8 @@ Delta Header -> Key-Value Deltas
 +----------+-------------------+--------------+------------+--------------------------------+
 	Key-Value Meta Data
 	+---------------+-------------+-----------------+----------------+------------+----------------+------------------+
-	| Number of KVs | Key Length  |  Key            |  Version       | Value Type | Value Length   |  Value           |
-	| (2 bytes)     | (2 bytes)   | (variable)      |  (8 bytes)     | (1 byte)   |  (4 bytes)     |  (variable)      |
+	| Number of KVs | Key Length  |  Key            |  Version       | Value Type |  Value Length  |  Value           |
+	| (2 bytes)     | (1 bytes)   | (variable)      |  (8 bytes)     | (1 byte)   |  (4 bytes)     |  (variable)      |
 	+---------------+-------------+-----------------+----------------+----------- +----------------+------------------+
 
 */
@@ -290,6 +290,105 @@ func deserialiseKnownAddressNodes(data []byte) ([]string, error) {
 
 }
 
+func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]byte, error) {
+
+	// Type = DRES - 1 byte Uint8
+	// Length of payload - 4 byte Uint32
+	// Size of Discovery - 2 byte Uint16
+	// Total size of header = --> 7 <-- + 2 for CLRF
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	length := 7 + 2
+
+	// Include senders name
+	length += 1
+	length += len(s.ServerName)
+
+	totalParts := s.numNodeConnections
+	length += 8
+
+	for name, part := range addrKeyMap {
+
+		length += 1 + len(name) + 2 // 1 byte for name length + name length + size of addr keys
+
+		participant := part
+
+		for _, p := range participant {
+			value := cm.participants[name].keyValues[p].value
+			length += 6 + len(p) + len(value) // Metadata (key size, value type, value size) + length of key + length value
+		}
+
+	}
+
+	// Allocate buffer
+	discoveryBuf := make([]byte, length)
+
+	// Write metadata header directly
+	offset := 0
+	discoveryBuf[0] = DREQ
+	offset++
+	binary.BigEndian.PutUint32(discoveryBuf[offset:], uint32(length))
+	offset += 4
+	binary.BigEndian.PutUint16(discoveryBuf[offset:], uint16(len(addrKeyMap)))
+
+	discoveryBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(discoveryBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	binary.BigEndian.PutUint64(discoveryBuf[offset:], uint64(totalParts))
+	offset += 8
+
+	// Serialize addresses
+	for name, part := range addrKeyMap {
+
+		discoveryBuf[offset] = uint8(len(name))
+		offset++
+		copy(discoveryBuf[offset:], name)
+		offset += len(name)
+
+		// Write the number of addresses for this node
+		binary.BigEndian.PutUint16(discoveryBuf[offset:], uint16(len(part)))
+		offset += 2
+
+		for _, p := range part {
+			value := cm.participants[name].keyValues[p]
+
+			// Key
+			discoveryBuf[offset] = uint8(len(p))
+			offset++
+			copy(discoveryBuf[offset:], p)
+
+			// Type
+			discoveryBuf[offset] = uint8(value.valueType)
+			offset++
+
+			// Addr
+			binary.BigEndian.PutUint32(discoveryBuf[offset:], uint32(len(value.value)))
+			offset += 4
+			copy(discoveryBuf[offset:], value.value)
+			offset += len(value.value)
+
+		}
+
+	}
+
+	// Append CRLF
+	copy(discoveryBuf[offset:], CLRF) // Assuming CLRF is defined as []byte{13, 10}
+	offset += 2
+
+	// Validate buffer usage
+	if offset != length {
+		return nil, fmt.Errorf("buffer mismatch: calculated length %d, written offset %d", length, offset)
+	}
+
+	return discoveryBuf, nil
+
+}
+
 // TODO Need to serialise system critical deltas first and then fill the buffer until MTU is reached
 
 // Lock should be held on entry
@@ -318,7 +417,7 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 			if delta != nil {
 				value := delta.value
 				// Calculate the size for this delta
-				length += 14 + len(key) + len(value) // 14 bytes for metadata + value length
+				length += 14 + len(key) + len(value) // 14 bytes for metadata (key size, version 8, value type, value size) + value length
 			} else {
 				// Log missing delta and continue
 				fmt.Printf("Warning: Delta is nil for participant %s\n", s.ServerName)
