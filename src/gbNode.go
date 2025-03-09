@@ -309,17 +309,17 @@ func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
 
 	dreq, err := srv.serialiseKnownAddressNodes(knownNodes)
 	if err != nil {
-		return nil, fmt.Errorf("discoveryRequest - serialising known addresses: %s", err)
+		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
 	}
 
 	reqId, err := srv.acquireReqID()
 	if err != nil {
-		return nil, fmt.Errorf("discoveryRequest - acquire request ID: %s", err)
+		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
 	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, reqId, 0)
 	if err != nil {
-		return nil, fmt.Errorf("discoveryRequest - prepareRequest: %s", err)
+		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
 	}
 
 	resp := c.qProtoWithResponse(reqId, pay, true, true)
@@ -327,7 +327,7 @@ func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
 	r, err := c.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
-		return nil, fmt.Errorf("discoveryRequest - wait for response: %s", err)
+		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
 	}
 
 	return r, nil
@@ -368,7 +368,7 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 	respID, err := s.acquireReqID()
 	if err != nil {
-		return err
+		return fmt.Errorf("seedSendSelf: %w", err)
 	}
 
 	self, err := s.prepareSelfInfoSend(SELF_INFO, int(c.ph.reqID), int(respID))

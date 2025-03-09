@@ -715,7 +715,7 @@ func newSeqReqPool(poolSize uint16) *seqReqPool {
 func (s *GBServer) acquireReqID() (uint16, error) {
 	id := s.nodeReqPool.reqPool.Get()
 	if id == nil {
-		return 0, fmt.Errorf("no id available")
+		return 0, NoRequestIDErr
 	}
 	//log.Printf("acquiring id - %v", id)
 	return id.(uint16), nil
