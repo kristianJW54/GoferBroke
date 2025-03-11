@@ -1,10 +1,10 @@
-
-![Logo](https://github.com/kristianJW54/GoferBroke/blob/main/GoferBroke.png?raw=true)
-
+<p align="center">
+  <img src="https://github.com/kristianJW54/GoferBroke/blob/main/GoferBroke%20(3)%20-%20Copy.png" alt="GoferBroke Logo" width="250" style="vertical-align: middle; margin-right: 10px;"/>
+</p>
 
 # GoferBroke
 
-**Anti-Entropy Gossip Protocol for Distributed Systems**
+**An Anti-Entropy P2P Gossip Protocol for Distributed Systems**
 
 Work in progress!
 ## Description
