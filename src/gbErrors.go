@@ -56,6 +56,29 @@ func WrapGBError(wrapperErr *GBError, err error) *GBError {
 	}
 }
 
+func UnwrapGBError(err error) *GBError {
+	var gbErrors *GBError
+
+	strErr := err.Error()
+	strings.TrimSpace(strErr)
+
+	parts := strings.Split(strErr, " -x")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		parsedErr, parseErr := ParseGBError(part)
+		if parseErr == nil {
+			gbErrors = parsedErr
+		}
+
+	}
+
+	return gbErrors
+}
+
 func UnwrapGBErrors(err error) []*GBError {
 	var gbErrors []*GBError
 
@@ -269,31 +292,21 @@ func UnwrapError(err error) []*GBError {
 
 	var gbErrors []*GBError
 
+	// Try unwrapping as GBError
 	var gbErr *GBError
-
 	if errors.As(err, &gbErr) {
-		gbErrors = append(gbErrors, gbErr)
-		err = gbErr.Err
+		log.Printf("Detected GBError: %+v\n", gbErr)
+		gbErrors = append(gbErrors, UnwrapGBErrors(gbErr)...)
+		//Continue unwrapping if there's a nested error
+		if gbErr.Err != nil {
+			unwrap := errors.Unwrap(gbErr.Err)
+			if unwrap != nil {
+				gbErrors = append(gbErrors, UnwrapError(unwrap)...)
+			}
+		}
 	}
 
-	parsedGBErr, parseErr := ParseGBError(err.Error())
-	if parseErr == nil && parsedGBErr != nil {
-		gbErrors = append(gbErrors, parsedGBErr)
-		err = parsedGBErr.Err
-	}
-
-	unwrapped := errors.Unwrap(err)
-
-	if unwrapped != nil {
-		moreGBErrors := UnwrapError(unwrapped)
-		gbErrors = append(gbErrors, moreGBErrors...)
-	}
-
-	gbErrorsFromString := UnwrapGBErrors(err)
-	for _, gbErr := range gbErrorsFromString {
-		gbErrors = append(gbErrors, gbErr)
-	}
-
+	//
 	if len(gbErrors) == 0 {
 		systemErr := WrapSystemError(err)
 		gbErrors = append(gbErrors, systemErr)
@@ -329,8 +342,10 @@ func RecoverFromPanic() error {
 // Network Error codes
 
 const (
-	GOSSIP_DEFERRED_CODE = 11
-	GOSSIP_TIMEOUT_CODE  = 12
+	GOSSIP_DEFERRED_CODE    = 11
+	GOSSIP_TIMEOUT_CODE     = 12
+	DESERIALISE_TYPE_CODE   = 13
+	DESERIALISE_LENGTH_CODE = 14
 )
 
 // Internal Error codes
@@ -346,10 +361,12 @@ const (
 )
 
 var knownNetworkErrors = map[int]*GBError{
-	GOSSIP_DEFERRED_CODE: &GBError{Code: GOSSIP_DEFERRED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip deferred"},
-	GOSSIP_TIMEOUT_CODE:  &GBError{Code: GOSSIP_TIMEOUT_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip timeout"},
-	INVALID_ERROR_FORMAT: &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid format"},
-	INVALID_ERROR_CODE:   &GBError{Code: INVALID_ERROR_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid error code"},
+	GOSSIP_DEFERRED_CODE:    &GBError{Code: GOSSIP_DEFERRED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip deferred"},
+	GOSSIP_TIMEOUT_CODE:     &GBError{Code: GOSSIP_TIMEOUT_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip timeout"},
+	INVALID_ERROR_FORMAT:    &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid format"},
+	INVALID_ERROR_CODE:      &GBError{Code: INVALID_ERROR_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid error code"},
+	DESERIALISE_TYPE_CODE:   &GBError{Code: DESERIALISE_TYPE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "wrong type received by deserialise"},
+	DESERIALISE_LENGTH_CODE: &GBError{Code: DESERIALISE_LENGTH_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "mismatch in data length received by deserialise"},
 }
 
 var knownInternalErrors = map[int]*GBError{
@@ -367,4 +384,9 @@ var (
 	NoRequestIDErr    = knownNetworkErrors[NO_REQUEST_ID_CODE]
 	DiscoveryReqErr   = knownInternalErrors[DISCOVERY_REQUEST_CODE]
 	ResponseErr       = knownInternalErrors[RESPONSE_CODE]
+)
+
+var (
+	DeserialiseTypeErr   = knownNetworkErrors[DESERIALISE_TYPE_CODE]
+	DeserialiseLengthErr = knownNetworkErrors[DESERIALISE_LENGTH_CODE]
 )

@@ -114,6 +114,7 @@ func (s *GBServer) gossipCleanup() {
 =======================================================================
 */
 
+// System gossip types
 const (
 	HEARTBEAT_V = iota
 	ADDR_V
@@ -121,18 +122,17 @@ const (
 	MEMORY_USAGE_V
 	NUM_NODE_CONN_V
 	NUM_CLIENT_CONN_V
-	INTEREST_V
-	ROUTES_V
 )
 
 // Internal Delta Keys [NOT TO BE USED EXTERNALLY]
 const (
-	_ADDRESS_      = "TCP"
-	_CPU_USAGE_    = "CPU_USAGE"
-	_MEMORY_USAGE  = "MEMORY_USAGE"
-	_NODE_CONNS_   = "NODE_CONNS"
-	_CLIENT_CONNS_ = "CLIENT_CONNS"
-	_HEARTBEAT_    = "HEARTBEAT"
+	_ADDRESS_         = "TCP"
+	_CPU_USAGE_       = "CPU_USAGE"
+	_MEMORY_USAGE     = "MEMORY_USAGE"
+	_NODE_CONNS_      = "NODE_CONNS"
+	_CLIENT_CONNS_    = "CLIENT_CONNS"
+	_HEARTBEAT_       = "HEARTBEAT"
+	_UPDATE_INTERVAL_ = "UPDATE_INTERVAL"
 )
 
 type Seed struct {
@@ -144,13 +144,8 @@ type Seed struct {
 
 // TODO Need to majorly optimise cluster map for reduced memory - fast lookup and sorted storing
 
-// TODO Remove Delta Heap
-// TODO Re-purpose participantQ to allocate dynamically when gossiping to add participants based on most available deltas and if same then max version as decider
-// TODO Dynamically allocate max version when adding or removing deltas
-
 type Delta struct {
-	index int
-	// TODO Look into trying to remove key field or at least use it as this caused a minor headache when switching from heap back to map for serialising
+	index     int
 	key       string
 	valueType byte // Type could be internal, config, state, client
 	version   int64
@@ -432,7 +427,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 //=======================================================
 
 // Discovery Request for node during discovery phase - will take the gossip rounds context and timeout
-
+// TODO - Should this be in the node file as only nodes will be making requests - responses are then general to the cluster ? OR keep it together?
 func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
 
 	srv := c.srv
@@ -465,7 +460,7 @@ func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
 	r, err := c.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
-		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
+		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
 	return r, nil

@@ -53,10 +53,14 @@ const (
 )
 
 // Discovery for initial connection phase of a node
+type discoveryValues struct {
+	addr map[string]string // Mapping the addr key to the addr value -- addr key will be listed in addressKeyGroup
+}
+
 type discovery struct {
 	senderName string
-	nodeName   string
-	addr       map[string]string // Mapping the addr key to the addr value -- addr key will be listed in addressKeyGroup
+	addrCount  int64
+	dv         map[string]*discoveryValues
 }
 
 //-------------------
@@ -290,6 +294,7 @@ func deserialiseKnownAddressNodes(data []byte) ([]string, error) {
 
 }
 
+// passed a map of nodes and their addr keys
 func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]byte, error) {
 
 	// Type = DRES - 1 byte Uint8
@@ -307,18 +312,17 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 	length += 1
 	length += len(s.ServerName)
 
-	totalParts := s.numNodeConnections
-	length += 8
+	totalParts := int(s.numNodeConnections)
 
-	for name, part := range addrKeyMap {
+	length += 2
+
+	for name, keys := range addrKeyMap {
 
 		length += 1 + len(name) + 2 // 1 byte for name length + name length + size of addr keys
 
-		participant := part
-
-		for _, p := range participant {
+		for _, p := range keys {
 			value := cm.participants[name].keyValues[p].value
-			length += 6 + len(p) + len(value) // Metadata (key size, value type, value size) + length of key + length value
+			length += 5 + len(p) + len(value) // Metadata (key size, value size) + length of key + length value
 		}
 
 	}
@@ -333,14 +337,15 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 	binary.BigEndian.PutUint32(discoveryBuf[offset:], uint32(length))
 	offset += 4
 	binary.BigEndian.PutUint16(discoveryBuf[offset:], uint16(len(addrKeyMap)))
+	offset += 2
 
 	discoveryBuf[offset] = uint8(len(s.ServerName))
 	offset++
 	copy(discoveryBuf[offset:], s.ServerName)
 	offset += len(s.ServerName)
 
-	binary.BigEndian.PutUint64(discoveryBuf[offset:], uint64(totalParts))
-	offset += 8
+	binary.BigEndian.PutUint16(discoveryBuf[offset:], uint16(totalParts))
+	offset += 2
 
 	// Serialize addresses
 	for name, part := range addrKeyMap {
@@ -361,10 +366,7 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 			discoveryBuf[offset] = uint8(len(p))
 			offset++
 			copy(discoveryBuf[offset:], p)
-
-			// Type
-			discoveryBuf[offset] = uint8(value.valueType)
-			offset++
+			offset += len(p)
 
 			// Addr
 			binary.BigEndian.PutUint32(discoveryBuf[offset:], uint32(len(value.value)))
@@ -389,7 +391,93 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 
 }
 
-// TODO Need to serialise system critical deltas first and then fill the buffer until MTU is reached
+// Should probably put this in a struct
+func deserialiseDiscovery(data []byte) (*discovery, error) {
+
+	if data[0] != byte(DREQ) {
+		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x --> %w", data[0], byte(DRES), DeserialiseTypeErr)
+	}
+
+	length := len(data)
+	metaLength := binary.BigEndian.Uint32(data[1:5])
+
+	if length != int(metaLength) {
+		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, DeserialiseLengthErr)
+	}
+
+	size := binary.BigEndian.Uint16(data[5:7])
+
+	offset := 7
+
+	// Extract senders name
+	senderLen := int(data[offset])
+	senderName := data[offset+1 : offset+1+senderLen]
+
+	offset++
+	offset += senderLen
+
+	// Extract nodeAddr count - 2 bytes as the value is atomic.value int64 converted to int
+	addrSize := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+	offset += 2
+
+	// Make the map to populate
+	addrMap := &discovery{
+		senderName: string(senderName),
+		addrCount:  int64(addrSize),
+		dv:         make(map[string]*discoveryValues, size),
+	}
+
+	for i := 0; i < int(size); i++ {
+
+		nameLen := int(data[offset])
+
+		start := offset + 1
+		end := start + nameLen
+
+		name := string(data[start:end])
+
+		offset += 1
+		offset += nameLen
+
+		// Need to get number of address entries - Uint16 - 2 bytes
+		addrEntries := binary.BigEndian.Uint16(data[offset : offset+2])
+		offset += 2
+
+		addrMap.dv[name] = &discoveryValues{
+			make(map[string]string, addrEntries),
+		}
+
+		for j := 0; j < int(addrEntries); j++ {
+
+			keyLen := int(data[offset])
+
+			start := offset + 1
+			end := start + keyLen
+
+			key := string(data[start:end])
+
+			offset += 1
+			offset += keyLen
+
+			p := addrMap.dv[name]
+
+			// Length
+			addrLen := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+			offset += 4
+
+			// Value
+			addrValue := data[offset : offset+addrLen]
+
+			offset += addrLen
+
+			p.addr[key] = string(addrValue)
+
+		}
+
+	}
+
+	return addrMap, nil
+}
 
 // Lock should be held on entry
 func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
@@ -501,14 +589,14 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 	if delta[0] != byte(DELTA_TYPE) {
-		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x", delta[0], byte(DELTA_TYPE))
+		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x --> %w", delta[0], byte(DELTA_TYPE), DeserialiseTypeErr)
 	}
 
 	length := len(delta)
 	metaLength := binary.BigEndian.Uint32(delta[1:5])
 
 	if length != int(metaLength) {
-		return nil, fmt.Errorf("meta length does not match desired length - %x", length)
+		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, DeserialiseLengthErr)
 	}
 
 	// Use header to allocate cluster map capacity

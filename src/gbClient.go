@@ -685,7 +685,7 @@ func prepareRequest(data []byte, version, command int, resp, req uint16) ([]byte
 		}
 		payload, gbErr := packet.serialize()
 		if gbErr != nil {
-			return nil, fmt.Errorf("prepareRequest: serialize failed: %v", gbErr.ToError())
+			return nil, fmt.Errorf("prepareRequest: serialize failed: %w", gbErr)
 		}
 		return payload, nil
 	}

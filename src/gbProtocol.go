@@ -92,7 +92,7 @@ func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
 
 }
 
-func (np *nodePacket) serialize() ([]byte, *GBError) {
+func (np *nodePacket) serialize() ([]byte, error) {
 
 	packetCerealErr := knownInternalErrors[PACKET_CEREAL_CODE]
 

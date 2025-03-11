@@ -142,7 +142,7 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 	}
 }
 
-func TestSerialiseDiscoveryResponse(t *testing.T) {
+func TestSerialiseDiscoveryRequest(t *testing.T) {
 
 	gbs := GenerateDefaultTestServer(addressTestingKVs, 5)
 
@@ -169,6 +169,138 @@ func TestSerialiseDiscoveryResponse(t *testing.T) {
 	//gbs.serialiseDiscoveryResponse(parts)
 
 	//log
+
+}
+
+func TestDiscoveryResponse(t *testing.T) {
+
+	gbs := GenerateDefaultTestServer(multipleAddressTestingKVs, 5)
+
+	knownAddr := make(map[string][]string, 2)
+
+	for i := 0; i < 2; i++ {
+		name := gbs.clusterMap.participantArray[i]
+		knownAddr[name] = make([]string, 2)
+		knownAddr[name][0] = gbs.clusterMap.participants[name].keyValues[_ADDRESS_].key
+		knownAddr[name][1] = gbs.clusterMap.participants[name].keyValues["CLOUD"].key
+	}
+
+	log.Printf("data = %+s", knownAddr)
+
+	data, err := gbs.serialiseDiscoveryAddrs(knownAddr)
+	if err != nil {
+		t.Fatalf("Error serialising known addresses: %v", err)
+	}
+
+	log.Printf("addresses = %+v", data)
+
+	addrMap, err := deserialiseDiscovery(data)
+	if err != nil {
+		t.Fatalf("Error deserialising addresses: %v", err)
+	}
+
+	for key, value := range addrMap.dv {
+		log.Printf("addr = %s%+v", key, value.addr)
+	}
+
+}
+
+func TestDiscoveryResponseTable(t *testing.T) {
+
+	gbs := GenerateDefaultTestServer(multipleAddressTestingKVs, 5)
+
+	tests := []struct {
+		name           string
+		addrMap        map[string][]string
+		checkNodeCount int
+		checkAddrMap   map[string]map[string]string
+	}{
+		{
+			name: "simple tcp addr map",
+			addrMap: map[string][]string{
+				gbs.ServerName: []string{
+					_ADDRESS_,
+				},
+			},
+			checkNodeCount: 1,
+			checkAddrMap: map[string]map[string]string{
+				gbs.ServerName: {
+					_ADDRESS_: "127.0.0.1",
+				},
+			},
+		},
+
+		{
+			name: "multi addr map",
+			addrMap: map[string][]string{
+				gbs.ServerName: []string{
+					_ADDRESS_,
+					"CLOUD",
+					"DNS",
+				},
+				gbs.clusterMap.participantArray[1]: []string{
+					_ADDRESS_,
+					"CLOUD",
+				},
+				gbs.clusterMap.participantArray[2]: []string{
+					"DNS",
+				},
+			},
+			checkNodeCount: 3,
+			checkAddrMap: map[string]map[string]string{
+				gbs.ServerName: {
+					_ADDRESS_: "127.0.0.1",
+					"CLOUD":   "137.184.248.0",
+					"DNS":     "example.com",
+				},
+				gbs.clusterMap.participantArray[1]: {
+					_ADDRESS_: "127.0.0.1",
+					"CLOUD":   "137.184.248.0",
+				},
+				gbs.clusterMap.participantArray[2]: {
+					"DNS": "example.com",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			cereal, err := gbs.serialiseDiscoveryAddrs(tt.addrMap)
+			if err != nil {
+				t.Fatalf("Error serialising addresses: %v", err)
+			}
+
+			addrResultMap, err := deserialiseDiscovery(cereal)
+			if err != nil {
+				t.Fatalf("Error deserialising addresses: %v", err)
+			}
+
+			// Make asserts
+
+			if len(addrResultMap.dv) != tt.checkNodeCount {
+				t.Errorf("node count mismatch: got %d, want %d", len(addrResultMap.dv), tt.checkNodeCount)
+			}
+
+			for name, value := range addrResultMap.dv {
+				if _, exists := tt.checkAddrMap[name]; !exists {
+					t.Errorf("node name does not exist: %s", name)
+				}
+				log.Printf("got name %s", name)
+				for key, addr := range value.addr {
+					if key, exists := tt.checkAddrMap[name][key]; !exists {
+						t.Errorf("address not found for key: %s", key)
+					}
+					log.Printf("got address key %s - value: %s", key, addr)
+					if addr != tt.checkAddrMap[name][key] {
+						t.Errorf("address mismatch: got %s, want %s", addr, tt.checkAddrMap[name][key])
+					}
+				}
+			}
+
+		})
+	}
 
 }
 

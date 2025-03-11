@@ -80,21 +80,27 @@ func int64ToBytes(n int64) []byte {
 }
 
 var keyValues1 = map[string]*Delta{
-	"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-	"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-	"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-	"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-	"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+	"key6":  {key: "Key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"key7":  {key: "Key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+	"key8":  {key: "Key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+	"key9":  {key: "Key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+	"key10": {key: "Key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
 }
 
 var addressTestingKVs = map[string]*Delta{
-	_ADDRESS_: {valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	_ADDRESS_: {key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+}
+
+var multipleAddressTestingKVs = map[string]*Delta{
+	_ADDRESS_: {key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	"CLOUD":   {key: "CLOUD", valueType: ADDR_V, version: 1640995204, value: []byte("137.184.248.0")},
+	"DNS":     {key: "DNS", valueType: ADDR_V, version: 1640995204, value: []byte("example.com")},
 }
 
 var keyValues2 = map[string]*Delta{
-	_ADDRESS_:    {valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
-	_NODE_CONNS_: {valueType: NUM_NODE_CONN_V, version: 1640995205, value: []byte{0}},
-	_HEARTBEAT_:  {valueType: HEARTBEAT_V, version: 1640995206, value: int64ToBytes(1640995206)},
+	_ADDRESS_:    {key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	_NODE_CONNS_: {key: _NODE_CONNS_, valueType: NUM_NODE_CONN_V, version: 1640995205, value: []byte{0}},
+	_HEARTBEAT_:  {key: _HEARTBEAT_, valueType: HEARTBEAT_V, version: 1640995206, value: int64ToBytes(1640995206)},
 }
 
 func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBServer {
@@ -107,6 +113,8 @@ func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBSer
 		},
 		ServerName: "main-server",
 	}
+
+	gbs.numNodeConnections = int64(numParticipants)
 
 	mainPart := &Participant{
 		name:       "main-server",

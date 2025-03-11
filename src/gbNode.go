@@ -294,7 +294,12 @@ func (s *GBServer) getKnownAddressNodes() ([]string, error) {
 	return known, nil
 }
 
-func (s *GBServer) buildAddrGroupMap() (map[string][]string, error) {
+func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error) {
+
+	// First need to check if we have a config of addr keys
+	// If not we assume only _ADDRESS_ "TCP" address is needed and build
+
+	// Compare requesters known against what we have - include participants and their addresses
 
 	return nil, nil
 }
@@ -306,10 +311,7 @@ func (s *GBServer) buildAddrGroupMap() (map[string][]string, error) {
 //---------
 //Receiving Node Join
 
-// Compute how many nodes we need to send and if we need to split it up
-// We will know how many crucial internal state deltas we'll need to send so the total size can be estimated?
-// From there gossip will be up to the new node, but it must stay in joining state for a few rounds depending on the cluster map size
-// for routing and so that it is not queried and so it's not engaging in application logic such as writing to files etc. just yet
+// TODO Later we should combine this with sending a full discovery map as an onboard bootstrap
 
 func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
@@ -512,7 +514,7 @@ func (c *gbClient) processSelfInfo(message []byte) {
 
 			pay, gbErr := packet.serialize()
 			if gbErr != nil {
-				log.Printf("error serialising packet - %v", gbErr.ToError())
+				log.Printf("error serialising packet - %w", gbErr)
 			}
 
 			c.mu.Lock()
@@ -709,7 +711,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 		errPay, gbErr := errPacket.serialize()
 		if gbErr != nil {
-			log.Printf("error serialising packet - %v", gbErr.ToError())
+			log.Printf("error serialising packet - %w", gbErr)
 		}
 
 		c.mu.Lock()
@@ -742,7 +744,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	pay, gbErr := packet.serialize()
 	if gbErr != nil {
-		log.Printf("error serialising packet - %v", gbErr.ToError())
+		log.Printf("error serialising packet - %w", gbErr)
 	}
 
 	c.mu.Lock()
