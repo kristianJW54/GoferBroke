@@ -116,6 +116,8 @@ func (s *GBServer) connectToSeed() error {
 
 	resp := client.qProtoWithResponse(reqID, pay1, false, true)
 
+	log.Printf("%s - sending new join command waiting for response", s.ServerName)
+
 	r, err := client.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
@@ -267,6 +269,7 @@ func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, 
 
 	//s.clusterMapLock.RLock()
 	self := s.getSelfInfo()
+
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo(self)
 	if err != nil {
@@ -319,8 +322,14 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 
 	addrMap := make(map[string][]string)
 
-	for _, name := range cm.participantArray {
+	log.Printf("known == %+s", known)
+
+	for _, n := range cm.participants {
+
+		name := n.name
+
 		if slices.Contains(known, name) {
+			// We skip if the node already has the address
 			continue
 		}
 
@@ -358,7 +367,7 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 	}
 
 	if len(addrMap) == 0 {
-		return nil, fmt.Errorf("address map is empty - %w", AddrMapErr)
+		return nil, nil
 	}
 
 	return addrMap, nil
@@ -407,8 +416,6 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 		// TODO Monitor the server lock here and be mindful
 		c.srv.incrementNodeConnCount()
-
-		log.Printf("we did it! -- %s", resp)
 
 	})
 
@@ -464,6 +471,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processSelfInfo(message)
 	case DISCOVERY_REQ:
 		c.processDiscoveryReq(message)
+	case DISCOVERY_RES:
+		c.processDiscoveryRes(message)
 	case HANDSHAKE:
 		c.processHandShake(message)
 	case HANDSHAKE_RESP:
@@ -522,6 +531,8 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
 	// Allow for an error response or retry if this is not correct
 
+	log.Printf("new join received === %+v", tmpC)
+
 	//=========================================
 
 	// TODO Do we need to do a seed check on ourselves first?
@@ -566,7 +577,7 @@ func (c *gbClient) processSelfInfo(message []byte) {
 		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
 		if c.ph.respID != 0 {
 			// TODO Refactor into simple sendOK() method
-			log.Printf("we have a responder to respond to -- %v", c.ph.respID)
+			log.Printf("%s --> we have a responder to respond to -- %v", c.srv.ServerName, c.ph.respID)
 			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1)
 			packet := &nodePacket{
 				header,
@@ -590,6 +601,8 @@ func (c *gbClient) processSelfInfo(message []byte) {
 
 }
 
+// TODO We are blocking on server-2 here and not processing the response for some reason
+
 func (c *gbClient) processDiscoveryReq(message []byte) {
 
 	// First de-serialise the discovery request
@@ -598,6 +611,13 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 		log.Printf("deserialise KnownAddressNodes failed: %v", err)
 	}
 
+	//knownFake := make([]string, 2)
+	//node1 := "test-server-3-3@1741731349"
+	//node2 := "test-server-4-4@1741731389"
+	//
+	//knownFake[0] = node1
+	//knownFake[1] = node2
+
 	log.Printf("parts = %v", known)
 
 	cereal, err := c.discoveryResponse(known)
@@ -605,7 +625,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 		log.Printf("discoveryResponse failed: %v", err)
 	}
 
-	pay, err := prepareRequest(cereal, 1, DRES, uint16(0), c.ph.reqID)
+	pay, err := prepareRequest(cereal, 1, DISCOVERY_RES, uint16(0), c.ph.reqID)
 	if err != nil {
 		log.Printf("prepareRequest failed: %v", err)
 	}
@@ -615,6 +635,31 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	c.mu.Unlock()
 
 	return
+
+}
+
+func (c *gbClient) processDiscoveryRes(message []byte) {
+
+	rsp, err := c.getResponseChannel(c.ph.reqID)
+	if err != nil {
+		log.Printf("getResponseChannel failed: %v", err)
+	}
+
+	if rsp == nil {
+		return
+	}
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
+	select {
+	case rsp.ch <- msg:
+		//log.Printf("%s Info message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
+		return
+	default:
+		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		return
+	}
 
 }
 
@@ -717,7 +762,7 @@ func (c *gbClient) processOK(message []byte) {
 
 func (c *gbClient) processOKResp(message []byte) {
 
-	//log.Printf("OK --------> resp id for ok == %v", int(c.ph.respID))
+	log.Printf("%s OK --------> resp id for ok == %v", c.srv.ServerName, int(c.ph.respID))
 
 	rsp, err := c.getResponseChannel(c.ph.respID)
 	if err != nil {
@@ -755,7 +800,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
 	// if we need to defer gossip round or continue
 
-	sender, digest, err := deSerialiseDigest(message)
+	sender, _, err := deSerialiseDigest(message)
 	if err != nil {
 		log.Printf("error serialising digest - %v", err)
 	}
@@ -800,13 +845,15 @@ func (c *gbClient) processGossSyn(message []byte) {
 	// 4. Combine both serialised digest + delta to send
 	// 5. If digest is too large and will cause the delta to be omitted then a subset may be chosen
 
-	srv := c.srv
+	// TODO ONLY TURN ON GSA WHEN READY -- WILL CAUSE GOSSIP TO FAIL
 
-	_, err = srv.prepareGossSynAck(digest)
-	if err != nil {
-		log.Printf("prepareGossSynAck failed: %v", err)
-	}
-
+	//srv := c.srv
+	//
+	//_, err = srv.prepareGossSynAck(digest)
+	//if err != nil {
+	//	log.Printf("prepareGossSynAck failed: %v", err)
+	//}
+	//
 	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
 	packet := &nodePacket{
 		header,

@@ -428,48 +428,50 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 // Discovery Request for node during discovery phase - will take the gossip rounds context and timeout
 // TODO - Should this be in the node file as only nodes will be making requests - responses are then general to the cluster ? OR keep it together?
-func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
-
-	srv := c.srv
+func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte, error) {
 
 	//TODO we are doing _address_ checks in the serialiser but we may want something more robust to check standard tcp address known
 	// but also preferred address and address groups from config...?
-	knownNodes, err := srv.getKnownAddressNodes()
+	knownNodes, err := s.getKnownAddressNodes()
 	if err != nil {
 		return nil, fmt.Errorf("discoveryRequest - getKnownAddressNodes failed: %s", err)
 	}
 
-	dreq, err := srv.serialiseKnownAddressNodes(knownNodes)
+	log.Printf("%s - - known = %+s", s.ServerName, knownNodes)
+
+	dreq, err := s.serialiseKnownAddressNodes(knownNodes)
 	if err != nil {
 		// TODO Need to error handle serialisers
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
-	reqId, err := srv.acquireReqID()
+	reqId, err := s.acquireReqID()
 	if err != nil {
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
-	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, reqId, 0)
+	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, 0, reqId)
 	if err != nil {
 		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
 	}
 
-	resp := c.qProtoWithResponse(reqId, pay, true, true)
+	resp := conn.qProtoWithResponse(reqId, pay, true, true)
 
-	r, err := c.waitForResponseAndBlock(ctx, resp)
+	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
+	log.Printf("GOT A RESPONSE FROM DRES == %s", string(r))
+
 	return r, nil
 
 }
 
-func (c *gbClient) conductDiscovery(ctx context.Context) error {
+func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 
-	resp, err := c.discoveryRequest(ctx)
+	resp, err := s.discoveryRequest(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -479,8 +481,8 @@ func (c *gbClient) conductDiscovery(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("%s --> node count %v", c.srv.ServerName, addrNodes.addrCount)
-	log.Printf("%s --> address node %+v", c.srv.ServerName, addrNodes.dv)
+	log.Printf("%s --> node count %v", s.ServerName, addrNodes.addrCount)
+	log.Printf("%s --> address node %+v", s.ServerName, addrNodes.dv)
 
 	// Do a check for proportion missing
 
@@ -493,7 +495,7 @@ func (c *gbClient) conductDiscovery(ctx context.Context) error {
 
 func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 
-	addrMap, err := c.srv.buildAddrGroupMap(request)
+	addrMap, err := c.srv.buildAddrGroupMap(request[1:])
 	if err != nil {
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
@@ -1105,9 +1107,21 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
-	//if s.discoveryPhase {
-	//	log.Printf("------------------ I am discovering addresses in the map :) ------------------")
-	//}
+	if s.discoveryPhase {
+		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
+		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
+		if !ok {
+			log.Printf("No connection to discover addresses in the map")
+		}
+
+		seed, ok := conn.(*gbClient)
+		if ok {
+			err := s.conductDiscovery(s.serverContext, seed)
+			if err != nil {
+				log.Printf("Discovery failed: %v", err)
+			}
+		}
+	}
 
 	for i := 0; i < int(ns); i++ {
 

@@ -193,20 +193,14 @@ func (s *GBServer) serialiseKnownAddressNodes(knownNodes []string) ([]byte, erro
 	// Data --> participant name len followed by name
 	// CLRF - 2 bytes
 
-	s.clusterMapLock.RLock()
-	cm := s.clusterMap
-	s.clusterMapLock.RUnlock()
-
 	length := 7 + 2
 
 	// Include senders name
 	length += 1
 	length += len(s.ServerName)
 
-	pi := cm.participants
-
 	for _, p := range knownNodes {
-		length += 1 + len(pi[p].name)
+		length += 1 + len(p)
 	}
 
 	offset := 0
@@ -226,10 +220,10 @@ func (s *GBServer) serialiseKnownAddressNodes(knownNodes []string) ([]byte, erro
 
 	for _, p := range knownNodes {
 
-		deltaBuf[offset] = uint8(len(pi[p].name))
+		deltaBuf[offset] = uint8(len(p))
 		offset++
-		copy(deltaBuf[offset:], pi[p].name)
-		offset += len(pi[p].name)
+		copy(deltaBuf[offset:], p)
+		offset += len(p)
 	}
 
 	// Append CRLF
