@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"slices"
 	"strings"
 	"time"
 )
@@ -90,10 +91,13 @@ func (s *GBServer) connectToSeed() error {
 	defer cancel()
 
 	// TODO Do we need any DNS Lookups or resolving here?
+	var addr []string
+	for _, value := range s.gbConfig.SeedServers {
+		a := net.JoinHostPort(value.SeedIP, value.SeedPort)
+		addr = append(addr, a)
+	}
 
-	addr := net.JoinHostPort(s.gbConfig.SeedServers[0].SeedIP, s.gbConfig.SeedServers[0].SeedPort)
-
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.Dial("tcp", addr[0])
 	if err != nil {
 		return fmt.Errorf("connect to seed - net dial: %s", err)
 	}
@@ -117,6 +121,8 @@ func (s *GBServer) connectToSeed() error {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return err
 	}
+
+	log.Printf("response ==== %s", string(r))
 
 	// If we receive no error we can assume the response was received and continue
 	// --->
@@ -299,9 +305,63 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 	// First need to check if we have a config of addr keys
 	// If not we assume only _ADDRESS_ "TCP" address is needed and build
 
-	// Compare requesters known against what we have - include participants and their addresses
+	var sizeEstimate int
 
-	return nil, nil
+	sizeEstimate += NODE_HEADER_SIZE_V1
+
+	s.configLock.RLock()
+	conf := s.gbConfig
+	s.configLock.RUnlock()
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	addrMap := make(map[string][]string)
+
+	for _, name := range cm.participantArray {
+		if slices.Contains(known, name) {
+			continue
+		}
+
+		if sizeEstimate+len(name) > DEFAULT_MAX_DISCOVERY_SIZE {
+			return addrMap, nil
+		}
+
+		sizeEstimate += len(name)
+
+		addrMap[name] = make([]string, 0)
+
+		tcpKey := cm.participants[name].keyValues[_ADDRESS_].key
+
+		if sizeEstimate+len(tcpKey) > DEFAULT_MAX_DISCOVERY_SIZE {
+			return addrMap, nil
+		} else {
+			addrMap[name] = append(addrMap[name], tcpKey)
+		}
+
+		if conf.Internal.addressKeys != nil {
+
+			for _, addr := range conf.Internal.addressKeys {
+				if a, exists := cm.participants[name].keyValues[addr]; exists {
+
+					if sizeEstimate+len(addr) > DEFAULT_MAX_DISCOVERY_SIZE {
+						return addrMap, nil
+					}
+
+					addrMap[name] = append(addrMap[name], a.key)
+				}
+			}
+
+		}
+
+	}
+
+	if len(addrMap) == 0 {
+		return nil, fmt.Errorf("address map is empty - %w", AddrMapErr)
+	}
+
+	return addrMap, nil
 }
 
 //=======================================================
@@ -347,6 +407,8 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 		// TODO Monitor the server lock here and be mindful
 		c.srv.incrementNodeConnCount()
+
+		log.Printf("we did it! -- %s", resp)
 
 	})
 
@@ -463,7 +525,6 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 	//=========================================
 
 	// TODO Do we need to do a seed check on ourselves first?
-	log.Printf("REACHED")
 	err = c.seedSendSelf(tmpC)
 	if err != nil {
 		log.Printf("onboardNewJoiner failed: %v", err)
@@ -514,7 +575,7 @@ func (c *gbClient) processSelfInfo(message []byte) {
 
 			pay, gbErr := packet.serialize()
 			if gbErr != nil {
-				log.Printf("error serialising packet - %w", gbErr)
+				log.Printf("error serialising packet - %v", gbErr)
 			}
 
 			c.mu.Lock()
@@ -532,18 +593,28 @@ func (c *gbClient) processSelfInfo(message []byte) {
 func (c *gbClient) processDiscoveryReq(message []byte) {
 
 	// First de-serialise the discovery request
-	parts, err := deserialiseKnownAddressNodes(message)
+	known, err := deserialiseKnownAddressNodes(message)
 	if err != nil {
 		log.Printf("deserialise KnownAddressNodes failed: %v", err)
 	}
 
-	log.Printf("parts = %v", parts)
+	log.Printf("parts = %v", known)
 
-	// then we prepare the info to send back
-	// -- compare against our map to see what participants we can send
-	// -- serialise
+	cereal, err := c.discoveryResponse(known)
+	if err != nil {
+		log.Printf("discoveryResponse failed: %v", err)
+	}
 
-	// then we send it
+	pay, err := prepareRequest(cereal, 1, DRES, uint16(0), c.ph.reqID)
+	if err != nil {
+		log.Printf("prepareRequest failed: %v", err)
+	}
+
+	c.mu.Lock()
+	c.qProto(pay, true)
+	c.mu.Unlock()
+
+	return
 
 }
 
@@ -711,7 +782,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 		errPay, gbErr := errPacket.serialize()
 		if gbErr != nil {
-			log.Printf("error serialising packet - %w", gbErr)
+			log.Printf("error serialising packet - %v", gbErr)
 		}
 
 		c.mu.Lock()
@@ -744,7 +815,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	pay, gbErr := packet.serialize()
 	if gbErr != nil {
-		log.Printf("error serialising packet - %w", gbErr)
+		log.Printf("error serialising packet - %v", gbErr)
 	}
 
 	c.mu.Lock()

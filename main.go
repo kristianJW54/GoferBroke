@@ -30,8 +30,8 @@ func run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 
 		// Initialize config with the seed server address
 		config = &src.GbConfig{
-			SeedServers: []src.Seeds{
-				{
+			SeedServers: map[string]src.Seeds{
+				"seed1": {
 					SeedIP:   ip,
 					SeedPort: port,
 				},
@@ -45,8 +45,8 @@ func run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		log.Printf("cluster ip == %s", clusterIP)
 
 		config = &src.GbConfig{
-			SeedServers: []src.Seeds{
-				{
+			SeedServers: map[string]src.Seeds{
+				"seed1": {
 					SeedIP:   clusterIP,
 					SeedPort: clusterPort,
 				},

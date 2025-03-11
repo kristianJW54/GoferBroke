@@ -146,6 +146,7 @@ type GBServer struct {
 	// Locks
 	serverLock     sync.RWMutex
 	clusterMapLock sync.RWMutex
+	configLock     sync.RWMutex
 
 	//serverWg *sync.WaitGroup
 	startupSync *sync.WaitGroup
@@ -445,14 +446,15 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 		s.serverLock.Lock()
 		defer s.serverLock.Unlock()
 
-		for i := 0; i < len(s.gbConfig.SeedServers); i++ {
-			addr := net.JoinHostPort(s.gbConfig.SeedServers[i].SeedIP, s.gbConfig.SeedServers[i].SeedPort)
+		for _, value := range s.gbConfig.SeedServers {
+			addr := net.JoinHostPort(value.SeedIP, value.SeedPort)
 			tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 			if err != nil {
 				return err
 			}
 			s.seedAddr = append(s.seedAddr, tcpAddr)
 		}
+
 	}
 	return nil
 }

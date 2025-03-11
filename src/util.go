@@ -103,6 +103,8 @@ var keyValues2 = map[string]*Delta{
 	_HEARTBEAT_:  {key: _HEARTBEAT_, valueType: HEARTBEAT_V, version: 1640995206, value: int64ToBytes(1640995206)},
 }
 
+// TODO Make another one of these but with config
+
 func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBServer {
 
 	// Mock server setup

@@ -18,8 +18,8 @@ func TestServerNameLengthError(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
+		SeedServers: map[string]Seeds{
+			"seed1": {
 				SeedIP:   ip,
 				SeedPort: port,
 			},
@@ -44,8 +44,8 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
+		SeedServers: map[string]Seeds{
+			"seed1": {
 				SeedIP:   ip,
 				SeedPort: port,
 			},
@@ -96,8 +96,8 @@ func TestGossipSignal(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
+		SeedServers: map[string]Seeds{
+			"seed1": {
 				SeedIP:   ip,
 				SeedPort: port,
 			},
@@ -160,8 +160,8 @@ func TestGossipDifferentStates(t *testing.T) {
 		disableUpdateServerTimeStampOnStartup: true,
 	}
 	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
+		SeedServers: map[string]Seeds{
+			"seed1": {
 				SeedIP:   "127.0.0.1",
 				SeedPort: "8081",
 			},
@@ -233,8 +233,8 @@ func TestReconnectOfNode(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
+		SeedServers: map[string]Seeds{
+			"seed1": {
 				SeedIP:   ip,
 				SeedPort: port,
 			},
@@ -285,8 +285,8 @@ func TestServerRunningOneNodes(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
+		SeedServers: map[string]Seeds{
+			"seed1": {
 				SeedIP:   ip,
 				SeedPort: port,
 			},
@@ -333,8 +333,8 @@ func TestInfoSend(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbConfig{
-		SeedServers: []Seeds{
-			{
+		SeedServers: map[string]Seeds{
+			"seed1": {
 				SeedIP:   ip,
 				SeedPort: port,
 			},

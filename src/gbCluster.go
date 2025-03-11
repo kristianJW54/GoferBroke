@@ -469,10 +469,18 @@ func (c *gbClient) discoveryRequest(ctx context.Context) ([]byte, error) {
 
 func (c *gbClient) conductDiscovery(ctx context.Context) error {
 
-	//resp, err := c.discoveryRequest(ctx)
+	resp, err := c.discoveryRequest(ctx)
+	if err != nil {
+		return err
+	}
 
 	// If we are assume we have a response
-	// addrNodes, amountOfNodesInWithAddr, err := deserialiseDiscoveryResponse()
+	addrNodes, err := deserialiseDiscovery(resp)
+	if err != nil {
+		return err
+	}
+	log.Printf("%s --> node count %v", c.srv.ServerName, addrNodes.addrCount)
+	log.Printf("%s --> address node %+v", c.srv.ServerName, addrNodes.dv)
 
 	// Do a check for proportion missing
 
@@ -483,10 +491,19 @@ func (c *gbClient) conductDiscovery(ctx context.Context) error {
 	return nil
 }
 
-// Async response wait for within read-loop processing
-func (c *gbClient) discoveryResponse(ctx context.Context, request []string) ([]byte, error) {
+func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 
-	return nil, nil
+	addrMap, err := c.srv.buildAddrGroupMap(request)
+	if err != nil {
+		return nil, WrapGBError(DiscoveryReqErr, err)
+	}
+
+	cereal, err := c.srv.serialiseDiscoveryAddrs(addrMap)
+	if err != nil {
+		return nil, WrapGBError(DiscoveryReqErr, err)
+	}
+
+	return cereal, nil
 }
 
 //=======================================================================
@@ -611,7 +628,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 	cereal, gbErr := packet.serialize()
 	if gbErr != nil {
-		return nil, fmt.Errorf("sendDigest - serialize error: %v", gbErr.ToError())
+		return nil, fmt.Errorf("sendDigest - serialize error: %w", gbErr)
 	}
 
 	select {
@@ -1088,9 +1105,9 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
-	if s.discoveryPhase {
-		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
-	}
+	//if s.discoveryPhase {
+	//	log.Printf("------------------ I am discovering addresses in the map :) ------------------")
+	//}
 
 	for i := 0; i < int(ns); i++ {
 

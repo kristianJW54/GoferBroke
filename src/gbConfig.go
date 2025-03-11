@@ -17,7 +17,8 @@ Internal will be local to the node - such as node name or address etc.
 */
 
 const (
-	DEFAULT_MAX_DELTA_SIZE            = 1024 // TODO If config not set then we default to this
+	DEFAULT_MAX_DELTA_SIZE            = 1400 // TODO If config not set then we default to this
+	DEFAULT_MAX_DISCOVERY_SIZE        = 1024
 	DEFAULT_MAX_GSA                   = DEFAULT_MAX_DELTA_SIZE * 2
 	DEFAULT_MAX_DELTA_PER_PARTICIPANT = 5
 )
@@ -25,12 +26,13 @@ const (
 // TODO May want a config mutex lock??
 
 type GbConfig struct {
-	SeedServers []Seeds `gb:"seed"`
+	SeedServers map[string]Seeds `gb:"seed"`
 	Cluster     *ClusterOptions
 	Internal    *InternalOptions
 }
 
 type Seeds struct {
+	Name     string
 	SeedIP   string
 	SeedPort string
 }
@@ -38,6 +40,7 @@ type Seeds struct {
 type ClusterOptions struct {
 	maxGossipSize               uint16
 	maxDeltaSize                uint16
+	maxDiscoverySize            uint16
 	maxNumberOfNodes            int
 	defaultSubsetDigestNodes    int
 	maxSequenceIDPool           int
@@ -63,3 +66,7 @@ type InternalOptions struct {
 }
 
 //=====================================================================
+
+//TODO Need config initializer here to set values and any defaults needed
+
+// TODO need update functions and methods for when server runs background processes to update config based on gossip

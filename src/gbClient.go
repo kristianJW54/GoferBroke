@@ -349,7 +349,7 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 	switch c.cType {
 	case NODE:
-		s.nodeConnStore.Store(name, c) // TODO Moving to sync.Map so phase out nodeStore
+		s.nodeConnStore.Store(name, c)
 		c.flags.set(CONNECTED)
 	case CLIENT:
 		s.clientStore[cid] = c

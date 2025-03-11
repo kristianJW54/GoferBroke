@@ -358,6 +358,7 @@ const (
 	NO_REQUEST_ID_CODE     = 55
 	DISCOVERY_REQUEST_CODE = 56
 	RESPONSE_CODE          = 57
+	ADDR_MAP_CODE          = 58
 )
 
 var knownNetworkErrors = map[int]*GBError{
@@ -377,6 +378,7 @@ var knownInternalErrors = map[int]*GBError{
 	NO_REQUEST_ID_CODE:     &GBError{Code: NO_REQUEST_ID_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no request id found"},
 	DISCOVERY_REQUEST_CODE: &GBError{Code: DISCOVERY_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "discovery request error"},
 	RESPONSE_CODE:          &GBError{Code: RESPONSE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "response channel error"},
+	ADDR_MAP_CODE:          &GBError{Code: ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map build error"},
 }
 
 var (
@@ -384,6 +386,7 @@ var (
 	NoRequestIDErr    = knownNetworkErrors[NO_REQUEST_ID_CODE]
 	DiscoveryReqErr   = knownInternalErrors[DISCOVERY_REQUEST_CODE]
 	ResponseErr       = knownInternalErrors[RESPONSE_CODE]
+	AddrMapErr        = knownNetworkErrors[ADDR_MAP_CODE]
 )
 
 var (
