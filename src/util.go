@@ -69,6 +69,13 @@ func (g *grTracking) logActiveGoRoutines() {
 	})
 }
 
+func percMakeup(known, want int) int {
+	if want == 0 {
+		return 0 // Prevent division by zero
+	}
+	return (known * 100) / want
+}
+
 //==========================================================================================
 
 // For tests

@@ -99,3 +99,14 @@ func TestBuildAddrMap(t *testing.T) {
 		})
 	}
 }
+
+func TestPercDiff(t *testing.T) {
+
+	connCount := 3
+	knownCount := 1
+
+	res := percMakeup(knownCount, connCount)
+
+	log.Println(res)
+
+}

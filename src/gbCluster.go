@@ -422,6 +422,71 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	return nil
 }
 
+func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
+
+	s.clusterMapLock.Lock()
+	defer s.clusterMapLock.Unlock()
+
+	if _, exists := s.clusterMap.participants[name]; exists {
+
+		part := s.clusterMap.participants[name]
+
+		for addrKey, addrValue := range disc.addr {
+			if _, exist := part.keyValues[addrKey]; exist {
+
+				//Clear reference to discovery for faster GC collection
+				disc = nil
+
+				return fmt.Errorf("key %s already exists - %w", addrKey, AddDiscoveryErr)
+			}
+
+			valueByte := make([]byte, len(addrValue))
+			copy(valueByte, addrValue)
+
+			// If the address is not present then we add and let the value be updated along with the version during gossip
+			part.keyValues[addrKey] = &Delta{
+				key:       addrKey,
+				valueType: ADDR_V,
+				version:   0,
+				value:     valueByte,
+			}
+		}
+
+		//Clear reference to discovery for faster GC collection
+		disc = nil
+
+		return nil
+	}
+
+	newParticipant := &Participant{
+		name:      name,
+		keyValues: make(map[string]*Delta),
+	}
+
+	for addrKey, addrValue := range disc.addr {
+
+		valueByte := make([]byte, len(addrValue))
+		copy(valueByte, addrValue)
+
+		newParticipant.keyValues[addrKey] = &Delta{
+			key:       addrKey,
+			valueType: ADDR_V,
+			version:   0,
+			value:     valueByte,
+		}
+
+	}
+
+	s.clusterMap.participants[name] = newParticipant
+	s.clusterMap.participantArray = append(s.clusterMap.participantArray, newParticipant.name)
+
+	//Clear reference to discovery for faster GC collection
+	disc = nil
+
+	return nil
+
+}
+
 //=======================================================
 // Discovery Phase
 //=======================================================
@@ -437,8 +502,6 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		return nil, fmt.Errorf("discoveryRequest - getKnownAddressNodes failed: %s", err)
 	}
 
-	log.Printf("%s - - known = %+s", s.ServerName, knownNodes)
-
 	dreq, err := s.serialiseKnownAddressNodes(knownNodes)
 	if err != nil {
 		// TODO Need to error handle serialisers
@@ -450,7 +513,7 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
-	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, 0, reqId)
+	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, reqId, 0)
 	if err != nil {
 		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
 	}
@@ -462,8 +525,6 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
-
-	log.Printf("GOT A RESPONSE FROM DRES == %s", string(r))
 
 	return r, nil
 
@@ -482,11 +543,34 @@ func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 		return err
 	}
 	log.Printf("%s --> node count %v", s.ServerName, addrNodes.addrCount)
-	log.Printf("%s --> address node %+v", s.ServerName, addrNodes.dv)
-
-	// Do a check for proportion missing
+	for n, addr := range addrNodes.dv {
+		log.Printf("node ---> %s", n)
+		log.Printf("addr --> %+s", addr)
+	}
 
 	// Add to our map
+	for name, value := range addrNodes.dv {
+		err := s.addDiscoveryToMap(name, value)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Do a check for proportion missing
+	current := int(s.numNodeConnections) + len(addrNodes.dv) + 1 // Plus ourselves
+	log.Printf("current node count: %v", current)
+
+	perc := percMakeup(current, int(addrNodes.addrCount))
+
+	if s.gbConfig.Cluster.discoveryPercentage != 0 {
+		if perc >= int(s.gbConfig.Cluster.discoveryPercentage) {
+			s.discoveryPhase = false
+		}
+	} else {
+		if perc >= DEFAULT_DISCOVERY_PERCENTAGE {
+			s.discoveryPhase = false
+		}
+	}
 
 	// Come out of discovery or not
 
@@ -498,6 +582,10 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 	addrMap, err := c.srv.buildAddrGroupMap(request[1:])
 	if err != nil {
 		return nil, WrapGBError(DiscoveryReqErr, err)
+	}
+
+	if len(addrMap) == 0 {
+		return nil, EmptyAddrMapErr
 	}
 
 	cereal, err := c.srv.serialiseDiscoveryAddrs(addrMap)
@@ -1119,6 +1207,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 			err := s.conductDiscovery(s.serverContext, seed)
 			if err != nil {
 				log.Printf("Discovery failed: %v", err)
+				// TODO Check the error to see if it's because of a nil map which we can discovery phase false on
 			}
 		}
 	}

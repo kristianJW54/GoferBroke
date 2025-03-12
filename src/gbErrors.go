@@ -359,6 +359,8 @@ const (
 	DISCOVERY_REQUEST_CODE = 56
 	RESPONSE_CODE          = 57
 	ADDR_MAP_CODE          = 58
+	EMPTY_ADDR_MAP_CODE    = 59
+	ADD_DICSOVERY_CODE     = 60
 )
 
 var knownNetworkErrors = map[int]*GBError{
@@ -368,6 +370,7 @@ var knownNetworkErrors = map[int]*GBError{
 	INVALID_ERROR_CODE:      &GBError{Code: INVALID_ERROR_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid error code"},
 	DESERIALISE_TYPE_CODE:   &GBError{Code: DESERIALISE_TYPE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "wrong type received by deserialise"},
 	DESERIALISE_LENGTH_CODE: &GBError{Code: DESERIALISE_LENGTH_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "mismatch in data length received by deserialise"},
+	EMPTY_ADDR_MAP_CODE:     &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "address map is empty"},
 }
 
 var knownInternalErrors = map[int]*GBError{
@@ -379,17 +382,22 @@ var knownInternalErrors = map[int]*GBError{
 	DISCOVERY_REQUEST_CODE: &GBError{Code: DISCOVERY_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "discovery request error"},
 	RESPONSE_CODE:          &GBError{Code: RESPONSE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "response channel error"},
 	ADDR_MAP_CODE:          &GBError{Code: ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map build error"},
+	EMPTY_ADDR_MAP_CODE:    &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map is empty"},
+	ADD_DICSOVERY_CODE:     &GBError{Code: ADD_DICSOVERY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "add discovery failed"},
 }
 
 var (
-	GossipDeferredErr = knownNetworkErrors[GOSSIP_DEFERRED_CODE]
-	NoRequestIDErr    = knownNetworkErrors[NO_REQUEST_ID_CODE]
-	DiscoveryReqErr   = knownInternalErrors[DISCOVERY_REQUEST_CODE]
-	ResponseErr       = knownInternalErrors[RESPONSE_CODE]
-	AddrMapErr        = knownNetworkErrors[ADDR_MAP_CODE]
+	DiscoveryReqErr = knownInternalErrors[DISCOVERY_REQUEST_CODE]
+	ResponseErr     = knownInternalErrors[RESPONSE_CODE]
+	EmptyAddrMapErr = knownInternalErrors[EMPTY_ADDR_MAP_CODE]
+	AddDiscoveryErr = knownInternalErrors[ADD_DICSOVERY_CODE]
 )
 
 var (
-	DeserialiseTypeErr   = knownNetworkErrors[DESERIALISE_TYPE_CODE]
-	DeserialiseLengthErr = knownNetworkErrors[DESERIALISE_LENGTH_CODE]
+	DeserialiseTypeErr     = knownNetworkErrors[DESERIALISE_TYPE_CODE]
+	DeserialiseLengthErr   = knownNetworkErrors[DESERIALISE_LENGTH_CODE]
+	AddrMapErr             = knownNetworkErrors[ADDR_MAP_CODE]
+	GossipDeferredErr      = knownNetworkErrors[GOSSIP_DEFERRED_CODE]
+	NoRequestIDErr         = knownNetworkErrors[NO_REQUEST_ID_CODE]
+	EmptyAddrMapNetworkErr = knownNetworkErrors[EMPTY_ADDR_MAP_CODE]
 )

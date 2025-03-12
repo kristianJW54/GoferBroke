@@ -322,8 +322,6 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 
 	addrMap := make(map[string][]string)
 
-	log.Printf("known == %+s", known)
-
 	for _, n := range cm.participants {
 
 		name := n.name
@@ -611,21 +609,23 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 		log.Printf("deserialise KnownAddressNodes failed: %v", err)
 	}
 
-	//knownFake := make([]string, 2)
-	//node1 := "test-server-3-3@1741731349"
-	//node2 := "test-server-4-4@1741731389"
-	//
-	//knownFake[0] = node1
-	//knownFake[1] = node2
-
-	log.Printf("parts = %v", known)
-
 	cereal, err := c.discoveryResponse(known)
+
 	if err != nil {
-		log.Printf("discoveryResponse failed: %v", err)
+		// Need to check what the error is first
+		pay, err := prepareRequest(EmptyAddrMapNetworkErr.ToBytes(), 1, ERR_RESP, c.ph.reqID, uint16(0))
+		if err != nil {
+			log.Printf("prepareRequest failed: %v", err)
+		}
+
+		c.mu.Lock()
+		c.qProto(pay, true)
+		c.mu.Unlock()
+
 	}
 
-	pay, err := prepareRequest(cereal, 1, DISCOVERY_RES, uint16(0), c.ph.reqID)
+	// Echo back the reqID
+	pay, err := prepareRequest(cereal, 1, DISCOVERY_RES, c.ph.reqID, uint16(0))
 	if err != nil {
 		log.Printf("prepareRequest failed: %v", err)
 	}
@@ -654,7 +654,7 @@ func (c *gbClient) processDiscoveryRes(message []byte) {
 
 	select {
 	case rsp.ch <- msg:
-		//log.Printf("%s Info message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
+		//log.Printf("%s message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)

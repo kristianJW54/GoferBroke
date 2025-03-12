@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -254,8 +253,6 @@ func deserialiseKnownAddressNodes(data []byte) ([]string, error) {
 
 	sizeMeta := binary.BigEndian.Uint16(data[5:7])
 
-	log.Printf("size = %v", sizeMeta)
-
 	offset := 7
 
 	// Extract senders name
@@ -306,7 +303,7 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 	length += 1
 	length += len(s.ServerName)
 
-	totalParts := int(s.numNodeConnections)
+	totalParts := int(s.numNodeConnections) + 1 // to include ourselves
 
 	length += 2
 
@@ -666,6 +663,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 			d.keyValues[key] = &Delta{
 				valueType: vType,
+				key:       key,
 				version:   VersionTime.Unix(),
 				value:     value,
 			}

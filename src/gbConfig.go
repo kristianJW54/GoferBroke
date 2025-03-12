@@ -19,6 +19,7 @@ Internal will be local to the node - such as node name or address etc.
 const (
 	DEFAULT_MAX_DELTA_SIZE            = 1400 // TODO If config not set then we default to this
 	DEFAULT_MAX_DISCOVERY_SIZE        = 1024
+	DEFAULT_DISCOVERY_PERCENTAGE      = 50
 	DEFAULT_MAX_GSA                   = DEFAULT_MAX_DELTA_SIZE * 2
 	DEFAULT_MAX_DELTA_PER_PARTICIPANT = 5
 )
@@ -38,16 +39,17 @@ type Seeds struct {
 }
 
 type ClusterOptions struct {
-	maxGossipSize               uint16
-	maxDeltaSize                uint16
-	maxDiscoverySize            uint16
-	maxNumberOfNodes            int
-	defaultSubsetDigestNodes    int
-	maxSequenceIDPool           int
-	nodeSelectionPerGossipRound int
-	maxParticipantHeapSize      int
-	preferredAddrGroup          string
-	discoveryPercentage         int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
+	maxGossipSize                 uint16
+	maxDeltaSize                  uint16
+	maxDiscoverySize              uint16
+	discoveryPercentageProportion int
+	maxNumberOfNodes              int
+	defaultSubsetDigestNodes      int
+	maxSequenceIDPool             int
+	nodeSelectionPerGossipRound   int
+	maxParticipantHeapSize        int
+	preferredAddrGroup            string
+	discoveryPercentage           int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
 }
 
 type InternalOptions struct {
