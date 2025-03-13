@@ -1195,6 +1195,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
+	// for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	if s.discoveryPhase {
 		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
 		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
@@ -1209,7 +1210,9 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 				log.Printf("Discovery failed: %v", err)
 				// TODO Check the error to see if it's because of a nil map which we can discovery phase false on
 			}
+			return
 		}
+		return
 	}
 
 	for i := 0; i < int(ns); i++ {
