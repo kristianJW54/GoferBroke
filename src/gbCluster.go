@@ -771,7 +771,7 @@ func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHe
 			})
 		}
 
-		// If it is not in the peerDigest we can add other participants to the heap making sure that we don't add the sender + reach a limit
+		// TODO If it is not in the peerDigest we can add other participants to the heap making sure that we don't add the sender + reach a limit
 
 	}
 	// Initialise the heap here will order participants by most outdated and then by available deltas
