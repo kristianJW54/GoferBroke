@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -17,6 +18,8 @@ const (
 	INTERNAL_ERR_LEVEL
 	SYSTEM_ERR_LEVEL
 )
+
+var gbErrorPattern = regexp.MustCompile(`\[[A-Z]\] \d+: .*? -x`)
 
 type GBError struct {
 	Code     int
@@ -40,66 +43,56 @@ func (e *GBError) getErrLevelTag() string {
 
 // Implement `error` interface
 func (e *GBError) Error() string {
-	baseError := fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
-	if e.Err != nil {
-		return fmt.Sprintf("%s %v", baseError, e.Err) // Append wrapped error
+	switch e.ErrLevel {
+	case NETWORK_ERR_LEVEL:
+		return fmt.Sprintf("[%s] %d: %s -x\r\n", e.getErrLevelTag(), e.Code, e.ErrMsg)
+	case INTERNAL_ERR_LEVEL:
+		return fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
+	case SYSTEM_ERR_LEVEL:
+		return fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
 	}
-	return baseError
+	return fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
 }
 
-func WrapGBError(wrapperErr *GBError, err error) *GBError {
-	return &GBError{
-		Code:     wrapperErr.Code,
-		ErrLevel: wrapperErr.ErrLevel,
-		ErrMsg:   wrapperErr.ErrMsg,
-		Err:      err,
-	}
+func WrapGBError(wrapperErr error, err error) error {
+	return fmt.Errorf("%w %w", wrapperErr, err)
 }
 
-func UnwrapGBError(err error) *GBError {
-	var gbErrors *GBError
-
-	strErr := err.Error()
-	strings.TrimSpace(strErr)
-
-	parts := strings.Split(strErr, " -x")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		parsedErr, parseErr := ParseGBError(part)
-		if parseErr == nil {
-			gbErrors = parsedErr
-		}
-
-	}
-
-	return gbErrors
-}
-
-func UnwrapGBErrors(err error) []*GBError {
+func UnwrapGBErrors(errStr []string) []*GBError {
 	var gbErrors []*GBError
 
-	strErr := err.Error()
-	strings.TrimSpace(strErr)
+	for _, strErr := range errStr {
+		strings.TrimSpace(strErr)
 
-	parts := strings.Split(strErr, " -x")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
+		parts := strings.Split(strErr, " -x")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+
+			parsedErr, parseErr := ParseGBError(part)
+			if parseErr == nil {
+				gbErrors = append(gbErrors, parsedErr)
+			}
+
 		}
-
-		parsedErr, parseErr := ParseGBError(part)
-		if parseErr == nil {
-			gbErrors = append(gbErrors, parsedErr)
-		}
-
 	}
 
 	return gbErrors
+}
+
+func ExtractGBErrors(err error) []string {
+	if err == nil {
+		return nil
+	}
+
+	errStr := err.Error()
+	matches := gbErrorPattern.FindAllString(errStr, -1)
+
+	log.Printf("Extracted GBErrors: %v", matches)
+
+	return matches
 }
 
 func (e *GBError) ToError() error {
@@ -285,36 +278,6 @@ func ParseGBError(err string) (*GBError, error) {
 
 }
 
-func UnwrapError(err error) []*GBError {
-	if err == nil {
-		return nil
-	}
-
-	var gbErrors []*GBError
-
-	// Try unwrapping as GBError
-	var gbErr *GBError
-	if errors.As(err, &gbErr) {
-		log.Printf("Detected GBError: %+v\n", gbErr)
-		gbErrors = append(gbErrors, UnwrapGBErrors(gbErr)...)
-		//Continue unwrapping if there's a nested error
-		if gbErr.Err != nil {
-			unwrap := errors.Unwrap(gbErr.Err)
-			if unwrap != nil {
-				gbErrors = append(gbErrors, UnwrapError(unwrap)...)
-			}
-		}
-	}
-
-	//
-	if len(gbErrors) == 0 {
-		systemErr := WrapSystemError(err)
-		gbErrors = append(gbErrors, systemErr)
-	}
-
-	return gbErrors
-}
-
 type GBErrorHandlerFunc func(gbErr *GBError)
 
 func HandleError(err error, callback func(gbError []*GBError)) {
@@ -323,9 +286,11 @@ func HandleError(err error, callback func(gbError []*GBError)) {
 		return
 	}
 
-	gbErr := UnwrapError(err)
+	errStr := ExtractGBErrors(err)
 
-	callback(gbErr)
+	gbErrs := UnwrapGBErrors(errStr)
+
+	callback(gbErrs)
 
 }
 

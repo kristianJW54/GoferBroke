@@ -522,7 +522,6 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 
 	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
-		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
@@ -542,11 +541,6 @@ func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("%s --> node count %v", s.ServerName, addrNodes.addrCount)
-	for n, addr := range addrNodes.dv {
-		log.Printf("node ---> %s", n)
-		log.Printf("addr --> %+s", addr)
-	}
 
 	// Add to our map
 	for name, value := range addrNodes.dv {
@@ -558,7 +552,6 @@ func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 
 	// Do a check for proportion missing
 	current := int(s.numNodeConnections) + len(addrNodes.dv) + 1 // Plus ourselves
-	log.Printf("current node count: %v", current)
 
 	perc := percMakeup(current, int(addrNodes.addrCount))
 
@@ -584,10 +577,7 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
-	log.Printf("addrMap ===>> %+v", addrMap)
-
 	if len(addrMap) == 0 {
-		log.Println("im returning an error because addrmap is empty :):):):):):)")
 		return nil, EmptyAddrMapErr
 	}
 
@@ -1210,8 +1200,16 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		if ok {
 			err := s.conductDiscovery(s.serverContext, seed)
 			if err != nil {
-				log.Printf("Discovery failed: %v", err)
-				// TODO Check the error to see if it's because of a nil map which we can discovery phase false on
+				HandleError(err, func(gbError []*GBError) {
+
+					gbErr := gbError[2]
+					if errors.Is(gbErr, EmptyAddrMapNetworkErr) {
+						log.Printf("%s - exiting discovery phase", s.ServerName)
+						s.discoveryPhase = false
+					} else {
+						log.Printf("Discovery failed: %v", err)
+					}
+				})
 			}
 			return
 		}

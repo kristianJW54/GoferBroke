@@ -757,7 +757,7 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, 
 		log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
 	case err := <-rsp.err:
-		return nil, fmt.Errorf("%w, %w", ResponseErr, err)
+		return nil, WrapGBError(ResponseErr, err)
 	}
 }
 

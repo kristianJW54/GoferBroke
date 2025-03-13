@@ -12,9 +12,10 @@ func TestGBErrors(t *testing.T) {
 
 	err := fmt.Errorf("testing error string to unwrap - %w", gbErr)
 
-	unwrapped := UnwrapError(err)
+	errs := ExtractGBErrors(err)
 
-	log.Println(unwrapped[1])
+	gbErrs := UnwrapGBErrors(errs)
+	log.Println(gbErrs[1])
 
 }
 
@@ -30,7 +31,7 @@ func TestGBErrorSandwichWrap(t *testing.T) {
 
 	log.Println(err4)
 
-	errs := UnwrapError(err4)
+	errs := ExtractGBErrors(err4)
 
 	log.Println(errs[2])
 
