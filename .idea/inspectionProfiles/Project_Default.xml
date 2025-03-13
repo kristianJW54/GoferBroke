@@ -3,8 +3,6 @@
     <option name="myName" value="Project Default" />
     <inspection_tool class="GoDfaErrorMayBeNotNil" enabled="true" level="WARNING" enabled_by_default="true">
       <functions>
-        <function importPath="goferMQ/src" name="deserialiseDelta" />
-        <function importPath="goferMQ/src" name="deSerialiseDigest" />
       </functions>
     </inspection_tool>
   </profile>
