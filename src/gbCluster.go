@@ -584,7 +584,10 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
+	log.Printf("addrMap ===>> %+v", addrMap)
+
 	if len(addrMap) == 0 {
+		log.Println("im returning an error because addrmap is empty :):):):):):)")
 		return nil, EmptyAddrMapErr
 	}
 
