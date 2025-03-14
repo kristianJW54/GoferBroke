@@ -1,8 +1,10 @@
 package src
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -66,7 +68,6 @@ type discovery struct {
 //Digest for initial gossip - per connection/node - will be passed as []*clusterDigest
 
 type digest struct {
-	senderName string
 	nodeName   string
 	maxVersion int64
 }
@@ -678,6 +679,100 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 }
 
+func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
+
+	if delta[0] != byte(DELTA_TYPE) {
+		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x --> %w", delta[0], byte(DELTA_TYPE), DeserialiseTypeErr)
+	}
+
+	length := len(delta)
+	metaLength := binary.BigEndian.Uint32(delta[1:5])
+
+	if length != int(metaLength) {
+		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, DeserialiseLengthErr)
+	}
+
+	// Use header to allocate cluster map capacity
+	size := binary.BigEndian.Uint16(delta[5:7])
+
+	offset := 7
+
+	cDelta := &clusterDelta{
+		string(sender),
+		make(map[string]*tmpParticipant, size),
+	}
+
+	// Looping through each participant
+	for i := 0; i < int(size); i++ {
+
+		nameLen := int(delta[offset])
+
+		start := offset + 1
+		end := start + nameLen
+
+		name := string(delta[start:end])
+
+		offset += 1
+		offset += nameLen
+
+		// Need to get delta size - Uint16 - 2 bytes
+		deltaSize := binary.BigEndian.Uint16(delta[offset : offset+2])
+
+		cDelta.delta[name] = &tmpParticipant{
+			make(map[string]*Delta, deltaSize),
+		}
+
+		offset += 2
+
+		for j := 0; j < int(deltaSize); j++ {
+
+			keyLen := int(delta[offset])
+
+			start := offset + 1
+			end := start + keyLen
+
+			key := string(delta[start:end])
+
+			offset += 1
+			offset += keyLen
+
+			d := cDelta.delta[name]
+			d.keyValues[key] = &Delta{}
+
+			// Version
+			v := binary.BigEndian.Uint64(delta[offset : offset+8])
+			VersionTime := time.Unix(int64(v), 0)
+
+			offset += 8
+
+			// Type
+			vType := delta[offset]
+			offset += 1
+
+			// Length
+			vLength := int(binary.BigEndian.Uint32(delta[offset : offset+4]))
+			offset += 4
+
+			// Value
+			value := delta[offset : offset+vLength]
+
+			d.keyValues[key] = &Delta{
+				valueType: vType,
+				key:       key,
+				version:   VersionTime.Unix(),
+				value:     value,
+			}
+
+			offset += vLength
+
+		}
+
+	}
+
+	return cDelta, nil
+
+}
+
 func (s *GBServer) serialiseClusterDigest() ([]byte, int, error) {
 
 	s.clusterMapLock.RLock()
@@ -801,7 +896,6 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err
 
 	length := len(digestRaw)
 	lengthMeta := binary.BigEndian.Uint32(digestRaw[1:5])
-	//log.Println("lengthMeta = ", lengthMeta)
 	if length != int(lengthMeta) {
 		return "", nil, fmt.Errorf("length does not match")
 	}
@@ -821,9 +915,7 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err
 	offset += senderLen
 
 	for i := 0; i < int(sizeMeta); i++ {
-		fd := &digest{
-			senderName: string(sender),
-		}
+		fd := &digest{}
 
 		nameLen := int(digestRaw[offset])
 
@@ -852,6 +944,115 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err
 	return string(sender), &digestMap, nil
 }
 
-//=======================================================
-// Serialisation for Deltas/Cluster Map
-//=======================================================
+func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaSize int) ([]byte, error) {
+
+	//CLRF Check
+	if bytes.HasSuffix(digest, []byte(CLRF)) {
+		digest = bytes.Trim(digest, CLRF)
+		binary.BigEndian.PutUint32(digest[1:5], uint32(len(digest)))
+	}
+
+	length := deltaSize + len(digest)
+
+	// Type = Data - 1 byte Uint8
+	// Length of payload - 4 byte uint32
+	// Size of Delta - 2 byte uint16
+	// Total metadata for digest byte array = --> 7 <--
+
+	log.Printf("delta in cereal ----------> %v", delta)
+
+	// Add to the length the header metadata for delta - not needed for digest as we've already serialised that
+	length += 7
+	// Now add the CLRF at the end of it all
+	length += 2
+
+	gsaBuff := make([]byte, length)
+
+	offset := 0
+
+	copy(gsaBuff, digest)
+	offset += len(digest)
+
+	gsaBuff[offset] = DELTA_TYPE
+	offset++
+	// TODO We are manually adding the header metadata here but will need to be careful we don't add this when building the delta
+	binary.BigEndian.PutUint32(gsaBuff[offset:], uint32(deltaSize+9))
+	offset += 4
+	binary.BigEndian.PutUint16(gsaBuff[offset:], uint16(len(delta)))
+	offset += 2
+
+	for name, value := range delta {
+		nameLen := len(name)
+		gsaBuff[offset] = uint8(nameLen)
+		offset++
+
+		copy(gsaBuff[offset:], name)
+		offset += nameLen
+
+		// Write the number of key-value pairs for the participant
+		binary.BigEndian.PutUint16(gsaBuff[offset:], uint16(len(value)))
+		offset += 2
+
+		for _, v := range value {
+
+			gsaBuff[offset] = uint8(len(v.key))
+			offset++
+			copy(gsaBuff[offset:], v.key)
+			offset += len(v.key)
+
+			// Write the value type (1 byte, uint8)
+			gsaBuff[offset] = uint8(v.valueType)
+			offset++
+
+			// Write version (8 bytes, uint64)
+			binary.BigEndian.PutUint64(gsaBuff[offset:], uint64(v.version))
+			offset += 8
+
+			// Write the value
+			binary.BigEndian.PutUint32(gsaBuff[offset:], uint32(len(v.value)))
+			offset += 4
+			copy(gsaBuff[offset:], v.value)
+			offset += len(v.value)
+
+		}
+
+	}
+
+	copy(gsaBuff[offset:], CLRF)
+	offset += len(CLRF)
+
+	return gsaBuff, nil
+
+}
+
+func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
+
+	if gsa[0] != DIGEST_TYPE {
+		return "", nil, nil, DeserialiseTypeErr
+	}
+
+	digestLength := binary.BigEndian.Uint32(gsa[1:5])
+
+	digestBuf := gsa[:digestLength]
+
+	senderName, digest, err := deSerialiseDigest(digestBuf)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	deltaBuf := gsa[digestLength:]
+
+	log.Printf("delta = %v", deltaBuf)
+
+	if deltaBuf[0] != DELTA_TYPE {
+		return "", nil, nil, DeserialiseTypeErr
+	}
+
+	cd, err := deserialiseDeltaGSA(deltaBuf, senderName)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	return senderName, digest, cd, nil
+
+}

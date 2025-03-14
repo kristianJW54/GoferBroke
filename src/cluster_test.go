@@ -17,7 +17,6 @@ func TestParticipantHeap(t *testing.T) {
 	gbs := GenerateDefaultTestServer(keyValues1, 5)
 
 	participant := gbs.clusterMap.participants[gbs.name]
-	log.Printf("name = %s", gbs.name)
 
 	ph := make(participantHeap, 0, 5)
 
@@ -109,11 +108,21 @@ func TestDeltaHeap(t *testing.T) {
 
 func TestUpdateHeartBeat(t *testing.T) {
 
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: map[string]Seeds{
+			"seed1": {},
+		},
+		Internal: &InternalOptions{},
+		Cluster:  &ClusterOptions{},
+	}
+
 	mockServer := &GBServer{
 		ServerName: "mock-server-1",
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
 		},
+		gbConfig: config,
 	}
 
 	keyValues := map[string]*Delta{
@@ -166,11 +175,21 @@ func TestClusterMapLocks(t *testing.T) {
 	// Need tasks and workers to assign the tasks to
 	// Tasks should be: Add participant, read cluster map, update cluster map, update self info
 
+	// Initialize config with the seed server address
+	config := &GbConfig{
+		SeedServers: map[string]Seeds{
+			"seed1": {},
+		},
+		Internal: &InternalOptions{},
+		Cluster:  &ClusterOptions{},
+	}
+
 	mockServer := &GBServer{
 		ServerName: "mock-server-1",
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
 		},
+		gbConfig: config,
 	}
 
 	keyValues := map[string]*Delta{
@@ -217,7 +236,6 @@ func TestClusterMapLocks(t *testing.T) {
 		if err != nil {
 			t.Errorf("update heartbeat failed: %v", err)
 		}
-		log.Printf("[Task] Updated Heartbeat in self info")
 	}
 
 	addParticipant := func() {
@@ -228,7 +246,6 @@ func TestClusterMapLocks(t *testing.T) {
 		if err != nil {
 			t.Errorf("add participant failed: %v", err)
 		}
-		log.Printf("[Task] Added participant")
 	}
 
 	for i := 0; i < numWorkers; i++ {

@@ -185,6 +185,8 @@ func serverSetup() *GBServer {
 				SeedPort: port,
 			},
 		},
+		Internal: &InternalOptions{},
+		Cluster:  &ClusterOptions{},
 	}
 
 	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)

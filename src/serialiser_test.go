@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"net"
 	"testing"
-	"time"
 )
 
 func TestDiscoveryRequestSerialiser(t *testing.T) {
@@ -604,63 +602,64 @@ func TestMySerialization(t *testing.T) {
 	}
 }
 
-func TestSerialiseDeltaLiveServer(t *testing.T) {
+func TestGSASerialisation(t *testing.T) {
 
-	lc := net.ListenConfig{}
+	gbs := GenerateDefaultTestServer(keyValues1, 5)
 
-	ip := "127.0.0.1" // Use the full IP address
-	port := "8081"
-
-	// Initialize config with the seed server address
-	config := &GbConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
-				SeedIP:   ip,
-				SeedPort: port,
-			},
-		},
-	}
-
-	//log.Println(config)
-
-	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-
-	selfInfo := gbs.getSelfInfo()
-
-	go gbs.StartServer()
-	time.Sleep(1 * time.Second)
-	log.Printf("p name = %v | values %v", selfInfo.name, selfInfo.keyValues[_ADDRESS_])
-
-	// Serialise the testClusterDelta with the participant index and value index
-	gbs.clusterMapLock.RLock()
-	cereal, err := gbs.serialiseClusterDelta()
+	digest, _, err := gbs.generateDigest()
 	if err != nil {
-		t.Fatalf("Failed to serialise cluster delta: %v", err)
-	}
-	gbs.clusterMapLock.RUnlock()
-
-	log.Println("cereal ==== ", cereal)
-
-	// De-serialise the serialized data back into a new clusterDelta
-	cd, err := deserialiseDelta(cereal)
-	if err != nil {
-		t.Fatalf("Failed to deserialise cluster delta: %v", err)
+		t.Fatalf("Failed to generate digest: %v", err)
 	}
 
-	// Print the deserialized structure for verification
-	t.Log("Deserialized Cluster Delta:")
-	for key, value := range cd.delta {
-		t.Logf("name = %s", key)
-		for k, value := range value.keyValues {
-			t.Logf("key-%s(%d)(%s)", k, value.valueType, value.value)
+	sizeOfDelta := 0
+	selectedDeltas := make(map[string][]*Delta)
+
+	for _, value := range gbs.clusterMap.participants {
+
+		sizeOfDelta += 1 + len(value.name) + 2
+
+		deltaList := make([]*Delta, 0)
+
+		// Only want to add 2 deltas each participant
+		i := 0
+		for k, v := range value.keyValues {
+
+			if i == 2 {
+				continue
+			}
+
+			size := 14 + len(k) + len(v.value)
+			sizeOfDelta += size
+
+			deltaList = append(deltaList, v)
+
+			i++
+
+		}
+
+		if len(deltaList) > 0 {
+			selectedDeltas[value.name] = deltaList
 		}
 	}
 
-}
+	gsa, err := gbs.serialiseGSA(digest, selectedDeltas, sizeOfDelta)
+	if err != nil {
+		t.Fatalf("Failed to serialise GSA: %v", err)
+	}
 
-func TestSerialiseQueuesPopulating(t *testing.T) {
+	name, fd, cd, err := deserialiseGSA(gsa)
+	if err != nil {
+		t.Fatalf("Failed to deserialise GSA: %v", err)
+	}
 
-	//--
+	log.Printf("name = %s", name)
+	for _, cdValue := range *fd {
+		log.Printf("digest check = %+v", cdValue)
+	}
+
+	for _, fdValue := range cd.delta {
+		log.Printf("delta check = %+v", fdValue)
+	}
 
 }
 

@@ -3,7 +3,6 @@ package src
 import (
 	"container/heap"
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -737,12 +736,10 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 // GOSS_SYN_ACK Prep
 //=======================================================
 
-func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHeap, err error) {
+func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (ph participantHeap, err error) {
 
 	// Here we are not looking at participants we are missing - that will be sent to us when we send our digest
 	// We are focusing on what we have that the other node does not based on their digest we are receiving
-
-	d := digest
 
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
@@ -756,12 +753,15 @@ func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHe
 
 		available := 0
 		// First check if we have a higher max version than the digest received + if we have a participant they do not
-		if peerDigest, exists := (*d)[name]; exists {
+		if peerDigest, exists := (*digest)[name]; exists {
 			// If the participant is included in the digest then we to check the versions
 			if participant.maxVersion > peerDigest.maxVersion {
 				available += len(participant.keyValues)
 			}
+		} else if name != sender {
+			available += len(participant.keyValues)
 		}
+
 		if available > 0 {
 			// We add the participant to the participant heap
 			heap.Push(&partQueue, &participantQueue{
@@ -771,8 +771,6 @@ func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHe
 			})
 		}
 
-		// TODO If it is not in the peerDigest we can add other participants to the heap making sure that we don't add the sender + reach a limit
-
 	}
 	// Initialise the heap here will order participants by most outdated and then by available deltas
 	heap.Init(&partQueue)
@@ -781,7 +779,7 @@ func (s *GBServer) generateParticipantHeap(digest *fullDigest) (ph participantHe
 
 }
 
-func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta map[string][]*Delta, err error) {
+func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta map[string][]*Delta, size int, err error) {
 
 	// Need to go through each participant in the heap - add each delta to a heap order it - pop each delta
 	// and get it's size + node + metadata if within bounds, we can either serialise here OR
@@ -845,6 +843,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			sizeOfDelta += size
 
 			deltaList = append(selectedDeltas[participant.name], delta)
+			log.Printf("appending delta %s for %s", delta.value, participant.name)
 
 		}
 
@@ -854,16 +853,16 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 	}
 
-	return selectedDeltas, nil
+	return selectedDeltas, sizeOfDelta, nil
 }
 
 // TODO So during this process I want to log or track the amount of times we go over MTU - so log as warning but also take the count along with the trace of where and when
 
 // TODO Change output to byte as we will be serialising the delta after comparing and populating the queues
-func (s *GBServer) prepareGossSynAck(digest *fullDigest) ([]string, error) {
+func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte, error) {
 
 	// Prepare our own digest first as we need to know if digest reaches its cap, so we know how much space we have left for the Delta
-	_, sizeOfDigest, err := s.generateDigest()
+	d, sizeOfDigest, err := s.generateDigest()
 	if err != nil {
 		return nil, fmt.Errorf("compareAndBuildDelta - generate digest error: %w", err)
 	}
@@ -872,39 +871,67 @@ func (s *GBServer) prepareGossSynAck(digest *fullDigest) ([]string, error) {
 	log.Printf("remaining size: %d", remaining)
 
 	// Compare here - Will need to take a remaining size left over from generating our digest
-	partQueue, err := s.generateParticipantHeap(digest)
+	partQueue, err := s.generateParticipantHeap(sender, digest)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO Need to include the server - senders name and the name + versions of each to compare with what is in the queue
+	// TODO Need to print the server - senders name and the name + versions of each to compare with what is in the queue
 	if len(partQueue) > 0 {
+		log.Printf("length of q ====================== %v", len(partQueue))
 		firstEntry := partQueue[0] // Peek at the first entry without removing it
 		log.Printf("%s ==== First participant in queue: %s, availableDeltas: %d", s.ServerName, firstEntry.name, firstEntry.availableDeltas)
 	} else {
 		log.Printf("Participant queue is empty")
 	}
-	// Populate delta queues
-	selectedDeltas, err := s.buildDelta(&partQueue, remaining)
+
+	// Populate delta queues and build selected deltas
+	selectedDeltas, deltaSize, err := s.buildDelta(&partQueue, remaining)
 	if err != nil {
 		return nil, err
 	}
 
-	for p, sd := range selectedDeltas {
-		log.Printf("%s - participant --> %s", s.ServerName, p)
-		log.Printf("deltas --> %+v", sd)
-	}
-
 	// Serialise
+	cereal, err := s.serialiseGSA(d, selectedDeltas, deltaSize)
 
 	// Return
 
-	return []string{"nothing yet"}, nil
+	return cereal, nil
 }
 
-func (s *GBServer) sendGossSynAck(digest *fullDigest) error {
+func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	// serialise and send?
+	gsa, err := c.srv.prepareGossSynAck(sender, digest)
+	if err != nil {
+		return err
+	}
+
+	respID, err := c.srv.acquireReqID()
+	if err != nil {
+		return err
+	}
+
+	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, c.ph.reqID, respID)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(c.srv.serverContext, 2*time.Second)
+
+	resp := c.qProtoWithResponse(respID, pay, true, true)
+
+	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
+
+		defer cancel()
+		if err != nil {
+			log.Printf("error in sending goss_syn_ack: %v", err)
+		}
+
+		log.Printf("resp == %s", string(bytes))
+		return
+
+	})
 
 	return nil
 }
@@ -1192,32 +1219,32 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
 	// for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
-	if s.discoveryPhase {
-		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
-		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
-		if !ok {
-			log.Printf("No connection to discover addresses in the map")
-		}
-
-		seed, ok := conn.(*gbClient)
-		if ok {
-			err := s.conductDiscovery(s.serverContext, seed)
-			if err != nil {
-				HandleError(err, func(gbError []*GBError) {
-
-					gbErr := gbError[2]
-					if errors.Is(gbErr, EmptyAddrMapNetworkErr) {
-						log.Printf("%s - exiting discovery phase", s.ServerName)
-						s.discoveryPhase = false
-					} else {
-						log.Printf("Discovery failed: %v", err)
-					}
-				})
-			}
-			return
-		}
-		return
-	}
+	//if s.discoveryPhase {
+	//	log.Printf("------------------ I am discovering addresses in the map :) ------------------")
+	//	conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
+	//	if !ok {
+	//		log.Printf("No connection to discover addresses in the map")
+	//	}
+	//
+	//	seed, ok := conn.(*gbClient)
+	//	if ok {
+	//		err := s.conductDiscovery(s.serverContext, seed)
+	//		if err != nil {
+	//			HandleError(err, func(gbError []*GBError) {
+	//
+	//				gbErr := gbError[2]
+	//				if errors.Is(gbErr, EmptyAddrMapNetworkErr) {
+	//					log.Printf("%s - exiting discovery phase", s.ServerName)
+	//					s.discoveryPhase = false
+	//				} else {
+	//					log.Printf("Discovery failed: %v", err)
+	//				}
+	//			})
+	//		}
+	//		return
+	//	}
+	//	return
+	//}
 
 	for i := 0; i < int(ns); i++ {
 
@@ -1272,7 +1299,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- Dial Check -------------//
 
 	//s.serverLock.Lock()
-	conn, exists, err := s.getNodeConnFromStore(node)
+	_, exists, err := s.getNodeConnFromStore(node)
 	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 	//s.serverLock.Unlock()
 	// TODO Fix nil pointer deference here
@@ -1297,22 +1324,48 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	//------------- GOSS_SYN Stage 1 -------------//
 
-	stage = 1
-	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
-
-	// Stage 1: Send Digest
-	resp, err := s.sendDigest(ctx, conn)
+	d, _, err := s.generateDigest()
+	name, fd, err := deSerialiseDigest(d)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
-		} else {
-			log.Printf("Error in gossip round (stage %d): %v", stage, err)
-			return
-		}
-		return
+		log.Printf("error in gossip with node %s ----> %v", node, err)
 	}
 
-	log.Printf("%s - Response received from node %s: %s", s.ServerName, node, resp)
+	log.Printf("digest from node %s ----> %v", name)
+	for _, dig := range *fd {
+		log.Printf("(%s)-(%v)", dig.nodeName, dig.maxVersion)
+	}
+
+	// TODO The max version seems to have caused a problem + discovery is also a problem + we dialled for some reason
+	// TODO Need to clean up and make more clear the goss stages and req-resp cycle
+
+	//stage = 1
+	//log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
+	//
+	//// Stage 1: Send Digest
+	//resp, err := s.sendDigest(ctx, conn)
+	//if err != nil {
+	//	if errors.Is(err, context.Canceled) {
+	//		log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+	//	} else {
+	//		log.Printf("Error in gossip round (stage %d): %v", stage, err)
+	//		return
+	//	}
+	//	return
+	//}
+	//
+	//sender, fd, cd, err := deserialiseGSA(resp)
+	//if err != nil {
+	//	log.Printf("deserialise GSA failed: %v", err)
+	//}
+	//
+	//log.Printf("name = %s", sender)
+	//for _, cdValue := range *fd {
+	//	log.Printf("digest check = %+v", cdValue)
+	//}
+	//
+	//for _, fdValue := range cd.delta {
+	//	log.Printf("delta check = %+v", fdValue)
+	//}
 
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 
@@ -1321,12 +1374,14 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- Handle Completion -------------
 
 	err = s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
+		log.Printf("updating heartbeat ============================================================================")
 		err := updateHeartBeat(participant, timeOfUpdate)
 		if err != nil {
 			log.Printf("Error in gossip round (stage %d): %v", stage, err)
 		}
 		return nil
 	})
+
 	if err != nil {
 		log.Printf("Error in gossip round (stage %d): %v", stage, err)
 	}

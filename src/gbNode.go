@@ -795,6 +795,45 @@ func (c *gbClient) processGossAck(message []byte) {
 
 func (c *gbClient) processGossSynAck(message []byte) {
 
+	rsp, err := c.getResponseChannel(c.ph.reqID)
+	if err != nil {
+		log.Printf("getResponseChannel failed: %v", err)
+	}
+
+	if rsp == nil {
+		return
+	}
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
+	select {
+	case rsp.ch <- msg:
+		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
+		if c.ph.respID != 0 {
+			// TODO Refactor into simple sendOK() method
+			log.Printf("%s --> we have a responder to respond to for GSA -- %v", c.srv.ServerName, c.ph.respID)
+			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1)
+			packet := &nodePacket{
+				header,
+				OKResponder,
+			}
+
+			pay, gbErr := packet.serialize()
+			if gbErr != nil {
+				log.Printf("error serialising packet - %v", gbErr)
+			}
+
+			c.mu.Lock()
+			c.qProto(pay, true)
+			c.mu.Unlock()
+		}
+		return
+	default:
+		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		return
+	}
+
 }
 
 func (c *gbClient) processGossSyn(message []byte) {
@@ -850,26 +889,26 @@ func (c *gbClient) processGossSyn(message []byte) {
 	// TODO ONLY TURN ON GSA WHEN READY -- WILL CAUSE GOSSIP TO FAIL
 
 	srv := c.srv
-	//
-	_, err = srv.prepareGossSynAck(digest)
+
+	err = c.sendGossSynAck(srv.ServerName, digest)
 	if err != nil {
-		log.Printf("prepareGossSynAck failed: %v", err)
+		log.Printf("sendGossSynAck failed: %v", err)
 	}
+
+	//header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
+	//packet := &nodePacket{
+	//	header,
+	//	OKRequester,
+	//}
 	//
-	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
-	packet := &nodePacket{
-		header,
-		OKRequester,
-	}
-
-	pay, gbErr := packet.serialize()
-	if gbErr != nil {
-		log.Printf("error serialising packet - %v", gbErr)
-	}
-
-	c.mu.Lock()
-	c.qProto(pay, true)
-	c.mu.Unlock()
+	//pay, gbErr := packet.serialize()
+	//if gbErr != nil {
+	//	log.Printf("error serialising packet - %v", gbErr)
+	//}
+	//
+	//c.mu.Lock()
+	//c.qProto(pay, true)
+	//c.mu.Unlock()
 
 	return
 

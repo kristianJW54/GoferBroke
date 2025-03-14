@@ -486,8 +486,9 @@ func initSelfParticipant(name, addr string) *Participant {
 	t := time.Now().Unix()
 
 	p := &Participant{
-		name:      name,
-		keyValues: make(map[string]*Delta),
+		name:       name,
+		keyValues:  make(map[string]*Delta),
+		maxVersion: t,
 	}
 
 	// TODO Address needs more attention with configuration, different types of addresses and address key groups
