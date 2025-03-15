@@ -3,6 +3,7 @@ package src
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -792,6 +793,8 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 	sizeOfDelta := 0
 
+	log.Printf("HERE ========================================")
+
 	// TODO Would prefer to pre-allocate if there is a way -- need to think about this here
 	selectedDeltas := make(map[string][]*Delta)
 
@@ -842,8 +845,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			sizeOfDelta += size
 
-			deltaList = append(selectedDeltas[participant.name], delta)
-			log.Printf("appending delta %s for %s", delta.value, participant.name)
+			deltaList = append(deltaList, delta)
 
 		}
 
@@ -852,6 +854,15 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		}
 
 	}
+
+	for n, s := range selectedDeltas {
+		log.Printf("selected name = %s", n)
+		for _, v := range s {
+			log.Printf("delta = %+v", v)
+		}
+	}
+
+	log.Printf("remaining = %v", remaining-sizeOfDelta)
 
 	return selectedDeltas, sizeOfDelta, nil
 }
@@ -883,6 +894,8 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 		log.Printf("%s ==== First participant in queue: %s, availableDeltas: %d", s.ServerName, firstEntry.name, firstEntry.availableDeltas)
 	} else {
 		log.Printf("Participant queue is empty")
+		// TODO If participant queue is empty we need to move to return an error so we can signal a change in strategy
+		return nil, EmptyParticipantHeapErr
 	}
 
 	// Populate delta queues and build selected deltas
@@ -904,6 +917,10 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 	// serialise and send?
 	gsa, err := c.srv.prepareGossSynAck(sender, digest)
 	if err != nil {
+		// Check if it's because of an empty participant heap, so we can switch strategy
+		if errors.Is(err, EmptyParticipantHeapErr) {
+			log.Printf("YES WE NEED TO SWITCH")
+		}
 		return err
 	}
 
@@ -1219,32 +1236,32 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
 	// for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
-	//if s.discoveryPhase {
-	//	log.Printf("------------------ I am discovering addresses in the map :) ------------------")
-	//	conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
-	//	if !ok {
-	//		log.Printf("No connection to discover addresses in the map")
-	//	}
-	//
-	//	seed, ok := conn.(*gbClient)
-	//	if ok {
-	//		err := s.conductDiscovery(s.serverContext, seed)
-	//		if err != nil {
-	//			HandleError(err, func(gbError []*GBError) {
-	//
-	//				gbErr := gbError[2]
-	//				if errors.Is(gbErr, EmptyAddrMapNetworkErr) {
-	//					log.Printf("%s - exiting discovery phase", s.ServerName)
-	//					s.discoveryPhase = false
-	//				} else {
-	//					log.Printf("Discovery failed: %v", err)
-	//				}
-	//			})
-	//		}
-	//		return
-	//	}
-	//	return
-	//}
+	if s.discoveryPhase {
+		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
+		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
+		if !ok {
+			log.Printf("No connection to discover addresses in the map")
+		}
+
+		seed, ok := conn.(*gbClient)
+		if ok {
+			err := s.conductDiscovery(s.serverContext, seed)
+			if err != nil {
+				HandleError(err, func(gbError []*GBError) {
+
+					gbErr := gbError[2]
+					if errors.Is(gbErr, EmptyAddrMapNetworkErr) {
+						log.Printf("%s - exiting discovery phase", s.ServerName)
+						s.discoveryPhase = false
+					} else {
+						log.Printf("Discovery failed: %v", err)
+					}
+				})
+			}
+			return
+		}
+		return
+	}
 
 	for i := 0; i < int(ns); i++ {
 
@@ -1299,7 +1316,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- Dial Check -------------//
 
 	//s.serverLock.Lock()
-	_, exists, err := s.getNodeConnFromStore(node)
+	conn, exists, err := s.getNodeConnFromStore(node)
 	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 	//s.serverLock.Unlock()
 	// TODO Fix nil pointer deference here
@@ -1324,34 +1341,24 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	//------------- GOSS_SYN Stage 1 -------------//
 
-	d, _, err := s.generateDigest()
-	name, fd, err := deSerialiseDigest(d)
-	if err != nil {
-		log.Printf("error in gossip with node %s ----> %v", node, err)
-	}
-
-	log.Printf("digest from node %s ----> %v", name)
-	for _, dig := range *fd {
-		log.Printf("(%s)-(%v)", dig.nodeName, dig.maxVersion)
-	}
-
 	// TODO The max version seems to have caused a problem + discovery is also a problem + we dialled for some reason
 	// TODO Need to clean up and make more clear the goss stages and req-resp cycle
 
-	//stage = 1
-	//log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
-	//
-	//// Stage 1: Send Digest
-	//resp, err := s.sendDigest(ctx, conn)
-	//if err != nil {
-	//	if errors.Is(err, context.Canceled) {
-	//		log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
-	//	} else {
-	//		log.Printf("Error in gossip round (stage %d): %v", stage, err)
-	//		return
-	//	}
-	//	return
-	//}
+	stage = 1
+	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
+
+	// Stage 1: Send Digest
+	_, err = s.sendDigest(ctx, conn)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+		} else {
+			log.Printf("Error in gossip round (stage %d): %v", stage, err)
+			return
+		}
+		return
+	}
+
 	//
 	//sender, fd, cd, err := deserialiseGSA(resp)
 	//if err != nil {

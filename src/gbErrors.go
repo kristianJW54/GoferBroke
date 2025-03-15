@@ -316,16 +316,17 @@ const (
 // Internal Error codes
 
 const (
-	PACKET_CEREAL_CODE     = 51
-	KNOWN_ADDR_CODE        = 52
-	INVALID_ERROR_FORMAT   = 53
-	INVALID_ERROR_CODE     = 54
-	NO_REQUEST_ID_CODE     = 55
-	DISCOVERY_REQUEST_CODE = 56
-	RESPONSE_CODE          = 57
-	ADDR_MAP_CODE          = 58
-	EMPTY_ADDR_MAP_CODE    = 59
-	ADD_DICSOVERY_CODE     = 60
+	PACKET_CEREAL_CODE          = 51
+	KNOWN_ADDR_CODE             = 52
+	INVALID_ERROR_FORMAT        = 53
+	INVALID_ERROR_CODE          = 54
+	NO_REQUEST_ID_CODE          = 55
+	DISCOVERY_REQUEST_CODE      = 56
+	RESPONSE_CODE               = 57
+	ADDR_MAP_CODE               = 58
+	EMPTY_ADDR_MAP_CODE         = 59
+	ADD_DICSOVERY_CODE          = 60
+	EMPTY_PARTICIPANT_HEAP_CODE = 61
 )
 
 var knownNetworkErrors = map[int]*GBError{
@@ -339,23 +340,25 @@ var knownNetworkErrors = map[int]*GBError{
 }
 
 var knownInternalErrors = map[int]*GBError{
-	PACKET_CEREAL_CODE:     &GBError{Code: PACKET_CEREAL_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "packet serialisation error"},
-	KNOWN_ADDR_CODE:        &GBError{Code: KNOWN_ADDR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no known addresses in internal cluster map"},
-	INVALID_ERROR_FORMAT:   &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid format"},
-	INVALID_ERROR_CODE:     &GBError{Code: INVALID_ERROR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid error code"},
-	NO_REQUEST_ID_CODE:     &GBError{Code: NO_REQUEST_ID_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no request id found"},
-	DISCOVERY_REQUEST_CODE: &GBError{Code: DISCOVERY_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "discovery request error"},
-	RESPONSE_CODE:          &GBError{Code: RESPONSE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "response channel error"},
-	ADDR_MAP_CODE:          &GBError{Code: ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map build error"},
-	EMPTY_ADDR_MAP_CODE:    &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map is empty"},
-	ADD_DICSOVERY_CODE:     &GBError{Code: ADD_DICSOVERY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "add discovery failed"},
+	PACKET_CEREAL_CODE:          &GBError{Code: PACKET_CEREAL_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "packet serialisation error"},
+	KNOWN_ADDR_CODE:             &GBError{Code: KNOWN_ADDR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no known addresses in internal cluster map"},
+	INVALID_ERROR_FORMAT:        &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid format"},
+	INVALID_ERROR_CODE:          &GBError{Code: INVALID_ERROR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid error code"},
+	NO_REQUEST_ID_CODE:          &GBError{Code: NO_REQUEST_ID_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no request id found"},
+	DISCOVERY_REQUEST_CODE:      &GBError{Code: DISCOVERY_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "discovery request error"},
+	RESPONSE_CODE:               &GBError{Code: RESPONSE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "response channel error"},
+	ADDR_MAP_CODE:               &GBError{Code: ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map build error"},
+	EMPTY_ADDR_MAP_CODE:         &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map is empty"},
+	ADD_DICSOVERY_CODE:          &GBError{Code: ADD_DICSOVERY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "add discovery failed"},
+	EMPTY_PARTICIPANT_HEAP_CODE: &GBError{Code: EMPTY_PARTICIPANT_HEAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "empty participant heap"},
 }
 
 var (
-	DiscoveryReqErr = knownInternalErrors[DISCOVERY_REQUEST_CODE]
-	ResponseErr     = knownInternalErrors[RESPONSE_CODE]
-	EmptyAddrMapErr = knownInternalErrors[EMPTY_ADDR_MAP_CODE]
-	AddDiscoveryErr = knownInternalErrors[ADD_DICSOVERY_CODE]
+	DiscoveryReqErr         = knownInternalErrors[DISCOVERY_REQUEST_CODE]
+	ResponseErr             = knownInternalErrors[RESPONSE_CODE]
+	EmptyAddrMapErr         = knownInternalErrors[EMPTY_ADDR_MAP_CODE]
+	AddDiscoveryErr         = knownInternalErrors[ADD_DICSOVERY_CODE]
+	EmptyParticipantHeapErr = knownInternalErrors[EMPTY_PARTICIPANT_HEAP_CODE]
 )
 
 var (

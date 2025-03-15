@@ -87,11 +87,19 @@ func int64ToBytes(n int64) []byte {
 }
 
 var keyValues1 = map[string]*Delta{
-	"key6":  {key: "Key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-	"key7":  {key: "Key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-	"key8":  {key: "Key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-	"key9":  {key: "Key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-	"key10": {key: "Key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+	"key6":  {key: "key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"key7":  {key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+	"key8":  {key: "key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+	"key9":  {key: "key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+	"key10": {key: "key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+}
+
+var keyValues1LowerVersion = map[string]*Delta{
+	"key6":  {key: "key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"key7":  {key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+	"key8":  {key: "key8", valueType: INTERNAL_D, version: 1640995201, value: []byte("Test serialization with repeated values.")},
+	"key9":  {key: "key9", valueType: INTERNAL_D, version: 1640995202, value: []byte("😃")},
+	"key10": {key: "key10", valueType: INTERNAL_D, version: 1640995207, value: []byte("Another string")},
 }
 
 var addressTestingKVs = map[string]*Delta{
@@ -123,12 +131,22 @@ func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBSer
 		ServerName: "main-server",
 	}
 
+	maxV := int64(0)
+
+	for _, value := range kv {
+		if value.version > maxV {
+			maxV = value.version
+		}
+	}
+
+	log.Printf("maxV = %v\n", maxV)
+
 	gbs.numNodeConnections = int64(numParticipants)
 
 	mainPart := &Participant{
 		name:       "main-server",
 		keyValues:  make(map[string]*Delta),
-		maxVersion: 0,
+		maxVersion: maxV,
 	}
 
 	gbs.clusterMap.participantArray[0] = mainPart.name
@@ -146,7 +164,7 @@ func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBSer
 		participant := &Participant{
 			name:       participantName,
 			keyValues:  make(map[string]*Delta),
-			maxVersion: 0,
+			maxVersion: maxV,
 		}
 
 		gbs.clusterMap.participantArray[i] = gbs.name

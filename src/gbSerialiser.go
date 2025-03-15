@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -959,8 +958,6 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 	// Size of Delta - 2 byte uint16
 	// Total metadata for digest byte array = --> 7 <--
 
-	log.Printf("delta in cereal ----------> %v", delta)
-
 	// Add to the length the header metadata for delta - not needed for digest as we've already serialised that
 	length += 7
 	// Now add the CLRF at the end of it all
@@ -1041,8 +1038,6 @@ func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
 	}
 
 	deltaBuf := gsa[digestLength:]
-
-	log.Printf("delta = %v", deltaBuf)
 
 	if deltaBuf[0] != DELTA_TYPE {
 		return "", nil, nil, DeserialiseTypeErr

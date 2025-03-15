@@ -841,7 +841,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
 	// if we need to defer gossip round or continue
 
-	sender, digest, err := deSerialiseDigest(message)
+	sender, _, err := deSerialiseDigest(message)
 	if err != nil {
 		log.Printf("error serialising digest - %v", err)
 	}
@@ -888,27 +888,27 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	// TODO ONLY TURN ON GSA WHEN READY -- WILL CAUSE GOSSIP TO FAIL
 
-	srv := c.srv
+	//srv := c.srv
 
-	err = c.sendGossSynAck(srv.ServerName, digest)
-	if err != nil {
-		log.Printf("sendGossSynAck failed: %v", err)
+	//err = c.sendGossSynAck(srv.ServerName, digest)
+	//if err != nil {
+	//	log.Printf("sendGossSynAck failed: %v", err)
+	//}
+
+	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
+	packet := &nodePacket{
+		header,
+		OKRequester,
 	}
 
-	//header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
-	//packet := &nodePacket{
-	//	header,
-	//	OKRequester,
-	//}
-	//
-	//pay, gbErr := packet.serialize()
-	//if gbErr != nil {
-	//	log.Printf("error serialising packet - %v", gbErr)
-	//}
-	//
-	//c.mu.Lock()
-	//c.qProto(pay, true)
-	//c.mu.Unlock()
+	pay, gbErr := packet.serialize()
+	if gbErr != nil {
+		log.Printf("error serialising packet - %v", gbErr)
+	}
+
+	c.mu.Lock()
+	c.qProto(pay, true)
+	c.mu.Unlock()
 
 	return
 

@@ -3,6 +3,7 @@ package src
 import (
 	"container/heap"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -268,5 +269,61 @@ func TestClusterMapLocks(t *testing.T) {
 
 	wg.Wait()
 	log.Println("Tasks complete")
+
+}
+
+func TestGSA(t *testing.T) {
+
+	gbs := GenerateDefaultTestServer(keyValues1, 5)
+	gbs2 := GenerateDefaultTestServer(keyValues1, 5)
+
+	part1 := gbs.clusterMap.participants[gbs.ServerName]
+	part1.maxVersion = 1640995208
+	part2 := gbs2.clusterMap.participants[gbs2.ServerName]
+	part2.maxVersion = 1640995208
+
+	// Generate a digest from the lower version node
+	d, _, err := gbs2.generateDigest()
+	if err != nil {
+		t.Errorf("generate digest failed: %v", err)
+	}
+
+	name, fd, err := deSerialiseDigest(d)
+	if err != nil {
+		t.Errorf("deSerialise digest failed: %v", err)
+	}
+
+	// Prepare GSA
+	gsa, err := gbs.prepareGossSynAck(name, fd)
+	if err != nil {
+		HandleError(err, func(gbError []*GBError) {
+
+			gbErr := gbError[0]
+			if errors.Is(err, gbErr) {
+				log.Printf("We have an error to switch on %v", gbErr)
+				// This is where we would switch our strategy
+			} else {
+				t.Errorf("prepareGossSynAck failed: %v", err)
+			}
+
+		})
+		return
+	}
+
+	newName, newFd, newCd, err := deserialiseGSA(gsa)
+	if err != nil {
+		t.Errorf("deserialise GSA failed: %v", err)
+	}
+
+	log.Printf("name = %s", newName)
+	for _, f := range *newFd {
+		log.Printf("digest check = %+v", f)
+	}
+
+	for _, c := range newCd.delta {
+		for k, v := range c.keyValues {
+			log.Printf("key = %s value = %s", k, v.value)
+		}
+	}
 
 }
