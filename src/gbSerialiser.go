@@ -688,8 +688,6 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 	length := len(delta)
 	metaLength := binary.BigEndian.Uint32(delta[1:5])
 
-	log.Printf("delta = %v", delta)
-
 	if length != int(metaLength) {
 		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, DeserialiseLengthErr)
 	}
@@ -1037,6 +1035,8 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 
 func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
 
+	log.Printf("gsa = %v", gsa)
+
 	if gsa[0] != DIGEST_TYPE {
 		return "", nil, nil, DeserialiseTypeErr
 	}
@@ -1059,7 +1059,7 @@ func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
 
 	// TODO Think it's here
 	deltaBuf := gsa[digestLength:]
-	log.Printf("deltabuf %v = ", deltaBuf)
+	//deltaLength := binary.BigEndian.Uint32(gsa[1:5])
 
 	if deltaBuf[0] != DELTA_TYPE {
 		return "", nil, nil, DeserialiseTypeErr

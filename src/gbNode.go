@@ -393,7 +393,7 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
 	//defer cancel()
 
-	resp := c.qProtoWithResponse(respID, self, true, true)
+	resp := c.qProtoWithResponse(respID, self, false, true)
 
 	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
 
@@ -797,6 +797,8 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 	msg := make([]byte, len(message))
 	copy(msg, message)
+
+	log.Printf("message = %v", message)
 
 	select {
 	case rsp.ch <- msg:

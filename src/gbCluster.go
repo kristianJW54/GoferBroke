@@ -524,7 +524,7 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
 	}
 
-	resp := conn.qProtoWithResponse(reqId, pay, true, true)
+	resp := conn.qProtoWithResponse(reqId, pay, false, true)
 
 	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
@@ -728,7 +728,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 
 	// Send the digest and wait for a response
-	resp := conn.qProtoWithResponse(reqID, cereal, true, true)
+	resp := conn.qProtoWithResponse(reqID, cereal, false, true)
 
 	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
@@ -901,6 +901,7 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 			}
 			return cereal, nil
 		}
+		return nil, nil
 	}
 
 	// Populate delta queues and build selected deltas
@@ -925,32 +926,36 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		return err
 	}
 
-	respID, err := c.srv.acquireReqID()
+	//respID, err := c.srv.acquireReqID()
+	//if err != nil {
+	//	return err
+	//}
+
+	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, c.ph.reqID, uint16(0))
 	if err != nil {
 		return err
 	}
 
-	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, c.ph.reqID, respID)
-	if err != nil {
-		return err
-	}
+	//ctx, cancel := context.WithTimeout(c.srv.serverContext, 2*time.Second)
 
-	ctx, cancel := context.WithTimeout(c.srv.serverContext, 2*time.Second)
+	//resp := c.qProtoWithResponse(respID, pay, true, true)
+	//
+	//c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
+	//
+	//	defer cancel()
+	//	if err != nil {
+	//		log.Printf("error in sending goss_syn_ack: %v", err)
+	//	}
+	//
+	//	// TODO Response should be a delta we can then process
+	//	//log.Printf("resp == %s", string(bytes))
+	//	return
+	//
+	//})
 
-	resp := c.qProtoWithResponse(respID, pay, true, true)
-
-	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
-
-		defer cancel()
-		if err != nil {
-			log.Printf("error in sending goss_syn_ack: %v", err)
-		}
-
-		// TODO Response should be a delta we can then process
-		//log.Printf("resp == %s", string(bytes))
-		return
-
-	})
+	c.mu.Lock()
+	c.qProto(pay, true)
+	c.mu.Unlock()
 
 	return nil
 }
@@ -1380,6 +1385,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 	stage = 2
+
+	log.Printf("resp = %s", resp)
 
 	_, _, cd, err := deserialiseGSA(resp)
 	if err != nil {
