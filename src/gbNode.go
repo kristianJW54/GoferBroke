@@ -116,15 +116,11 @@ func (s *GBServer) connectToSeed() error {
 
 	resp := client.qProtoWithResponse(reqID, pay1, false, true)
 
-	log.Printf("%s - sending new join command waiting for response", s.ServerName)
-
 	r, err := client.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return err
 	}
-
-	log.Printf("response ==== %s", string(r))
 
 	// If we receive no error we can assume the response was received and continue
 	// --->
@@ -529,8 +525,6 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
 	// Allow for an error response or retry if this is not correct
 
-	log.Printf("new join received === %+v", tmpC)
-
 	//=========================================
 
 	// TODO Do we need to do a seed check on ourselves first?
@@ -575,7 +569,6 @@ func (c *gbClient) processSelfInfo(message []byte) {
 		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
 		if c.ph.respID != 0 {
 			// TODO Refactor into simple sendOK() method
-			log.Printf("%s --> we have a responder to respond to -- %v", c.srv.ServerName, c.ph.respID)
 			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1)
 			packet := &nodePacket{
 				header,
@@ -764,8 +757,6 @@ func (c *gbClient) processOK(message []byte) {
 
 func (c *gbClient) processOKResp(message []byte) {
 
-	log.Printf("%s OK --------> resp id for ok == %v", c.srv.ServerName, int(c.ph.respID))
-
 	rsp, err := c.getResponseChannel(c.ph.respID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
@@ -812,7 +803,6 @@ func (c *gbClient) processGossSynAck(message []byte) {
 		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
 		if c.ph.respID != 0 {
 			// TODO Refactor into simple sendOK() method
-			log.Printf("%s --> we have a responder to respond to for GSA -- %v", c.srv.ServerName, c.ph.respID)
 			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1)
 			packet := &nodePacket{
 				header,
@@ -841,7 +831,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
 	// if we need to defer gossip round or continue
 
-	sender, _, err := deSerialiseDigest(message)
+	sender, digest, err := deSerialiseDigest(message)
 	if err != nil {
 		log.Printf("error serialising digest - %v", err)
 	}
@@ -879,36 +869,29 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	}
 
-	//TODO Here we now do our comparison of the digest to build our delta + to send the combined packet
-	// 1. Compare + build delta
-	// 2. Populate participant Queue and Delta Queue based on comparison and MTU
-	// 3. Serialise from the Queues
-	// 4. Combine both serialised digest + delta to send
-	// 5. If digest is too large and will cause the delta to be omitted then a subset may be chosen
-
 	// TODO ONLY TURN ON GSA WHEN READY -- WILL CAUSE GOSSIP TO FAIL
 
-	//srv := c.srv
+	srv := c.srv
 
-	//err = c.sendGossSynAck(srv.ServerName, digest)
-	//if err != nil {
-	//	log.Printf("sendGossSynAck failed: %v", err)
+	err = c.sendGossSynAck(srv.ServerName, digest)
+	if err != nil {
+		log.Printf("sendGossSynAck failed: %v", err)
+	}
+
+	//header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
+	//packet := &nodePacket{
+	//	header,
+	//	OKRequester,
 	//}
-
-	header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
-	packet := &nodePacket{
-		header,
-		OKRequester,
-	}
-
-	pay, gbErr := packet.serialize()
-	if gbErr != nil {
-		log.Printf("error serialising packet - %v", gbErr)
-	}
-
-	c.mu.Lock()
-	c.qProto(pay, true)
-	c.mu.Unlock()
+	//
+	//pay, gbErr := packet.serialize()
+	//if gbErr != nil {
+	//	log.Printf("error serialising packet - %v", gbErr)
+	//}
+	//
+	//c.mu.Lock()
+	//c.qProto(pay, true)
+	//c.mu.Unlock()
 
 	return
 

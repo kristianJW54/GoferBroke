@@ -90,7 +90,7 @@ func ExtractGBErrors(err error) []string {
 	errStr := err.Error()
 	matches := gbErrorPattern.FindAllString(errStr, -1)
 
-	log.Printf("Extracted GBErrors: %v", matches)
+	//log.Printf("Extracted GBErrors: %v", matches)
 
 	return matches
 }
@@ -280,18 +280,21 @@ func ParseGBError(err string) (*GBError, error) {
 
 type GBErrorHandlerFunc func(gbErr *GBError)
 
-func HandleError(err error, callback func(gbError []*GBError)) {
+func HandleError(err error, callback func(gbError []*GBError) error) error {
 
 	if err == nil {
-		return
+		return nil
 	}
 
 	errStr := ExtractGBErrors(err)
 
 	gbErrs := UnwrapGBErrors(errStr)
 
-	callback(gbErrs)
-
+	callBackErr := callback(gbErrs)
+	if callBackErr != nil {
+		return callBackErr
+	}
+	return err
 }
 
 func RecoverFromPanic() error {

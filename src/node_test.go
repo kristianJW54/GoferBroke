@@ -8,7 +8,7 @@ import (
 
 func TestBuildAddrMap(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer(multipleAddressTestingKVs, 5)
+	gbs := GenerateDefaultTestServer("main-server", multipleAddressTestingKVs, 5)
 
 	testStruct := []struct {
 		name         string

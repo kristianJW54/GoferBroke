@@ -3,7 +3,6 @@ package src
 import (
 	"container/heap"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -15,7 +14,7 @@ import (
 
 func TestParticipantHeap(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer(keyValues1, 5)
+	gbs := GenerateDefaultTestServer("main-server", keyValues1, 5)
 
 	participant := gbs.clusterMap.participants[gbs.name]
 
@@ -150,16 +149,13 @@ func TestUpdateHeartBeat(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	now := time.Now().Unix()
-	err := mockServer.updateSelfInfo(now, func(participant *Participant, timeOfUpdate int64) error {
+	mockServer.updateSelfInfo(now, func(participant *Participant, timeOfUpdate int64) error {
 		err := updateHeartBeat(participant, timeOfUpdate)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
-	if err != nil {
-		t.Errorf("update heartbeat failed: %v", err)
-	}
 
 	heartbeatBytes = self.keyValues[_HEARTBEAT_].value
 	heartbeatInt = int64(binary.BigEndian.Uint64(heartbeatBytes))
@@ -227,16 +223,13 @@ func TestClusterMapLocks(t *testing.T) {
 	}
 
 	updateSelfInfo := func() {
-		err := mockServer.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
+		mockServer.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
 			err := updateHeartBeat(participant, timeOfUpdate)
 			if err != nil {
 				return err
 			}
 			return nil
 		})
-		if err != nil {
-			t.Errorf("update heartbeat failed: %v", err)
-		}
 	}
 
 	addParticipant := func() {
@@ -272,18 +265,26 @@ func TestClusterMapLocks(t *testing.T) {
 
 }
 
-func TestGSA(t *testing.T) {
+// Use for output testing not actual testing
+func TestGossSynAck(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer(keyValues1, 5)
-	gbs2 := GenerateDefaultTestServer(keyValues1, 5)
+	now := time.Now().Unix()
 
-	part1 := gbs.clusterMap.participants[gbs.ServerName]
-	part1.maxVersion = 1640995208
-	part2 := gbs2.clusterMap.participants[gbs2.ServerName]
-	part2.maxVersion = 1640995208
+	node1KeyValues := map[string]*Delta{
+		"key1": &Delta{key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now, value: []byte("Try to gossip about me and see what happens")},
+	}
+
+	node2KeyValues := map[string]*Delta{
+		"key1": &Delta{key: "key1", valueType: STRING_V, version: now - 2, value: []byte("I am a delta blissfully")},
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now - 1, value: []byte("I Don't Like Gossipers")},
+	}
+
+	node1 := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+	node2 := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
 
 	// Generate a digest from the lower version node
-	d, _, err := gbs2.generateDigest()
+	d, _, err := node2.generateDigest()
 	if err != nil {
 		t.Errorf("generate digest failed: %v", err)
 	}
@@ -294,20 +295,9 @@ func TestGSA(t *testing.T) {
 	}
 
 	// Prepare GSA
-	gsa, err := gbs.prepareGossSynAck(name, fd)
+	gsa, err := node1.prepareGossSynAck(name, fd)
 	if err != nil {
-		HandleError(err, func(gbError []*GBError) {
-
-			gbErr := gbError[0]
-			if errors.Is(err, gbErr) {
-				log.Printf("We have an error to switch on %v", gbErr)
-				// This is where we would switch our strategy
-			} else {
-				t.Errorf("prepareGossSynAck failed: %v", err)
-			}
-
-		})
-		return
+		t.Errorf("prepareGossSynAck failed: %v", err)
 	}
 
 	newName, newFd, newCd, err := deserialiseGSA(gsa)
@@ -320,10 +310,204 @@ func TestGSA(t *testing.T) {
 		log.Printf("digest check = %+v", f)
 	}
 
-	for _, c := range newCd.delta {
-		for k, v := range c.keyValues {
-			log.Printf("key = %s value = %s", k, v.value)
+	if newCd != nil {
+		for _, c := range newCd.delta {
+			for k, v := range c.keyValues {
+				log.Printf("key = %s value = %s", k, v.value)
+			}
 		}
+	}
+
+}
+
+func TestGSATwoNodes(t *testing.T) {
+
+	now := time.Now().Unix()
+
+	node1KeyValues := map[string]*Delta{
+		"key1": &Delta{key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now, value: []byte("Try to gossip about me and see what happens")},
+	}
+
+	node2KeyValues := map[string]*Delta{
+		"key1": &Delta{key: "key1", valueType: STRING_V, version: now - 2, value: []byte("I am a delta blissfully")},
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now - 1, value: []byte("I Don't Like Gossipers")},
+	}
+
+	node3KeyValues := map[string]*Delta{
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now - 4, value: []byte("One delta andy over here")},
+	}
+
+	tests := []struct {
+		name             string
+		node1            *GBServer
+		node2            *GBServer
+		shouldHaveDelta  bool
+		participantCount int
+		digestCount      int
+	}{
+		{
+			name: "baseline test - two nodes with both in map",
+			node1: func() *GBServer {
+
+				gbs := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+
+				gbs.clusterMap.participants["node-2"] = &Participant{
+					name:       "node-2",
+					keyValues:  node2KeyValues,
+					maxVersion: node2KeyValues["key2"].version,
+				}
+
+				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
+
+				return gbs
+			}(),
+			node2: func() *GBServer {
+
+				gbs := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
+
+				gbs.clusterMap.participants["node-1"] = &Participant{
+					name:       "node-1",
+					keyValues:  node1KeyValues,
+					maxVersion: node1KeyValues["key2"].version,
+				}
+
+				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
+
+				return gbs
+
+			}(),
+			shouldHaveDelta:  false,
+			participantCount: 0,
+			digestCount:      2,
+		},
+		{
+			name: "node-1 has an extra participant that node-2 doesn't know about",
+			node1: func() *GBServer {
+
+				gbs := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+				gbs.clusterMap.participants["node-2"] = &Participant{
+					name:       "node-2",
+					keyValues:  node2KeyValues,
+					maxVersion: node2KeyValues["key2"].version,
+				}
+
+				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
+
+				gbs.clusterMap.participants["node-3"] = &Participant{
+					name:       "node-3",
+					keyValues:  node3KeyValues,
+					maxVersion: node3KeyValues["key2"].version,
+				}
+
+				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-3")
+
+				return gbs
+
+			}(),
+			node2: func() *GBServer {
+
+				gbs := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
+
+				gbs.clusterMap.participants["node-1"] = &Participant{
+					name:       "node-1",
+					keyValues:  node1KeyValues,
+					maxVersion: node1KeyValues["key2"].version,
+				}
+
+				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
+
+				return gbs
+
+			}(),
+			shouldHaveDelta:  true,
+			participantCount: 1,
+			digestCount:      3,
+		},
+		{
+			name: "node-2 will have a lesser max version to node-1",
+			node1: func() *GBServer {
+
+				gbs := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+
+				gbs.clusterMap.participants["node-2"] = &Participant{
+					name:       "node-2",
+					keyValues:  node2KeyValues,
+					maxVersion: node2KeyValues["key2"].version,
+				}
+
+				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
+
+				return gbs
+
+			}(),
+			node2: func() *GBServer {
+
+				gbs := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
+				gbs.clusterMap.participants[gbs.ServerName].maxVersion = now - 2
+
+				gbs.clusterMap.participants["node-1"] = &Participant{
+					name:       "node-1",
+					keyValues:  node1KeyValues,
+					maxVersion: node1KeyValues["key2"].version,
+				}
+
+				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
+
+				return gbs
+
+			}(),
+			shouldHaveDelta:  false,
+			participantCount: 0,
+			digestCount:      2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			// Generate digest from lower version node
+			d, _, err := tt.node2.generateDigest()
+			if err != nil {
+				t.Errorf("generate digest failed: %v", err)
+			}
+
+			name, fd, err := deSerialiseDigest(d)
+			if err != nil {
+				t.Errorf("deSerialise digest failed: %v", err)
+			}
+
+			for _, dv := range *fd {
+				log.Printf("digest sent = %+v", dv)
+			}
+
+			// Prepare GSA
+			gsa, err := tt.node1.prepareGossSynAck(name, fd)
+			if err != nil {
+				t.Errorf("prepareGossSynAck failed: %v", err)
+			}
+
+			_, newFd, newCd, err := deserialiseGSA(gsa)
+			if err != nil {
+				t.Errorf("deserialise GSA failed: %v", err)
+			}
+
+			// Test assertions
+
+			if len(*newFd) != tt.digestCount {
+				t.Errorf("different digest count = %d, want %d", len(*newFd), tt.digestCount)
+			}
+
+			if newCd == nil && tt.shouldHaveDelta {
+				t.Errorf("should have delta")
+			}
+
+			if newCd != nil {
+				if len(newCd.delta) != tt.participantCount {
+					t.Errorf("should have %d participants, got %d", tt.participantCount, len(newCd.delta))
+				}
+			}
+
+		})
 	}
 
 }

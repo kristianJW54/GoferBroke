@@ -120,7 +120,11 @@ var keyValues2 = map[string]*Delta{
 
 // TODO Make another one of these but with config
 
-func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBServer {
+func GenerateDefaultTestServer(serverName string, kv map[string]*Delta, numParticipants int) *GBServer {
+
+	if numParticipants == 0 {
+		numParticipants = 1
+	}
 
 	// Mock server setup
 	gbs := &GBServer{
@@ -128,7 +132,7 @@ func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBSer
 			participants:     make(map[string]*Participant, numParticipants),
 			participantArray: make([]string, numParticipants),
 		},
-		ServerName: "main-server",
+		ServerName: serverName,
 	}
 
 	maxV := int64(0)
@@ -139,12 +143,10 @@ func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBSer
 		}
 	}
 
-	log.Printf("maxV = %v\n", maxV)
-
 	gbs.numNodeConnections = int64(numParticipants)
 
 	mainPart := &Participant{
-		name:       "main-server",
+		name:       serverName,
 		keyValues:  make(map[string]*Delta),
 		maxVersion: maxV,
 	}
@@ -154,6 +156,10 @@ func GenerateDefaultTestServer(kv map[string]*Delta, numParticipants int) *GBSer
 	mainPart.keyValues = kv
 
 	gbs.clusterMap.participants[gbs.ServerName] = mainPart
+
+	if numParticipants == 1 {
+		return gbs
+	}
 
 	for i := 1; i < numParticipants; i++ {
 

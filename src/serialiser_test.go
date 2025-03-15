@@ -142,7 +142,7 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 
 func TestSerialiseDiscoveryRequest(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer(addressTestingKVs, 5)
+	gbs := GenerateDefaultTestServer("main-server", addressTestingKVs, 5)
 
 	knownAddr := make([]string, 2)
 
@@ -172,7 +172,7 @@ func TestSerialiseDiscoveryRequest(t *testing.T) {
 
 func TestDiscoveryResponse(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer(multipleAddressTestingKVs, 5)
+	gbs := GenerateDefaultTestServer("main-server", multipleAddressTestingKVs, 5)
 
 	knownAddr := make(map[string][]string, 2)
 
@@ -205,7 +205,7 @@ func TestDiscoveryResponse(t *testing.T) {
 
 func TestDiscoveryResponseTable(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer(multipleAddressTestingKVs, 5)
+	gbs := GenerateDefaultTestServer("main-server", multipleAddressTestingKVs, 5)
 
 	tests := []struct {
 		name           string
@@ -604,7 +604,7 @@ func TestMySerialization(t *testing.T) {
 
 func TestGSASerialisation(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer(keyValues1, 5)
+	gbs := GenerateDefaultTestServer("main-server", keyValues1, 5)
 
 	digest, _, err := gbs.generateDigest()
 	if err != nil {

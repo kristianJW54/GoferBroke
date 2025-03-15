@@ -747,14 +747,14 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, 
 	select {
 	case <-ctx.Done():
 		// Context canceled, return immediately
-		log.Printf("waitForResponse - context canceled for response ID %d", rsp.id)
+		//log.Printf("waitForResponse - context canceled for response ID %d", rsp.id)
 		return nil, ctx.Err()
 	case writeErr := <-c.errChan:
 		return nil, fmt.Errorf("write error: %w", writeErr)
 	case readErr := <-c.errChan:
 		return nil, fmt.Errorf("read error: %w", readErr)
 	case msg := <-rsp.ch:
-		log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
+		//log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
 	case err := <-rsp.err:
 		return nil, WrapGBError(ResponseErr, err)

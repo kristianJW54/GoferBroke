@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -687,6 +688,8 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 	length := len(delta)
 	metaLength := binary.BigEndian.Uint32(delta[1:5])
 
+	log.Printf("delta = %v", delta)
+
 	if length != int(metaLength) {
 		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, DeserialiseLengthErr)
 	}
@@ -945,9 +948,16 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err
 
 func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaSize int) ([]byte, error) {
 
+	// First check if delta is nil and size is 0 so, we can only process digest
+	if delta == nil && deltaSize == 0 {
+
+		return digest, nil
+
+	}
+
 	//CLRF Check
 	if bytes.HasSuffix(digest, []byte(CLRF)) {
-		digest = bytes.Trim(digest, CLRF)
+		digest = digest[:len(digest)-2]
 		binary.BigEndian.PutUint32(digest[1:5], uint32(len(digest)))
 	}
 
@@ -1015,8 +1025,11 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 
 	}
 
-	copy(gsaBuff[offset:], CLRF)
-	offset += len(CLRF)
+	// Check if the buffer already ends with CLRF, and only append it if it's missing
+	if !bytes.HasSuffix(gsaBuff[:offset], []byte(CLRF)) {
+		copy(gsaBuff[offset:], CLRF)
+		offset += len(CLRF)
+	}
 
 	return gsaBuff, nil
 
@@ -1037,7 +1050,16 @@ func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
 		return "", nil, nil, err
 	}
 
+	// Ensure there's data left for delta processing
+	if len(gsa) <= int(digestLength) {
+		// Only a digest was sent, return without processing a delta
+		log.Println("only digest sent - returning")
+		return senderName, digest, nil, nil
+	}
+
+	// TODO Think it's here
 	deltaBuf := gsa[digestLength:]
+	log.Printf("deltabuf %v = ", deltaBuf)
 
 	if deltaBuf[0] != DELTA_TYPE {
 		return "", nil, nil, DeserialiseTypeErr
