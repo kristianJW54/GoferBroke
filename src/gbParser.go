@@ -92,7 +92,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 				//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
-				c.drop = 1
+				//c.drop = 1
 			case '\n':
 				if packet[i-1] == 13 {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
@@ -142,6 +142,9 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case GOSS_SYN:
 				c.state = GOSS_SYN
 			case GOSS_SYN_ACK:
+				log.Printf("i = %v", i)
+				log.Printf("b = %v", b)
+				log.Printf("packet = %v", packet[:i])
 				c.state = GOSS_SYN_ACK
 			case ERR_RESP:
 				c.state = ERR_RESP
@@ -476,7 +479,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 		case MSG_PAYLOAD:
 			if c.msgBuf != nil {
 				left := c.ph.msgLength - len(c.msgBuf)
-				avail := len(c.msgBuf) - i
+				avail := len(packet) - i
 				if avail < left {
 					left = avail
 				}
@@ -490,11 +493,14 @@ func (c *gbClient) parsePacket(packet []byte) {
 				}
 
 				if len(c.msgBuf) >= c.ph.msgLength {
+					// Log the complete message buffer before transitioning
+					//log.Printf("MSG_PAYLOAD: Collected full payload (len=%d): %v", len(c.msgBuf), c.msgBuf)
 					i = i - 2
 					c.state = MSG_R_END
 				}
 			} else if i-c.position+1 >= c.ph.msgLength {
 				i = i - 2
+				//log.Printf("MSG_PAYLOAD: full payload available in packet: %v", packet[c.position:c.position+c.ph.msgLength])
 				c.state = MSG_R_END
 			}
 
@@ -520,6 +526,13 @@ func (c *gbClient) parsePacket(packet []byte) {
 			//TODO ISSUE -- This is a temporary fix to a problem where sometimes an extra CLRF is at the end of the msgbuf
 			// The problem is not in how the message is serialized or read but potentially in how is it parsed - it only seems to appear when sending GOSS_SYN_ACK or DISCOVERY
 			// Involving an extra node which has just joined
+			// UPDATE: Issue happens in the parser a the MSG_R_END part - for some reason it will append another CLRF - this only happens because it goes through this part of the code:
+			// if len(c.msgBuf) >= c.ph.msgLength {
+			//					// Log the complete message buffer before transitioning
+			//					//log.Printf("MSG_PAYLOAD: Collected full payload (len=%d): %v", len(c.msgBuf), c.msgBuf)
+			//					i = i - 2
+			//					c.state = MSG_R_END
+			// In the MSG_PAYLOAD State
 
 			//Check if msgBuf ends with double CRLF ("\r\n\r\n") and remove the extra pair.
 			if len(c.msgBuf) >= 4 && string(c.msgBuf[len(c.msgBuf)-4:]) == "\r\n\r\n" {

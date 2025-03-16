@@ -1,8 +1,10 @@
 package src
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -692,6 +694,22 @@ func (s *GBServer) generateDigest() ([]byte, int, error) {
 	return b, size, nil
 }
 
+func (s *GBServer) modifyDigest(digest []byte) ([]byte, int, error) {
+
+	if bytes.HasSuffix(digest, []byte(CLRF)) {
+		digest = digest[:len(digest)-2]
+		binary.BigEndian.PutUint32(digest[1:5], uint32(len(digest)))
+	}
+
+	digestLen := int(binary.BigEndian.Uint32(digest[1:5]))
+	if int(digestLen) != len(digest) {
+		return nil, 0, fmt.Errorf("modifyDigest - digest length mismatch")
+	}
+
+	return digest, digestLen, nil
+
+}
+
 //-------------------------
 // Send Digest in GOSS_SYN - Stage 1
 
@@ -743,6 +761,8 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 //=======================================================
 
 func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (ph participantHeap, err error) {
+
+	//return nil, EmptyParticipantHeapErr
 
 	// Here we are not looking at participants we are missing - that will be sent to us when we send our digest
 	// We are focusing on what we have that the other node does not based on their digest we are receiving
@@ -873,16 +893,16 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte, error) {
 
 	// Prepare our own digest first as we need to know if digest reaches its cap, so we know how much space we have left for the Delta
-	d, sizeOfDigest, err := s.generateDigest()
+	d, _, err := s.generateDigest()
 	if err != nil {
 		return nil, fmt.Errorf("compareAndBuildDelta - generate digest error: %w", err)
 	}
 
-	remaining := DEFAULT_MAX_GSA - sizeOfDigest
-
 	// Compare here - Will need to take a remaining size left over from generating our digest
 	partQueue, err := s.generateParticipantHeap(sender, digest)
 	if err != nil {
+
+		log.Printf("err = %v", err)
 		handledErr := HandleError(err, func(gbError []*GBError) error {
 			if len(gbError) > 0 {
 				return gbError[0]
@@ -892,6 +912,7 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 		})
 
 		if errors.Is(handledErr, EmptyParticipantHeapErr) {
+
 			cereal, err := s.serialiseGSA(d, nil, 0)
 			if err != nil {
 				return nil, err
@@ -899,7 +920,16 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 			return cereal, nil
 		}
 		return nil, nil
+
 	}
+
+	// Modify digest if no error
+	newD, newSize, err := s.modifyDigest(d)
+	if err != nil {
+		return nil, err
+	}
+
+	remaining := DEFAULT_MAX_GSA - newSize
 
 	// Populate delta queues and build selected deltas
 	selectedDeltas, deltaSize, err := s.buildDelta(&partQueue, remaining)
@@ -908,7 +938,7 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	}
 
 	// Serialise
-	cereal, err := s.serialiseGSA(d, selectedDeltas, deltaSize)
+	cereal, err := s.serialiseGSA(newD, selectedDeltas, deltaSize)
 
 	// Return
 	// TODO somewhere after this another 13 10 gets added to the delta buff causing a length mismatch
@@ -922,6 +952,8 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("length of gsa = %v", len(gsa))
 
 	//respID, err := c.srv.acquireReqID()
 	//if err != nil {
@@ -1388,11 +1420,11 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 		log.Printf("deserialise GSA failed: %v", err)
 	}
 
-	//log.Printf("%s ------> name = %s", s.ServerName, sender)
+	//log.Printf("%s received ------> name = %s", s.ServerName, sender)
 	//for _, fdValue := range *fd {
 	//	log.Printf("digest check = %+v", fdValue)
 	//}
-
+	//
 	//if cd != nil {
 	//	for _, c := range cd.delta {
 	//		for k, v := range c.keyValues {

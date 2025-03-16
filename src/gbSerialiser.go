@@ -1,7 +1,6 @@
 package src
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -945,15 +944,12 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 
 	// First check if delta is nil and size is 0 so, we can only process digest
 	if delta == nil && deltaSize == 0 {
-
 		return digest, nil
-
 	}
 
-	//CLRF Check
-	if bytes.HasSuffix(digest, []byte(CLRF)) {
-		digest = digest[:len(digest)-2]
-		binary.BigEndian.PutUint32(digest[1:5], uint32(len(digest)))
+	digestLen := int(binary.BigEndian.Uint32(digest[1:5]))
+	if digestLen != len(digest) {
+		return nil, fmt.Errorf("length does not match")
 	}
 
 	length := deltaSize + len(digest)
