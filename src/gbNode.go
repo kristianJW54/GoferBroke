@@ -257,6 +257,33 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 }
 
+//------------------------------------------
+// Handling Self Info - Thread safe and for high concurrency
+
+func (s *GBServer) getSelfInfo() *Participant {
+	s.clusterMapLock.RLock()
+	defer s.clusterMapLock.RUnlock()
+	return s.clusterMap.participants[s.ServerName]
+}
+
+func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) {
+
+	if s.gbConfig.Internal.disableInternalGossipSystemUpdate {
+		log.Printf("internal systems gossip update is off")
+	}
+
+	self := s.getSelfInfo()
+
+	self.pm.Lock()
+	err := updateFunc(self, timeOfUpdate)
+	if err != nil {
+		log.Printf("error %v", err)
+	}
+	self.maxVersion = timeOfUpdate
+	self.pm.Unlock()
+
+}
+
 // Thread safe
 // prepareSelfInfoSend gathers the servers deltas into a participant to send over the network. We only send our self info under the assumption that we are a new node
 // and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the receiving node will detect this by

@@ -477,7 +477,7 @@ func TestGSATwoNodes(t *testing.T) {
 			}
 
 			for _, dv := range *fd {
-				log.Printf("digest sent = %+v", dv)
+				log.Printf("node 2 ---> digest sent = %+v", dv)
 			}
 
 			// Prepare GSA
@@ -486,9 +486,22 @@ func TestGSATwoNodes(t *testing.T) {
 				t.Errorf("prepareGossSynAck failed: %v", err)
 			}
 
-			_, newFd, newCd, err := deserialiseGSA(gsa)
+			sender, newFd, newCd, err := deserialiseGSA(gsa)
 			if err != nil {
 				t.Errorf("deserialise GSA failed: %v", err)
+			}
+
+			log.Printf("%s received ------> name = %s", tt.node1.name, sender)
+			for _, fdValue := range *newFd {
+				log.Printf("digest check = %+v", fdValue)
+			}
+
+			if newCd != nil {
+				for _, c := range newCd.delta {
+					for k, v := range c.keyValues {
+						log.Printf("key = %s value = %s", k, v.value)
+					}
+				}
 			}
 
 			// Test assertions
@@ -509,5 +522,105 @@ func TestGSATwoNodes(t *testing.T) {
 
 		})
 	}
+}
+
+func TestAddGSADeltaToMap(t *testing.T) {
+
+	now := time.Now().Unix()
+
+	node1KeyValues := map[string]*Delta{
+		"key1": &Delta{key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now, value: []byte("Try to gossip about me and see what happens")},
+	}
+
+	node2KeyValues := map[string]*Delta{
+		"key1": &Delta{key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully")},
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now, value: []byte("I Don't Like Gossipers")},
+	}
+
+	node3KeyValues := map[string]*Delta{
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now - 2, value: []byte("One delta andy over here - Im the newer version boi ;)")},
+	}
+
+	node3KeyValuesOutdated := map[string]*Delta{
+		"key2": &Delta{key: "key2", valueType: STRING_V, version: now - 4, value: []byte("One delta andy over here")},
+	}
+
+	// Node 1
+
+	gbs := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+
+	gbs.clusterMap.participants["node-2"] = &Participant{
+		name:       "node-2",
+		keyValues:  node2KeyValues,
+		maxVersion: node2KeyValues["key2"].version,
+	}
+
+	gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
+
+	gbs.clusterMap.participants["node-3"] = &Participant{
+		name:       "node-3",
+		keyValues:  node3KeyValues,
+		maxVersion: node3KeyValues["key2"].version,
+	}
+
+	gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-3")
+
+	// Node 2
+
+	gbs2 := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
+	gbs2.clusterMap.participants[gbs2.ServerName].maxVersion = now - 2
+
+	gbs2.clusterMap.participants["node-1"] = &Participant{
+		name:       "node-1",
+		keyValues:  node1KeyValues,
+		maxVersion: node1KeyValues["key2"].version,
+	}
+
+	gbs2.clusterMap.participantArray = append(gbs2.clusterMap.participantArray, "node-1")
+
+	gbs2.clusterMap.participants["node-3"] = &Participant{
+		name:       "node-3",
+		keyValues:  node3KeyValuesOutdated,
+		maxVersion: node3KeyValuesOutdated["key2"].version,
+	}
+
+	gbs2.clusterMap.participantArray = append(gbs2.clusterMap.participantArray, "node-3")
+
+	// Generate digest from lower version node
+	d, _, err := gbs2.generateDigest()
+	if err != nil {
+		t.Errorf("generate digest failed: %v", err)
+	}
+
+	name, fd, err := deSerialiseDigest(d)
+	if err != nil {
+		t.Errorf("deSerialise digest failed: %v", err)
+	}
+
+	for _, dv := range *fd {
+		log.Printf("digest sent = %+v", dv)
+	}
+
+	// Prepare GSA
+	gsa, err := gbs.prepareGossSynAck(name, fd)
+	if err != nil {
+		t.Errorf("prepareGossSynAck failed: %v", err)
+	}
+
+	_, _, newCd, err := deserialiseGSA(gsa)
+	if err != nil {
+		t.Errorf("deserialise GSA failed: %v", err)
+	}
+
+	// Add here
+	err = gbs2.addGSADeltaToMap(newCd)
+	if err != nil {
+		t.Errorf("addGSADeltaToMap failed: %v", err)
+	}
+
+	keyCheck := gbs2.clusterMap.participants["node-3"].keyValues["key2"]
+
+	log.Printf("keyCheck: version %v - value %s", keyCheck.version, keyCheck.value)
 
 }

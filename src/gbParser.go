@@ -142,9 +142,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case GOSS_SYN:
 				c.state = GOSS_SYN
 			case GOSS_SYN_ACK:
-				log.Printf("i = %v", i)
-				log.Printf("b = %v", b)
-				log.Printf("packet = %v", packet[:i])
 				c.state = GOSS_SYN_ACK
 			case ERR_RESP:
 				c.state = ERR_RESP

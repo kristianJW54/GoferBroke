@@ -346,35 +346,50 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 }
 
-//------------------------------------------
-// Handling Self Info - Thread safe and for high concurrency
-
-func (s *GBServer) getSelfInfo() *Participant {
-	s.clusterMapLock.RLock()
-	defer s.clusterMapLock.RUnlock()
-	return s.clusterMap.participants[s.ServerName]
-}
-
-func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) {
-
-	if s.gbConfig.Internal.disableInternalGossipSystemUpdate {
-		log.Printf("internal systems gossip update is off")
-	}
-
-	self := s.getSelfInfo()
-
-	self.pm.Lock()
-	err := updateFunc(self, timeOfUpdate)
-	if err != nil {
-		log.Printf("error %v", err)
-	}
-	self.maxVersion = timeOfUpdate
-	self.pm.Unlock()
-
-}
-
 //--------
 //Update cluster
+
+func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
+
+	// If we receive information about ourselves, we need to ignore as we are the only ones who should update information about ourselves
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap.participants
+	s.clusterMapLock.RUnlock()
+
+	for name, d := range delta.delta {
+
+		if name == s.ServerName {
+			continue
+		}
+		if participant, exists := cm[name]; exists {
+			// Here we have a participant with values we need to update for our map
+			// Use the locking strategy to lock participant in order to update
+			for k, v := range d.keyValues {
+
+				if deltaV, exists := participant.keyValues[k]; exists {
+
+					if v.version > deltaV.version {
+						participant.pm.Lock()
+						deltaV.version = v.version
+						participant.pm.Unlock()
+					}
+
+				} else {
+					participant.pm.Lock()
+					participant.keyValues[k] = v
+					participant.pm.Unlock()
+				}
+			}
+		}
+		// If here then we have a new participant to add
+		err := s.addParticipantFromTmp(name, d)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 //--
 
@@ -600,29 +615,6 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 // Preparing Cluster Map for Gossip Exchanges with Depth + Flow-Control
 //=======================================================================
 
-//// GOSS_SYN_ACK - We receive a digest and now must use it to prepare our delta to send
-//func (s *GBServer) prepareDeltaAgainstDigest(digest []*fullDigest, mtu int) error {
-//
-//	// First we must ready our digest and make sure we return how much space we have left in the MTU for the delta
-//	// It is good for us to fit as much of the digest in as possible as we prioritise by most out of date participant
-//	// Later updates will allow for config of choosing to go past the MTU for big deltas or for brief times of important updates...
-//
-//	// Clear participant heap if it hasn't been already
-//	s.clusterMap.participantQ = participantHeap{}
-//
-//	for participantName, participant := range s.clusterMap.participants {
-//
-//		availableDeltaCount := 0
-//
-//		// Count the outdated deltas for this participant
-//		for key, value := range participant.keyValues {
-//			digestVersion, exists := digest
-//		}
-//
-//	}
-//
-//}
-
 //=======================================================
 // GOSS_SYN Prep
 //=======================================================
@@ -781,6 +773,11 @@ func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (p
 
 		// First check if we have a higher max version than the digest received + if we have a participant they do not
 		if peerDigest, exists := (*digest)[name]; exists {
+
+			if peerDigest.nodeName == sender {
+				continue
+			}
+
 			// If the participant is included in the digest then we to check the versions
 			// We must compare int here and not int64 as I found out after hours of headaches
 			if int(participant.maxVersion) > int(peerDigest.maxVersion) {
@@ -945,6 +942,9 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	return cereal, nil
 }
 
+//-------------------------
+// Send Digest And Delta in GOSS_SYN_ACK - Stage 2
+
 func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	// serialise and send?
@@ -953,41 +953,39 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		return err
 	}
 
-	log.Printf("length of gsa = %v", len(gsa))
-
-	//respID, err := c.srv.acquireReqID()
-	//if err != nil {
-	//	return err
-	//}
-
-	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, c.ph.reqID, uint16(0))
+	respID, err := c.srv.acquireReqID()
 	if err != nil {
 		return err
 	}
 
-	//ctx, cancel := context.WithTimeout(c.srv.serverContext, 2*time.Second)
+	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, c.ph.reqID, respID)
+	if err != nil {
+		return err
+	}
 
-	//resp := c.qProtoWithResponse(respID, pay, true, true)
-	//
-	//c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
-	//
-	//	defer cancel()
-	//	if err != nil {
-	//		log.Printf("error in sending goss_syn_ack: %v", err)
-	//	}
-	//
-	//	// TODO Response should be a delta we can then process
-	//	//log.Printf("resp == %s", string(bytes))
-	//	return
-	//
-	//})
+	ctx, cancel := context.WithTimeout(c.srv.serverContext, 2*time.Second)
 
-	c.mu.Lock()
-	c.enqueueProto(pay)
-	c.mu.Unlock()
+	resp := c.qProtoWithResponse(respID, pay, false)
+
+	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
+
+		defer cancel()
+		if err != nil {
+			log.Printf("error in sending goss_syn_ack: %v", err)
+		}
+
+		// TODO Response should be a delta we can then process
+		log.Printf("resp == %s", string(bytes))
+		return
+
+	})
 
 	return nil
 }
+
+//=======================================================
+// GOSS_ACK Prep
+//=======================================================
 
 //=======================================================
 // Gossip Signalling + Process
