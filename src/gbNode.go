@@ -114,7 +114,7 @@ func (s *GBServer) connectToSeed() error {
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	resp := client.qProtoWithResponse(reqID, pay1, false, true)
+	resp := client.qProtoWithResponse(reqID, pay1, true)
 
 	r, err := client.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
@@ -205,7 +205,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	resp := client.qProtoWithResponse(reqID, pay1, false, true)
+	resp := client.qProtoWithResponse(reqID, pay1, true)
 
 	r, err := client.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
@@ -393,7 +393,7 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
 	//defer cancel()
 
-	resp := c.qProtoWithResponse(respID, self, false, true)
+	resp := c.qProtoWithResponse(respID, self, false)
 
 	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
 
@@ -581,7 +581,7 @@ func (c *gbClient) processSelfInfo(message []byte) {
 			}
 
 			c.mu.Lock()
-			c.qProto(pay, true)
+			c.enqueueProto(pay)
 			c.mu.Unlock()
 		}
 		return
@@ -602,6 +602,8 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 		log.Printf("deserialise KnownAddressNodes failed: %v", err)
 	}
 
+	log.Printf("%s --> received known addresses %+v", c.srv.ServerName, known)
+
 	cereal, err := c.discoveryResponse(known)
 
 	if err != nil && cereal == nil {
@@ -612,7 +614,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 		}
 
 		c.mu.Lock()
-		c.qProto(pay, true)
+		c.enqueueProto(pay)
 		c.mu.Unlock()
 
 		return
@@ -626,7 +628,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	}
 
 	c.mu.Lock()
-	c.qProto(pay, true)
+	c.enqueueProto(pay)
 	c.mu.Unlock()
 
 	return
@@ -676,7 +678,7 @@ func (c *gbClient) processHandShake(message []byte) {
 	}
 
 	c.mu.Lock()
-	c.qProto(info, true)
+	c.enqueueProto(info)
 	c.mu.Unlock()
 
 	for key, value := range tmpC.delta {
@@ -798,8 +800,6 @@ func (c *gbClient) processGossSynAck(message []byte) {
 	msg := make([]byte, len(message))
 	copy(msg, message)
 
-	log.Printf("message = %v", message)
-
 	select {
 	case rsp.ch <- msg:
 		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
@@ -817,7 +817,7 @@ func (c *gbClient) processGossSynAck(message []byte) {
 			}
 
 			c.mu.Lock()
-			c.qProto(pay, true)
+			c.enqueueProto(pay)
 			c.mu.Unlock()
 		}
 		return
@@ -832,6 +832,27 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
 	// if we need to defer gossip round or continue
+
+	if c.srv.discoveryPhase {
+
+		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(ConductingDiscoveryErr.Error())), NODE_HEADER_SIZE_V1)
+		errPacket := &nodePacket{
+			errHeader,
+			ConductingDiscoveryErr.ToBytes(),
+		}
+
+		errPay, gbErr := errPacket.serialize()
+		if gbErr != nil {
+			log.Printf("error serialising packet - %v", gbErr)
+		}
+
+		c.mu.Lock()
+		c.enqueueProto(errPay)
+		c.mu.Unlock()
+
+		return
+
+	}
 
 	sender, digest, err := deSerialiseDigest(message)
 	if err != nil {
@@ -864,7 +885,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 		}
 
 		c.mu.Lock()
-		c.qProto(errPay, true)
+		c.enqueueProto(errPay)
 		c.mu.Unlock()
 
 		return

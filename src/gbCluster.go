@@ -524,7 +524,7 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		return nil, fmt.Errorf("%w, %w", DiscoveryReqErr, err)
 	}
 
-	resp := conn.qProtoWithResponse(reqId, pay, false, true)
+	resp := conn.qProtoWithResponse(reqId, pay, false)
 
 	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
@@ -565,10 +565,9 @@ func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 		if perc >= int(s.gbConfig.Cluster.discoveryPercentage) {
 			s.discoveryPhase = false
 		}
-	} else {
-		if perc >= DEFAULT_DISCOVERY_PERCENTAGE {
-			s.discoveryPhase = false
-		}
+	} else if perc >= DEFAULT_DISCOVERY_PERCENTAGE {
+		log.Printf("exiting discovery")
+		s.discoveryPhase = false
 	}
 
 	// Come out of discovery or not
@@ -728,7 +727,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 
 	// Send the digest and wait for a response
-	resp := conn.qProtoWithResponse(reqID, cereal, false, true)
+	resp := conn.qProtoWithResponse(reqID, cereal, false)
 
 	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
@@ -804,8 +803,6 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 	s.clusterMapLock.RUnlock()
 
 	sizeOfDelta := 0
-
-	log.Printf("HERE ========================================")
 
 	// TODO Would prefer to pre-allocate if there is a way -- need to think about this here
 	selectedDeltas := make(map[string][]*Delta)
@@ -954,7 +951,7 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 	//})
 
 	c.mu.Lock()
-	c.qProto(pay, true)
+	c.enqueueProto(pay)
 	c.mu.Unlock()
 
 	return nil
@@ -1234,15 +1231,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		return
 	}
 
-	// Channel to signal when individual gossip tasks complete
-	done := make(chan struct{}, pl)
-	// Channels aren't like files; you don't usually need to close them.
-	// Closing is only necessary when the receiver must be told there are no more values coming, such as to terminate a range loop.
-	// https://go.dev/tour/concurrency/4#:~:text=Note%3A%20Only%20the%20sender%20should,to%20terminate%20a%20range%20loop.
-
-	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
-
-	// for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
+	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	if s.discoveryPhase {
 		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
 		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
@@ -1257,6 +1246,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 				handledErr := HandleError(err, func(gbError []*GBError) error {
 
 					if len(gbError) > 1 {
+						log.Printf("gb error = %v", gbError[2])
 						return gbError[2]
 					}
 					return err
@@ -1275,6 +1265,14 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		return
 	}
 
+	// Channel to signal when individual gossip tasks complete
+	done := make(chan struct{}, pl)
+	// Channels aren't like files; you don't usually need to close them.
+	// Closing is only necessary when the receiver must be told there are no more values coming, such as to terminate a range loop.
+	// https://go.dev/tour/concurrency/4#:~:text=Note%3A%20Only%20the%20sender%20should,to%20terminate%20a%20range%20loop.
+
+	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
+
 	for i := 0; i < int(ns); i++ {
 
 		s.clusterMapLock.RLock()
@@ -1291,7 +1289,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 				done <- struct{}{}
 
 				s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
-					log.Printf("updating heartbeat ============================================================================")
 					err := updateHeartBeat(participant, timeOfUpdate)
 					if err != nil {
 						log.Printf("Error updating heartbeat: %v", err)
@@ -1386,9 +1383,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 	stage = 2
 
-	log.Printf("resp = %s", resp)
-
-	_, _, cd, err := deserialiseGSA(resp)
+	_, _, _, err = deserialiseGSA(resp)
 	if err != nil {
 		log.Printf("deserialise GSA failed: %v", err)
 	}
@@ -1398,13 +1393,13 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//	log.Printf("digest check = %+v", fdValue)
 	//}
 
-	if cd != nil {
-		for _, c := range cd.delta {
-			for k, v := range c.keyValues {
-				log.Printf("key = %s value = %s", k, v.value)
-			}
-		}
-	}
+	//if cd != nil {
+	//	for _, c := range cd.delta {
+	//		for k, v := range c.keyValues {
+	//			log.Printf("key = %s value = %s", k, v.value)
+	//		}
+	//	}
+	//}
 
 	//------------- GOSS_ACK Stage 3 -------------//
 

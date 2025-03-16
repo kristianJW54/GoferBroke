@@ -524,6 +524,8 @@ func (c *gbClient) queueOutbound(data []byte) {
 func (c *gbClient) flushSignal() {
 	if c.outbound.flushSignal != nil {
 		c.outbound.flushSignal.Signal()
+	} else {
+		log.Println("flushSignal: No flushSignal available")
 	}
 }
 
@@ -531,6 +533,7 @@ func (c *gbClient) flushSignal() {
 func (c *gbClient) flushWriteOutbound() bool {
 
 	if c.flags.isSet(FLUSH_OUTBOUND) {
+		log.Println("flushWriteOutbound: FLUSH_OUTBOUND already set, skipping flush")
 		c.mu.Unlock()
 		runtime.Gosched()
 		c.mu.Lock()
@@ -552,7 +555,6 @@ func (c *gbClient) flushWriteOutbound() bool {
 	nc := c.gbc
 
 	c.mu.Unlock()
-
 	c.outbound.copyWriteBuffer = append(c.outbound.copyWriteBuffer, toWrite...)
 
 	var _orig [1024][]byte
@@ -567,6 +569,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 	for len(c.outbound.copyWriteBuffer) > 0 {
 
 		wb := c.outbound.copyWriteBuffer
+
 		if len(wb) > 1024 {
 			wb = wb[:1024]
 		}
@@ -596,6 +599,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 	// Write errors
 	if err != nil {
+		log.Printf("flushWriteOutbound: Write error: %v", err)
 		c.handleWriteError(err)
 		return true
 	}
@@ -643,10 +647,8 @@ func (c *gbClient) writeLoop() {
 	for {
 		c.mu.Lock()
 		if waitOk {
-			//log.Printf("Waiting for flush signal... %s", c.srv.ServerName)
 			//// Can I add a broadcast here instead
 			c.outbound.flushSignal.Wait()
-			//log.Println("Flush signal awakened.")
 			if c.srv.serverContext.Err() != nil {
 				//log.Printf("exiting write loop")
 				return
@@ -662,12 +664,33 @@ func (c *gbClient) writeLoop() {
 //--------------------------
 // Queue Proto
 
-// Lock should be held
-func (c *gbClient) qProto(proto []byte, flush bool) {
-	c.queueOutbound(proto)
-	if c.outbound.flushSignal != nil && flush {
-		c.outbound.flushSignal.Signal()
+//// Lock should be held
+//func (c *gbClient) qProto(proto []byte, flush bool) {
+//	c.queueOutbound(proto)
+//	if c.outbound.flushSignal != nil && flush {
+//		c.outbound.flushSignal.Signal()
+//	}
+//}
+
+func (c *gbClient) enqueueProtoAndFlush(data []byte, doFlush bool) {
+	if c.gbc == nil {
+		return
 	}
+
+	c.queueOutbound(data) // Queue the data
+
+	// Attempt to flush if requested, otherwise signal the write loop
+	if !(doFlush && c.flushWriteOutbound()) {
+		c.flushSignal()
+	}
+}
+
+func (c *gbClient) sendProtoNow(data []byte) {
+	c.enqueueProtoAndFlush(data, true) // Flush immediately
+}
+
+func (c *gbClient) enqueueProto(data []byte) {
+	c.enqueueProtoAndFlush(data, false) // Just queue and signal the write loop
 }
 
 //===================================================================================
@@ -810,33 +833,18 @@ func (c *gbClient) getResponseChannel(id uint16) (*response, error) {
 
 // Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
-func (c *gbClient) qProtoWithResponse(id uint16, proto []byte, flush bool, sendNow bool) *response {
+func (c *gbClient) qProtoWithResponse(id uint16, proto []byte, sendNow bool) *response {
+	rsp := c.addResponseChannel(int(id)) // Create a response channel
 
-	responseChannel := c.addResponseChannel(int(id))
+	c.enqueueProto(proto) // Use the new enqueue method
 
-	if sendNow && !flush {
-
-		// Client lock to flush outbound
+	if sendNow {
 		c.mu.Lock()
-		c.qProto(proto, false)
-		c.flushWriteOutbound()
+		c.flushWriteOutbound() // Force immediate flush
 		c.mu.Unlock()
-
-		// Wait for the response with timeout
-		// We have to block and wait until we get a signal to continue the process which requested a response
-
-	} else if sendNow {
-		// Client lock to flush outbound
-		c.mu.Lock()
-		c.qProto(proto, true)
-		//c.flushWriteOutbound()
-		c.mu.Unlock()
-
-		// Wait for the response with timeout
-		// We have to block and wait until we get a signal to continue the process which requested a response
 	}
 
-	return responseChannel
+	return rsp // Return response channel so caller can wait for it
 }
 
 //===================================================================================

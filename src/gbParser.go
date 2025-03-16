@@ -1,5 +1,7 @@
 package src
 
+import "log"
+
 const (
 	START = iota
 	VERSION1
@@ -514,6 +516,18 @@ func (c *gbClient) parsePacket(packet []byte) {
 			} else {
 				c.msgBuf = packet[c.position : i+1]
 			}
+
+			//TODO ISSUE -- This is a temporary fix to a problem where sometimes an extra CLRF is at the end of the msgbuf
+			// The problem is not in how the message is serialized or read but potentially in how is it parsed - it only seems to appear when sending GOSS_SYN_ACK or DISCOVERY
+			// Involving an extra node which has just joined
+
+			//Check if msgBuf ends with double CRLF ("\r\n\r\n") and remove the extra pair.
+			if len(c.msgBuf) >= 4 && string(c.msgBuf[len(c.msgBuf)-4:]) == "\r\n\r\n" {
+				log.Printf("Double CRLF detected, trimming extra CRLF")
+				c.msgBuf = c.msgBuf[:len(c.msgBuf)-2]
+			}
+
+			//log.Printf("msg buf = %v", c.msgBuf)
 
 			c.processMessage(c.msgBuf)
 

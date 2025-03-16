@@ -813,9 +813,6 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, int, error) {
 
 		v := value
 
-		//if len(value.name) > 255 {
-		//	return nil, fmt.Errorf("name length exceeds 255 bytes: %s", value.name)
-		//}
 		nameLen := len(v.name)
 		digestBuf[offset] = uint8(nameLen)
 		offset++
@@ -1024,18 +1021,15 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 	}
 
 	// Check if the buffer already ends with CLRF, and only append it if it's missing
-	if !bytes.HasSuffix(gsaBuff[:offset], []byte(CLRF)) {
-		copy(gsaBuff[offset:], CLRF)
-		offset += len(CLRF)
-	}
+
+	copy(gsaBuff[offset:], CLRF)
+	offset += len(CLRF)
 
 	return gsaBuff, nil
 
 }
 
 func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
-
-	log.Printf("gsa = %v", gsa)
 
 	if gsa[0] != DIGEST_TYPE {
 		return "", nil, nil, DeserialiseTypeErr

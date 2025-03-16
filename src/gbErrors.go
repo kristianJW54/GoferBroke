@@ -310,10 +310,11 @@ func RecoverFromPanic() error {
 // Network Error codes
 
 const (
-	GOSSIP_DEFERRED_CODE    = 11
-	GOSSIP_TIMEOUT_CODE     = 12
-	DESERIALISE_TYPE_CODE   = 13
-	DESERIALISE_LENGTH_CODE = 14
+	GOSSIP_DEFERRED_CODE      = 11
+	GOSSIP_TIMEOUT_CODE       = 12
+	DESERIALISE_TYPE_CODE     = 13
+	DESERIALISE_LENGTH_CODE   = 14
+	CONDUCTING_DISCOVERY_CODE = 15
 )
 
 // Internal Error codes
@@ -333,13 +334,14 @@ const (
 )
 
 var knownNetworkErrors = map[int]*GBError{
-	GOSSIP_DEFERRED_CODE:    &GBError{Code: GOSSIP_DEFERRED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip deferred"},
-	GOSSIP_TIMEOUT_CODE:     &GBError{Code: GOSSIP_TIMEOUT_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip timeout"},
-	INVALID_ERROR_FORMAT:    &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid format"},
-	INVALID_ERROR_CODE:      &GBError{Code: INVALID_ERROR_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid error code"},
-	DESERIALISE_TYPE_CODE:   &GBError{Code: DESERIALISE_TYPE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "wrong type received by deserialise"},
-	DESERIALISE_LENGTH_CODE: &GBError{Code: DESERIALISE_LENGTH_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "mismatch in data length received by deserialise"},
-	EMPTY_ADDR_MAP_CODE:     &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "address map is empty"},
+	GOSSIP_DEFERRED_CODE:      &GBError{Code: GOSSIP_DEFERRED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip deferred"},
+	GOSSIP_TIMEOUT_CODE:       &GBError{Code: GOSSIP_TIMEOUT_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip timeout"},
+	INVALID_ERROR_FORMAT:      &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid format"},
+	INVALID_ERROR_CODE:        &GBError{Code: INVALID_ERROR_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid error code"},
+	DESERIALISE_TYPE_CODE:     &GBError{Code: DESERIALISE_TYPE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "wrong type received by deserialise"},
+	DESERIALISE_LENGTH_CODE:   &GBError{Code: DESERIALISE_LENGTH_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "mismatch in data length received by deserialise"},
+	EMPTY_ADDR_MAP_CODE:       &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "address map is empty"},
+	CONDUCTING_DISCOVERY_CODE: &GBError{Code: CONDUCTING_DISCOVERY_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "conducting discovery"},
 }
 
 var knownInternalErrors = map[int]*GBError{
@@ -371,4 +373,5 @@ var (
 	GossipDeferredErr      = knownNetworkErrors[GOSSIP_DEFERRED_CODE]
 	NoRequestIDErr         = knownNetworkErrors[NO_REQUEST_ID_CODE]
 	EmptyAddrMapNetworkErr = knownNetworkErrors[EMPTY_ADDR_MAP_CODE]
+	ConductingDiscoveryErr = knownNetworkErrors[CONDUCTING_DISCOVERY_CODE]
 )
