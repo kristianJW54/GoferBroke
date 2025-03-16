@@ -67,19 +67,19 @@ Clone the project
 Start a seed node in terminal
 
 ```bash
-  go run goferMQ -name=test1 -ID=1 -nodeIP=localhost -nodePort=8081
+  go run GoferBroke -name=test1 -ID=1 -nodeIP=localhost -nodePort=8081
 ```
 
 Start a second node in another terminal
 
 ```bash
-  go run goferMQ -name=test2 -ID=1 -nodeIP=localhost -nodePort=8082
+  go run GoferBroke -name=test2 -ID=1 -nodeIP=localhost -nodePort=8082
 ```
 
 To run on another machine
 
 ```bash
-  go run goferMQ -name=test2 -ID=1 -clusterIP=[YOUR MACHINES IP] -clusterPort=[SEED PORT YOU WANT] -nodeIP=localhost -nodePort=8082
+  go run GoferBroke -name=test2 -ID=1 -clusterIP=[YOUR MACHINES IP] -clusterPort=[SEED PORT YOU WANT] -nodeIP=localhost -nodePort=8082
 ```
 
 ## Video Demo - Update
