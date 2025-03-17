@@ -470,93 +470,71 @@ func deserialiseDiscovery(data []byte) (*discovery, error) {
 	return addrMap, nil
 }
 
-// Lock should be held on entry
-func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
+func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSize int) ([]byte, error) {
 
-	// Type = Delta - 1 byte Uint8
+	// Type = Data - 1 byte Uint8
 	// Length of payload - 4 byte uint32
 	// Size of Delta - 2 byte uint16
 	// Total metadata for digest byte array = --> 7 <--
 
-	length := 7 + 2 //Including CLRF at the end
+	// Add to the length the header metadata for delta - not needed for digest as we've already serialised that
+	length := 7
+	// Now add the CLRF at the end of it all
+	length += 2
 
-	// Include senders name
+	// Include sender's name
 	length += 1
 	length += len(s.ServerName)
 
-	pi := s.clusterMap.participants
+	length += deltaSize
 
-	for _, p := range pi {
-
-		length += 1 + len(p.name) + 2 // 1 byte for name length + name length + size of delta key-values
-
-		participant := p
-
-		for key, delta := range participant.keyValues {
-			if delta != nil {
-				value := delta.value
-				// Calculate the size for this delta
-				length += 14 + len(key) + len(value) // 14 bytes for metadata (key size, version 8, value type, value size) + value length
-			} else {
-				// Log missing delta and continue
-				fmt.Printf("Warning: Delta is nil for participant %s\n", s.ServerName)
-			}
-		}
-
-	}
-
-	// Allocate buffer
 	deltaBuf := make([]byte, length)
 
-	// Write metadata header directly
-	deltaBuf[0] = byte(DELTA_TYPE)
-	binary.BigEndian.PutUint32(deltaBuf[1:5], uint32(length))
-	binary.BigEndian.PutUint16(deltaBuf[5:7], uint16(len(pi)))
+	offset := 0
 
-	offset := 7
+	deltaBuf[offset] = DELTA_TYPE
+	offset++
+	// TODO We are manually adding the header metadata here but will need to be careful we don't add this when building the delta
+	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(deltaSize+9))
+	offset += 4
+	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(selectedDelta)))
+	offset += 2
 
 	deltaBuf[offset] = uint8(len(s.ServerName))
 	offset++
 	copy(deltaBuf[offset:], s.ServerName)
 	offset += len(s.ServerName)
 
-	// Serialize participants
-	for _, p := range pi {
-		// Get the participant's data (avoiding repeated map lookups)
-		participant := p
-		// Write participant name length and name
-		deltaBuf[offset] = uint8(len(participant.name))
+	for name, value := range selectedDelta {
+		nameLen := len(name)
+		deltaBuf[offset] = uint8(nameLen)
 		offset++
-		copy(deltaBuf[offset:], participant.name)
-		offset += len(participant.name)
+
+		copy(deltaBuf[offset:], name)
+		offset += nameLen
 
 		// Write the number of key-value pairs for the participant
-		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(participant.keyValues)))
+		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(value)))
 		offset += 2
 
-		// Serialize each key in 'keysToSerialize'
-		for k, value := range participant.keyValues {
+		for _, v := range value {
 
-			v := value
-			key := k
-			// Write key (which is similar to how we handle name)
-			deltaBuf[offset] = uint8(len(key))
+			deltaBuf[offset] = uint8(len(v.key))
 			offset++
-			copy(deltaBuf[offset:], key)
-			offset += len(key)
+			copy(deltaBuf[offset:], v.key)
+			offset += len(v.key)
+
+			// Write the value type (1 byte, uint8)
+			deltaBuf[offset] = uint8(v.valueType)
+			offset++
 
 			// Write version (8 bytes, uint64)
-			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(value.version))
+			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(v.version))
 			offset += 8
 
-			// Write valueType (1 byte, uint8)
-			deltaBuf[offset] = v.valueType
-			offset++
-
-			// Write value length (4 bytes, uint32) and the value itself
+			// Write the value
 			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.value)))
 			offset += 4
-			//log.Printf("%s value ----- ==================== %s", s.ServerName, v.value)
 			copy(deltaBuf[offset:], v.value)
 			offset += len(v.value)
 
@@ -564,9 +542,8 @@ func (s *GBServer) serialiseClusterDelta() ([]byte, error) {
 
 	}
 
-	// Append CRLF
-	copy(deltaBuf[offset:], CLRF) // Assuming CLRF is defined as []byte{13, 10}
-	offset += 2
+	copy(deltaBuf[offset:], CLRF)
+	offset += len(CLRF)
 
 	// Validate buffer usage
 	if offset != length {

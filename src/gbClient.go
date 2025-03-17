@@ -694,38 +694,20 @@ func (c *gbClient) enqueueProto(data []byte) {
 }
 
 //===================================================================================
-// Node Request Handling
-//===================================================================================
-
-func prepareRequest(data []byte, version, command int, req, resp uint16) ([]byte, error) {
-
-	switch version {
-	case 1:
-		header := constructNodeHeader(1, uint8(command), req, resp, uint16(len(data)), NODE_HEADER_SIZE_V1)
-		packet := &nodePacket{
-			header,
-			data,
-		}
-		payload, gbErr := packet.serialize()
-		if gbErr != nil {
-			return nil, fmt.Errorf("prepareRequest: serialize failed: %w", gbErr)
-		}
-		return payload, nil
-	}
-
-	return nil, fmt.Errorf("prepareRequest: version is not 1")
-
-}
-
-//===================================================================================
 // Node Response Handling
 //===================================================================================
 
 // TODO Create standard response errors and protocol errors to return on the channel
 
+type responsePayload struct {
+	respID uint16
+	reqID  uint16
+	msg    []byte
+}
+
 type response struct {
 	id      int
-	ch      chan []byte
+	ch      chan responsePayload
 	timeout time.Duration
 	err     chan error
 }
@@ -739,7 +721,7 @@ type responseHandler struct {
 func (c *gbClient) addResponseChannel(seqID int) *response {
 
 	rsp := &response{
-		ch:  make(chan []byte, 1),
+		ch:  make(chan responsePayload, 1),
 		err: make(chan error, 1),
 		id:  seqID,
 	}
@@ -766,38 +748,38 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 
 // TODO need to make generic wait for response that a caller can use to wait
 
-func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) ([]byte, error) {
+func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) (responsePayload, error) {
 	select {
 	case <-ctx.Done():
 		// Context canceled, return immediately
 		//log.Printf("waitForResponse - context canceled for response ID %d", rsp.id)
-		return nil, ctx.Err()
+		return responsePayload{}, ctx.Err()
 	case writeErr := <-c.errChan:
-		return nil, fmt.Errorf("write error: %w", writeErr)
+		return responsePayload{}, fmt.Errorf("write error: %w", writeErr)
 	case readErr := <-c.errChan:
-		return nil, fmt.Errorf("read error: %w", readErr)
+		return responsePayload{}, fmt.Errorf("read error: %w", readErr)
 	case msg := <-rsp.ch:
 		//log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
 	case err := <-rsp.err:
-		return nil, WrapGBError(ResponseErr, err)
+		return responsePayload{}, WrapGBError(ResponseErr, err)
 	}
 }
 
-func (c *gbClient) waitForResponseAndBlock(ctx context.Context, rsp *response) ([]byte, error) {
+func (c *gbClient) waitForResponseAndBlock(ctx context.Context, rsp *response) (responsePayload, error) {
 
 	defer c.responseCleanup(rsp, uint16(rsp.id))
 
 	resp, err := c.waitForResponse(ctx, rsp)
 	if err != nil {
-		return nil, err
+		return responsePayload{}, err
 	}
 
 	return resp, nil
 
 }
 
-func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, handleResponse func([]byte, error)) {
+func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, handleResponse func(responsePayload, error)) {
 
 	go func() {
 		defer c.responseCleanup(rsp, uint16(rsp.id))

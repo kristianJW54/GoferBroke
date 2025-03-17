@@ -207,15 +207,6 @@ type phiAccrual struct {
 	pa          sync.Mutex
 }
 
-// -- Maybe a PhiAcc map with node-name as key and phiAccrual as value?
-
-// handler for first gossip round
-// command will be syn
-// inside - will need to create a digest and queue it, then wait for response
-// once response given - it will be syn-ack, which we will need to call the ack handler and process etc
-
-// if syn received - need to call syn-ack handler which will generate a digest and a delta to queue, response will be an ack
-
 //=======================================================
 // Participant Heap
 //=======================================================
@@ -548,7 +539,7 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		return nil, WrapGBError(DiscoveryReqErr, err)
 	}
 
-	return r, nil
+	return r.msg, nil
 
 }
 
@@ -705,17 +696,17 @@ func (s *GBServer) modifyDigest(digest []byte) ([]byte, int, error) {
 //-------------------------
 // Send Digest in GOSS_SYN - Stage 1
 
-func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, error) {
+func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayload, error) {
 	// Generate the digest
 	digest, _, err := s.generateDigest()
 	if err != nil {
-		return nil, fmt.Errorf("sendDigest - generate digest error: %w", err)
+		return responsePayload{}, fmt.Errorf("sendDigest - generate digest error: %w", err)
 	}
 
 	// Acquire request ID
 	reqID, err := s.acquireReqID()
 	if err != nil {
-		return nil, fmt.Errorf("sendDigest - acquiring ID error: %w", err)
+		return responsePayload{}, fmt.Errorf("sendDigest - acquiring ID error: %w", err)
 	}
 
 	// Construct the packet
@@ -726,12 +717,12 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 	}
 	cereal, gbErr := packet.serialize()
 	if gbErr != nil {
-		return nil, fmt.Errorf("sendDigest - serialize error: %w", gbErr)
+		return responsePayload{}, fmt.Errorf("sendDigest - serialize error: %w", gbErr)
 	}
 
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("sendDigest - context canceled before sending digest: %w", ctx.Err())
+		return responsePayload{}, fmt.Errorf("sendDigest - context canceled before sending digest: %w", ctx.Err())
 	default:
 
 	}
@@ -741,7 +732,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) ([]byte, erro
 
 	r, err := conn.waitForResponseAndBlock(ctx, resp)
 	if err != nil {
-		return nil, err
+		return responsePayload{}, err
 	}
 
 	return r, nil
@@ -967,15 +958,27 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	resp := c.qProtoWithResponse(respID, pay, false)
 
-	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
+	c.waitForResponseAsync(ctx, resp, func(delta responsePayload, err error) {
 
 		defer cancel()
 		if err != nil {
 			log.Printf("error in sending goss_syn_ack: %v", err)
 		}
 
-		// TODO Response should be a delta we can then process
-		log.Printf("resp == %s", string(bytes))
+		// If we receive a response delta - process and add it to our map
+		//srv := c.srv
+
+		log.Printf("delta in async = %s", delta.msg)
+
+		//cd, e := deserialiseDelta(delta.msg)
+		//if e != nil {
+		//	log.Printf("error in sending goss_syn_ack: %v", e)
+		//}
+		//e = srv.addGSADeltaToMap(cd)
+		//if e != nil {
+		//	log.Printf("error in sending goss_syn_ack: %v", e)
+		//}
+
 		return
 
 	})
@@ -986,6 +989,44 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 //=======================================================
 // GOSS_ACK Prep
 //=======================================================
+
+func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
+
+	// Compare here - Will need to take a remaining size left over from generating our digest
+	partQueue, err := s.generateParticipantHeap(sender, fd)
+	if err != nil {
+
+		log.Printf("err = %v", err)
+		handledErr := HandleError(err, func(gbError []*GBError) error {
+			if len(gbError) > 0 {
+				return gbError[0]
+			} else {
+				return err
+			}
+		})
+		if errors.Is(handledErr, EmptyParticipantHeapErr) {
+			return nil, WrapGBError(GossAckErr, EmptyParticipantHeapErr)
+		}
+		return nil, nil
+
+	}
+
+	remaining := DEFAULT_MAX_GSA
+
+	// Populate delta queues and build selected deltas
+	selectedDeltas, deltaSize, err := s.buildDelta(&partQueue, remaining)
+	if err != nil {
+		return nil, err
+	}
+
+	delta, err := s.serialiseACKDelta(selectedDeltas, deltaSize)
+	if err != nil {
+		return nil, WrapGBError(GossAckErr, err)
+	}
+
+	return delta, nil
+
+}
 
 //=======================================================
 // Gossip Signalling + Process
@@ -1349,8 +1390,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 }
 
-//TODO When a new node joins - it is given info by the seed - so when choosing to gossip - for some it will need to dial
-// the nodes using the addr in the clusterMap
+//TODO Need to decide how to propagate errors
 
 func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
@@ -1390,6 +1430,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	var stage int
 
+	// So what we can do is set up a progress and error collection
+
 	//------------- GOSS_SYN Stage 1 -------------//
 
 	// TODO The max version seems to have caused a problem + discovery is also a problem + we dialled for some reason
@@ -1413,9 +1455,41 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 	stage = 2
 
-	_, _, _, err = deserialiseGSA(resp)
+	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
 	if err != nil {
 		log.Printf("deserialise GSA failed: %v", err)
+	}
+
+	// Use CD Value to add to process and add to out map
+	if cdValue != nil {
+		err = s.addGSADeltaToMap(cdValue)
+		if err != nil {
+			log.Printf("addGSADeltaToMap failed: %v", err)
+		}
+	}
+
+	//------------- GOSS_ACK Stage 3 -------------//
+	stage = 3
+
+	if resp.respID != 0 {
+
+		ack, err := s.prepareACK(sender, fdValue)
+		if err != nil {
+			log.Printf("prepareACK failed: %v", err)
+			return
+		}
+
+		pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
+		if err != nil {
+			log.Printf("prepareRequest failed: %v", err)
+		}
+
+		conn.mu.Lock()
+		conn.enqueueProto(pay)
+		conn.mu.Unlock()
+
+		//conn.sendOKResp(resp.respID)
+
 	}
 
 	//log.Printf("%s received ------> name = %s", s.ServerName, sender)

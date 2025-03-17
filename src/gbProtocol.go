@@ -33,15 +33,6 @@ const (
 	INITIAL_BUFF_SIZE = 512
 )
 
-// Response Codes ??/
-
-//=====================================================================
-// Node Response Success
-//=====================================================================
-
-var OKRequester = []byte("1 -+- OK -+-\r\n")
-var OKResponder = []byte("2 -+- OK RESP -+-\r\n")
-
 //------------------------
 //Packet constructor and serialisation
 
@@ -105,6 +96,73 @@ func (np *nodePacket) serialize() ([]byte, error) {
 	copy(dataBuf, header)
 	copy(dataBuf[np.headerSize:], np.data)
 	return dataBuf, nil
+}
+
+func prepareRequest(data []byte, version, command int, req, resp uint16) ([]byte, error) {
+
+	switch version {
+	case 1:
+		header := constructNodeHeader(1, uint8(command), req, resp, uint16(len(data)), NODE_HEADER_SIZE_V1)
+		packet := &nodePacket{
+			header,
+			data,
+		}
+		payload, gbErr := packet.serialize()
+		if gbErr != nil {
+			return nil, fmt.Errorf("prepareRequest: serialize failed: %w", gbErr)
+		}
+		return payload, nil
+	}
+
+	return nil, fmt.Errorf("prepareRequest: version is not 1")
+
+}
+
+// Response Codes ??/
+
+//=====================================================================
+// Node Response Success
+//=====================================================================
+
+var OKRequester = []byte("1 -+- OK -+-\r\n")
+var OKResponder = []byte("2 -+- OK RESP -+-\r\n")
+
+func (c *gbClient) sendOK(reqID uint16) {
+
+	ok, err := prepareRequest(OKRequester, 1, OK, reqID, uint16(0))
+	if err != nil {
+		return
+	}
+
+	c.mu.Lock()
+	c.enqueueProto(ok)
+	c.mu.Unlock()
+
+}
+
+func (c *gbClient) sendOKResp(respID uint16) {
+
+	ok, err := prepareRequest(OKResponder, 1, OK_RESP, uint16(0), respID)
+	if err != nil {
+		return
+	}
+
+	c.mu.Lock()
+	c.enqueueProto(ok)
+	c.mu.Unlock()
+
+}
+
+func (c *gbClient) sendErr(reqID, respID uint16, err string) {
+
+	errBytes := []byte(err)
+
+	errPay, _ := prepareRequest(errBytes, 1, ERR_RESP, reqID, respID)
+
+	c.mu.Lock()
+	c.enqueueProto(errPay)
+	c.mu.Unlock()
+
 }
 
 // We only de-serialize when we need to produce a readable output

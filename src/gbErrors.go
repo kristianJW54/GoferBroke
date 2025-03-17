@@ -331,6 +331,7 @@ const (
 	EMPTY_ADDR_MAP_CODE         = 59
 	ADD_DICSOVERY_CODE          = 60
 	EMPTY_PARTICIPANT_HEAP_CODE = 61
+	GOSS_ACK_CODE               = 62
 )
 
 var knownNetworkErrors = map[int]*GBError{
@@ -356,6 +357,7 @@ var knownInternalErrors = map[int]*GBError{
 	EMPTY_ADDR_MAP_CODE:         &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map is empty"},
 	ADD_DICSOVERY_CODE:          &GBError{Code: ADD_DICSOVERY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "add discovery failed"},
 	EMPTY_PARTICIPANT_HEAP_CODE: &GBError{Code: EMPTY_PARTICIPANT_HEAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "empty participant heap"},
+	GOSS_ACK_CODE:               &GBError{Code: GOSS_ACK_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "goss ack error"},
 }
 
 var (
@@ -364,6 +366,7 @@ var (
 	EmptyAddrMapErr         = knownInternalErrors[EMPTY_ADDR_MAP_CODE]
 	AddDiscoveryErr         = knownInternalErrors[ADD_DICSOVERY_CODE]
 	EmptyParticipantHeapErr = knownInternalErrors[EMPTY_PARTICIPANT_HEAP_CODE]
+	GossAckErr              = knownInternalErrors[GOSS_ACK_CODE]
 )
 
 var (

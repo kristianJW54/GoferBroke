@@ -123,9 +123,12 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	// If we receive no error we can assume the response was received and continue
-	// --->
+	// ---> We should check if there is a respID and then sendOKResp
+	if r.respID != 0 {
+		client.sendOKResp(r.respID)
+	}
 
-	delta, err := deserialiseDelta(r)
+	delta, err := deserialiseDelta(r.msg)
 	if err != nil {
 		return fmt.Errorf("connect to seed - deserialising data: %s", err)
 	}
@@ -213,8 +216,9 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		return fmt.Errorf("connectToNodeInMap - wait for response: %s", err)
 	}
 	// If we receive no error we can assume the response was received and continue
+	// We do not need to check for respID here in r because this is a simple request with a response and is not chained
 
-	delta, err := deserialiseDelta(r)
+	delta, err := deserialiseDelta(r.msg)
 	if err != nil {
 		return fmt.Errorf("connectToNodeInMap - deserialising data: %s", err)
 	}
@@ -422,12 +426,14 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 	resp := c.qProtoWithResponse(respID, self, false)
 
-	c.waitForResponseAsync(ctx, resp, func(bytes []byte, err error) {
+	c.waitForResponseAsync(ctx, resp, func(bytes responsePayload, err error) {
 
 		defer cancel()
 		if err != nil {
 			log.Printf("error in onboardNewJoiner: %v", err)
 		}
+
+		log.Printf("resp ===== in new on board = %s", bytes.msg)
 
 		//log.Printf("response from onboardNewJoiner: %v", string(bytes))
 		err = c.srv.moveToConnected(c.cid, cd.sender)
@@ -592,26 +598,7 @@ func (c *gbClient) processSelfInfo(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- msg:
-		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
-		if c.ph.respID != 0 {
-			// TODO Refactor into simple sendOK() method
-			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1)
-			packet := &nodePacket{
-				header,
-				OKResponder,
-			}
-
-			pay, gbErr := packet.serialize()
-			if gbErr != nil {
-				log.Printf("error serialising packet - %v", gbErr)
-			}
-
-			c.mu.Lock()
-			c.enqueueProto(pay)
-			c.mu.Unlock()
-		}
-		return
+	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 		return
@@ -633,17 +620,10 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 
 	cereal, err := c.discoveryResponse(known)
 
+	// TODO Use handle error function here
 	if err != nil && cereal == nil {
-		// Need to check what the error is first
-		pay, err := prepareRequest(EmptyAddrMapNetworkErr.ToBytes(), 1, ERR_RESP, c.ph.reqID, uint16(0))
-		if err != nil {
-			log.Printf("prepareRequest failed: %v", err)
-		}
-
-		c.mu.Lock()
-		c.enqueueProto(pay)
-		c.mu.Unlock()
-
+		// TODO Need to check what the error is first
+		c.sendErr(c.ph.reqID, uint16(0), EmptyAddrMapNetworkErr.Error())
 		return
 
 	}
@@ -677,8 +657,7 @@ func (c *gbClient) processDiscoveryRes(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- msg:
-		//log.Printf("%s message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
+	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -695,10 +674,6 @@ func (c *gbClient) processHandShake(message []byte) {
 		// Send err response
 	}
 
-	// TODO Finish this
-	// Send HandShake Response here
-	// --
-	//log.Printf("%s -----------------> handshake request ID = %v", c.srv.ServerName, c.ph.reqID)
 	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(c.ph.reqID), 0)
 	if err != nil {
 		log.Printf("prepareSelfInfoSend failed: %v", err)
@@ -747,8 +722,7 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- msg:
-		//log.Printf("%s Info message sent to response channel for reqID %d", c.srv.ServerName, c.ph.reqID)
+	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -758,8 +732,6 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 }
 
 func (c *gbClient) processOK(message []byte) {
-
-	//log.Printf("resp id for ok == %v", int(c.ph.reqID))
 
 	rsp, err := c.getResponseChannel(c.ph.reqID)
 	if err != nil {
@@ -774,8 +746,7 @@ func (c *gbClient) processOK(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- msg:
-		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
+	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -799,8 +770,7 @@ func (c *gbClient) processOKResp(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- msg:
-		//log.Printf("Info message sent to response channel for reqID %d", c.ph.respID)
+	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
 		return
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.respID)
@@ -809,7 +779,41 @@ func (c *gbClient) processOKResp(message []byte) {
 
 }
 
-func (c *gbClient) processGossAck(message []byte) {
+func (c *gbClient) processGossSyn(message []byte) {
+
+	if c.srv.discoveryPhase {
+		c.sendErr(c.ph.reqID, uint16(0), ConductingDiscoveryErr.Error())
+		return
+	}
+
+	sender, d, err := deSerialiseDigest(message)
+	if err != nil {
+		log.Printf("error serialising digest - %v", err)
+	}
+
+	senderName := sender
+
+	// Does the sending node need to defer?
+	// If it does - then we must construct an error response, so it can exit out of it's round
+	deferGossip, err := c.srv.deferGossipRound(senderName)
+	if err != nil {
+		log.Printf("error deferring gossip - %v", err)
+		return
+	}
+
+	if deferGossip {
+		c.sendErr(c.ph.reqID, uint16(0), GossipDeferredErr.Error())
+		return
+	}
+
+	srv := c.srv
+
+	err = c.sendGossSynAck(srv.ServerName, d)
+	if err != nil {
+		log.Printf("sendGossSynAck failed: %v", err)
+	}
+
+	return
 
 }
 
@@ -827,27 +831,10 @@ func (c *gbClient) processGossSynAck(message []byte) {
 	msg := make([]byte, len(message))
 	copy(msg, message)
 
+	respID := c.ph.respID
+
 	select {
-	case rsp.ch <- msg:
-		//log.Printf("Info message sent to response channel for reqID %d", c.ph.reqID)
-		if c.ph.respID != 0 {
-			// TODO Refactor into simple sendOK() method
-			header := constructNodeHeader(1, OK_RESP, 0, c.ph.respID, uint16(len(OKResponder)), NODE_HEADER_SIZE_V1)
-			packet := &nodePacket{
-				header,
-				OKResponder,
-			}
-
-			pay, gbErr := packet.serialize()
-			if gbErr != nil {
-				log.Printf("error serialising packet - %v", gbErr)
-			}
-
-			c.mu.Lock()
-			c.enqueueProto(pay)
-			c.mu.Unlock()
-		}
-		return
+	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: respID, msg: msg}:
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 		return
@@ -855,94 +842,25 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 }
 
-func (c *gbClient) processGossSyn(message []byte) {
+func (c *gbClient) processGossAck(message []byte) {
 
-	//TODO We need to grab the server lock here and take a look at who we are gossiping with in order to see
-	// if we need to defer gossip round or continue
-
-	//if c.srv.discoveryPhase {
-	//
-	//	errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(ConductingDiscoveryErr.Error())), NODE_HEADER_SIZE_V1)
-	//	errPacket := &nodePacket{
-	//		errHeader,
-	//		ConductingDiscoveryErr.ToBytes(),
-	//	}
-	//
-	//	errPay, gbErr := errPacket.serialize()
-	//	if gbErr != nil {
-	//		log.Printf("error serialising packet - %v", gbErr)
-	//	}
-	//
-	//	c.mu.Lock()
-	//	c.enqueueProto(errPay)
-	//	c.mu.Unlock()
-	//
-	//	return
-	//
-	//}
-
-	sender, digest, err := deSerialiseDigest(message)
+	rsp, err := c.getResponseChannel(c.ph.respID)
 	if err != nil {
-		log.Printf("error serialising digest - %v", err)
+		log.Printf("getResponseChannel failed: %v", err)
 	}
 
-	senderName := sender
-
-	// Does the sending node need to defer?
-	// If it does - then we must construct an error response, so it can exit out of it's round
-	deferGossip, err := c.srv.deferGossipRound(senderName)
-	if err != nil {
-		log.Printf("error deferring gossip - %v", err)
+	if rsp == nil {
 		return
 	}
 
-	if deferGossip {
+	msg := make([]byte, len(message))
+	copy(msg, message)
 
-		deferErr := knownNetworkErrors[GOSSIP_DEFERRED_CODE]
-
-		errHeader := constructNodeHeader(1, ERR_RESP, c.ph.reqID, 0, uint16(len(deferErr.Error())), NODE_HEADER_SIZE_V1)
-		errPacket := &nodePacket{
-			errHeader,
-			deferErr.ToBytes(),
-		}
-
-		errPay, gbErr := errPacket.serialize()
-		if gbErr != nil {
-			log.Printf("error serialising packet - %v", gbErr)
-		}
-
-		c.mu.Lock()
-		c.enqueueProto(errPay)
-		c.mu.Unlock()
-
+	select {
+	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
+	default:
+		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 		return
-
 	}
-
-	// TODO ONLY TURN ON GSA WHEN READY -- WILL CAUSE GOSSIP TO FAIL
-
-	srv := c.srv
-
-	err = c.sendGossSynAck(srv.ServerName, digest)
-	if err != nil {
-		log.Printf("sendGossSynAck failed: %v", err)
-	}
-
-	//header := constructNodeHeader(1, OK, c.ph.reqID, 0, uint16(len(OKRequester)), NODE_HEADER_SIZE_V1)
-	//packet := &nodePacket{
-	//	header,
-	//	OKRequester,
-	//}
-	//
-	//pay, gbErr := packet.serialize()
-	//if gbErr != nil {
-	//	log.Printf("error serialising packet - %v", gbErr)
-	//}
-	//
-	//c.mu.Lock()
-	//c.qProto(pay, true)
-	//c.mu.Unlock()
-
-	return
 
 }
