@@ -514,6 +514,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processOK(message)
 	case OK_RESP:
 		c.processOKResp(message)
+	case ERR_R:
+		c.processErr(message)
 	case ERR_RESP:
 		c.processErrResp(message)
 	default:
@@ -522,7 +524,7 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 
 }
 
-func (c *gbClient) processErrResp(message []byte) {
+func (c *gbClient) processErr(message []byte) {
 
 	rsp, err := c.getResponseChannel(c.ph.reqID)
 	if err != nil {
@@ -543,6 +545,33 @@ func (c *gbClient) processErrResp(message []byte) {
 		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+	}
+
+}
+
+func (c *gbClient) processErrResp(message []byte) {
+
+	rsp, err := c.getResponseChannel(c.ph.respID)
+	if err != nil {
+		log.Printf("getResponseChannel failed: %v", err)
+	}
+
+	if rsp == nil {
+		return
+	}
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
+	msgErr := BytesToError(msg)
+
+	log.Printf("GOT ERR RESP ========================= %v", msgErr)
+
+	select {
+	case rsp.err <- msgErr: // Non-blocking
+		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
+	default:
+		log.Printf("Warning: response channel full for respID %d", c.ph.respID)
 	}
 
 }
@@ -615,8 +644,6 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	if err != nil {
 		log.Printf("deserialise KnownAddressNodes failed: %v", err)
 	}
-
-	log.Printf("%s --> received known addresses %+v", c.srv.ServerName, known)
 
 	cereal, err := c.discoveryResponse(known)
 
@@ -813,6 +840,8 @@ func (c *gbClient) processGossSyn(message []byte) {
 		log.Printf("sendGossSynAck failed: %v", err)
 	}
 
+	log.Printf("%s -> sent gsa with - %v", srv.ServerName, d)
+
 	return
 
 }
@@ -835,6 +864,7 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 	select {
 	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: respID, msg: msg}:
+		//TODO Error is the problem here
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
 		return

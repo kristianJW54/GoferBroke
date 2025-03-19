@@ -574,7 +574,6 @@ func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 			s.discoveryPhase = false
 		}
 	} else if perc >= DEFAULT_DISCOVERY_PERCENTAGE {
-		log.Printf("exiting discovery")
 		s.discoveryPhase = false
 	}
 
@@ -890,7 +889,6 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	partQueue, err := s.generateParticipantHeap(sender, digest)
 	if err != nil {
 
-		log.Printf("err = %v", err)
 		handledErr := HandleError(err, func(gbError []*GBError) error {
 			if len(gbError) > 0 {
 				return gbError[0]
@@ -954,6 +952,8 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		return err
 	}
 
+	log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
+
 	ctx, cancel := context.WithTimeout(c.srv.serverContext, 2*time.Second)
 
 	resp := c.qProtoWithResponse(respID, pay, false)
@@ -962,13 +962,15 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 		defer cancel()
 		if err != nil {
-			log.Printf("error in sending goss_syn_ack: %v", err)
+			log.Printf("%s - error in sending goss_syn_ack: %v", c.srv.ServerName, err.Error())
+			// Need to handle the error but for now just return
+			return
 		}
 
 		// If we receive a response delta - process and add it to our map
-		//srv := c.srv
+		srv := c.srv
 
-		log.Printf("delta in async = %s", delta.msg)
+		log.Printf("%s - delta in async = %s", srv.ServerName, delta.msg)
 
 		//cd, e := deserialiseDelta(delta.msg)
 		//if e != nil {
@@ -1304,7 +1306,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	if s.discoveryPhase {
-		log.Printf("------------------ I am discovering addresses in the map :) ------------------")
 		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
 		if !ok {
 			log.Printf("No connection to discover addresses in the map")
@@ -1455,17 +1456,17 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 	stage = 2
 
-	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
+	_, _, cdValue, err := deserialiseGSA(resp.msg)
 	if err != nil {
 		log.Printf("deserialise GSA failed: %v", err)
 	}
 
 	// Use CD Value to add to process and add to out map
 	if cdValue != nil {
-		err = s.addGSADeltaToMap(cdValue)
-		if err != nil {
-			log.Printf("addGSADeltaToMap failed: %v", err)
-		}
+		//err = s.addGSADeltaToMap(cdValue)
+		//if err != nil {
+		//	log.Printf("addGSADeltaToMap failed: %v", err)
+		//}
 	}
 
 	//------------- GOSS_ACK Stage 3 -------------//
@@ -1473,39 +1474,34 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	if resp.respID != 0 {
 
-		ack, err := s.prepareACK(sender, fdValue)
-		if err != nil {
-			log.Printf("prepareACK failed: %v", err)
-			return
-		}
-
-		pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
-		if err != nil {
-			log.Printf("prepareRequest failed: %v", err)
-		}
-
-		conn.mu.Lock()
-		conn.enqueueProto(pay)
-		conn.mu.Unlock()
-
-		//conn.sendOKResp(resp.respID)
-
+		log.Printf("need to send %v", NoDigestErr.Error())
+		conn.sendErrResp(uint16(0), conn.ph.respID, NoDigestErr.Error())
+		//conn.sendOKResp(conn.ph.respID)
+		//	log.Printf("===================================================")
+		//	ack, err := s.prepareACK(sender, fdValue)
+		//	if err != nil {
+		//		//log.Printf("prepareACK failed: %v", err)
+		//		log.Printf("++++++++++++++++++++++++++++++++++++++")
+		//		conn.sendErrResp(resp.reqID, resp.respID, EmptyParticipantHeapErr.Error())
+		//		//conn.sendOKResp(resp.respID)
+		//		return
+		//	}
+		//
+		//	pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
+		//	if err != nil {
+		//		//log.Printf("prepareRequest failed: %v", err)
+		//		return
+		//	}
+		//
+		//	conn.mu.Lock()
+		//	conn.enqueueProto(pay)
+		//	conn.mu.Unlock()
+		//
+		//	//conn.sendOKResp(resp.respID)
+		//
+	} else {
+		log.Printf("-----------------------------00000000000000000-----------------------------")
 	}
-
-	//log.Printf("%s received ------> name = %s", s.ServerName, sender)
-	//for _, fdValue := range *fd {
-	//	log.Printf("digest check = %+v", fdValue)
-	//}
-	//
-	//if cd != nil {
-	//	for _, c := range cd.delta {
-	//		for k, v := range c.keyValues {
-	//			log.Printf("key = %s value = %s", k, v.value)
-	//		}
-	//	}
-	//}
-
-	//------------- GOSS_ACK Stage 3 -------------//
 
 	//TODO if we received a response from sending our digest we should have successfully de-serialised the gsa in which we can now use
 	// to build the ACK which is the delta - if err we MUST send back an err response as the waiting node is holding for an async response
@@ -1513,7 +1509,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- Handle Completion -------------
 
 	if err != nil {
-		log.Printf("Error in gossip round (stage %d): %v", stage, err)
+		//log.Printf("Error in gossip round (stage %d): %v", stage, err)
 	}
 
 	select {

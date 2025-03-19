@@ -157,6 +157,18 @@ func (c *gbClient) sendErr(reqID, respID uint16, err string) {
 
 	errBytes := []byte(err)
 
+	errPay, _ := prepareRequest(errBytes, 1, ERR_R, reqID, respID)
+
+	c.mu.Lock()
+	c.enqueueProto(errPay)
+	c.mu.Unlock()
+
+}
+
+func (c *gbClient) sendErrResp(reqID, respID uint16, err string) {
+
+	errBytes := []byte(err)
+
 	errPay, _ := prepareRequest(errBytes, 1, ERR_RESP, reqID, respID)
 
 	c.mu.Lock()

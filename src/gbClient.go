@@ -762,6 +762,7 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) (response
 		//log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
 	case err := <-rsp.err:
+		log.Printf("err in wait for response for %s-%v", c.srv.ServerName, err)
 		return responsePayload{}, WrapGBError(ResponseErr, err)
 	}
 }
@@ -786,6 +787,7 @@ func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, hand
 		//log.Printf("waitForResponseAsync - waiting for response for ID %d", rsp.id)
 
 		resp, err := c.waitForResponse(ctx, rsp)
+
 		handleResponse(resp, err)
 
 	}()
@@ -818,7 +820,9 @@ func (c *gbClient) getResponseChannel(id uint16) (*response, error) {
 func (c *gbClient) qProtoWithResponse(id uint16, proto []byte, sendNow bool) *response {
 	rsp := c.addResponseChannel(int(id)) // Create a response channel
 
+	c.mu.Lock()
 	c.enqueueProto(proto) // Use the new enqueue method
+	c.mu.Unlock()
 
 	if sendNow {
 		c.mu.Lock()

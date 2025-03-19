@@ -1,7 +1,5 @@
 package src
 
-import "log"
-
 const (
 	START = iota
 	VERSION1
@@ -31,6 +29,7 @@ const (
 	OK
 	OK_RESP
 	EOS
+	ERR_R
 	ERR_RESP
 )
 
@@ -143,6 +142,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.state = GOSS_SYN
 			case GOSS_SYN_ACK:
 				c.state = GOSS_SYN_ACK
+			case ERR_R:
+				c.state = ERR_R
 			case ERR_RESP:
 				c.state = ERR_RESP
 			}
@@ -232,6 +233,34 @@ func (c *gbClient) parsePacket(packet []byte) {
 			}
 
 		case OK_RESP:
+			switch b {
+			case '\r':
+				c.drop = 1
+			case '\n':
+				var arg []byte
+				if c.argBuf != nil {
+					arg = c.argBuf
+					c.argBuf = nil
+				} else {
+					arg = packet[c.position : i-c.drop]
+				}
+				c.processArg(arg)
+
+				c.drop = 0
+				c.position = i + 1
+				c.state = MSG_PAYLOAD
+
+				if c.msgBuf == nil {
+					i = c.position + c.ph.msgLength - 2
+				}
+
+			default:
+				if c.argBuf != nil {
+					c.argBuf = append(c.argBuf, b)
+				}
+			}
+
+		case ERR_R:
 			switch b {
 			case '\r':
 				c.drop = 1
@@ -533,7 +562,6 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 			//Check if msgBuf ends with double CRLF ("\r\n\r\n") and remove the extra pair.
 			if len(c.msgBuf) >= 4 && string(c.msgBuf[len(c.msgBuf)-4:]) == "\r\n\r\n" {
-				log.Printf("Double CRLF detected, trimming extra CRLF")
 				c.msgBuf = c.msgBuf[:len(c.msgBuf)-2]
 			}
 

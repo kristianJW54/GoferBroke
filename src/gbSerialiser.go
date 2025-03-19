@@ -3,7 +3,6 @@ package src
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -495,7 +494,7 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSiz
 	deltaBuf[offset] = DELTA_TYPE
 	offset++
 	// TODO We are manually adding the header metadata here but will need to be careful we don't add this when building the delta
-	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(deltaSize+9))
+	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(length))
 	offset += 4
 	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(selectedDelta)))
 	offset += 2
@@ -1020,7 +1019,6 @@ func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
 	// Ensure there's data left for delta processing
 	if len(gsa) <= int(digestLength) {
 		// Only a digest was sent, return without processing a delta
-		log.Println("only digest sent - returning")
 		return senderName, digest, nil, nil
 	}
 

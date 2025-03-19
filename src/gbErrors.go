@@ -315,6 +315,7 @@ const (
 	DESERIALISE_TYPE_CODE     = 13
 	DESERIALISE_LENGTH_CODE   = 14
 	CONDUCTING_DISCOVERY_CODE = 15
+	NO_DIGEST_CODE            = 16
 )
 
 // Internal Error codes
@@ -343,6 +344,7 @@ var knownNetworkErrors = map[int]*GBError{
 	DESERIALISE_LENGTH_CODE:   &GBError{Code: DESERIALISE_LENGTH_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "mismatch in data length received by deserialise"},
 	EMPTY_ADDR_MAP_CODE:       &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "address map is empty"},
 	CONDUCTING_DISCOVERY_CODE: &GBError{Code: CONDUCTING_DISCOVERY_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "conducting discovery"},
+	NO_DIGEST_CODE:            &GBError{Code: NO_DIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "no digest to send"},
 }
 
 var knownInternalErrors = map[int]*GBError{
@@ -377,4 +379,5 @@ var (
 	NoRequestIDErr         = knownNetworkErrors[NO_REQUEST_ID_CODE]
 	EmptyAddrMapNetworkErr = knownNetworkErrors[EMPTY_ADDR_MAP_CODE]
 	ConductingDiscoveryErr = knownNetworkErrors[CONDUCTING_DISCOVERY_CODE]
+	NoDigestErr            = knownNetworkErrors[NO_DIGEST_CODE]
 )
