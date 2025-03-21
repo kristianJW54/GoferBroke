@@ -744,8 +744,6 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 
 func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (ph participantHeap, err error) {
 
-	//return nil, EmptyParticipantHeapErr
-
 	// Here we are not looking at participants we are missing - that will be sent to us when we send our digest
 	// We are focusing on what we have that the other node does not based on their digest we are receiving
 
@@ -936,6 +934,8 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 
 func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
+	reqID := c.ph.reqID
+
 	// serialise and send?
 	gsa, err := c.srv.prepareGossSynAck(sender, digest)
 	if err != nil {
@@ -947,14 +947,14 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		return err
 	}
 
-	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, c.ph.reqID, respID)
+	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, reqID, respID)
 	if err != nil {
 		return err
 	}
 
 	log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
 
-	ctx, cancel := context.WithTimeout(c.srv.serverContext, 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.srv.serverContext, 5*time.Second)
 
 	resp := c.qProtoWithResponse(respID, pay, false)
 
@@ -963,6 +963,7 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		defer cancel()
 		if err != nil {
 			log.Printf("%s - error in sending goss_syn_ack: %v", c.srv.ServerName, err.Error())
+			log.Printf("[GSA WAIT TIMEOUT] for respID %d", resp.id)
 			// Need to handle the error but for now just return
 			return
 		}
@@ -975,10 +976,12 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		//cd, e := deserialiseDelta(delta.msg)
 		//if e != nil {
 		//	log.Printf("error in sending goss_syn_ack: %v", e)
+		//	return
 		//}
 		//e = srv.addGSADeltaToMap(cd)
 		//if e != nil {
 		//	log.Printf("error in sending goss_syn_ack: %v", e)
+		//	return
 		//}
 
 		return
@@ -998,7 +1001,6 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 	partQueue, err := s.generateParticipantHeap(sender, fd)
 	if err != nil {
 
-		log.Printf("err = %v", err)
 		handledErr := HandleError(err, func(gbError []*GBError) error {
 			if len(gbError) > 0 {
 				return gbError[0]
@@ -1306,6 +1308,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	if s.discoveryPhase {
+		//	// TODO Need a better load seed mechanism
 		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
 		if !ok {
 			log.Printf("No connection to discover addresses in the map")
@@ -1422,6 +1425,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 		return
 	} else if err != nil {
 		log.Printf("error in gossip with node %s ----> %v", node, err)
+		return
 	}
 
 	err = s.storeGossipingWith(node)
@@ -1456,7 +1460,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 	stage = 2
 
-	_, _, cdValue, err := deserialiseGSA(resp.msg)
+	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
 	if err != nil {
 		log.Printf("deserialise GSA failed: %v", err)
 	}
@@ -1472,36 +1476,31 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- GOSS_ACK Stage 3 -------------//
 	stage = 3
 
-	if resp.respID != 0 {
+	log.Printf("resp ID in goss_ack %v", resp.respID)
 
-		log.Printf("need to send %v", NoDigestErr.Error())
-		conn.sendErrResp(uint16(0), conn.ph.respID, NoDigestErr.Error())
-		//conn.sendOKResp(conn.ph.respID)
-		//	log.Printf("===================================================")
-		//	ack, err := s.prepareACK(sender, fdValue)
-		//	if err != nil {
-		//		//log.Printf("prepareACK failed: %v", err)
-		//		log.Printf("++++++++++++++++++++++++++++++++++++++")
-		//		conn.sendErrResp(resp.reqID, resp.respID, EmptyParticipantHeapErr.Error())
-		//		//conn.sendOKResp(resp.respID)
-		//		return
-		//	}
-		//
-		//	pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
-		//	if err != nil {
-		//		//log.Printf("prepareRequest failed: %v", err)
-		//		return
-		//	}
-		//
-		//	conn.mu.Lock()
-		//	conn.enqueueProto(pay)
-		//	conn.mu.Unlock()
-		//
-		//	//conn.sendOKResp(resp.respID)
-		//
-	} else {
-		log.Printf("-----------------------------00000000000000000-----------------------------")
+	log.Printf("===================================================")
+	ack, err := s.prepareACK(sender, fdValue)
+	if err != nil || ack == nil {
+		log.Printf("++++++++++++++++++++++++++++++++++++++ (ACK error or empty)")
+		conn.sendErrResp(uint16(0), resp.respID, NoDigestErr.Error())
+		return
 	}
+
+	conn.sendOKResp(resp.respID)
+
+	log.Printf("here is the ack i would have sent = %s", string(ack))
+
+	//pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
+	//if err != nil {
+	//	log.Printf("prepareRequest failed: %v", err)
+	//	return
+	//}
+	//
+	//conn.mu.Lock()
+	//conn.enqueueProto(pay)
+	//conn.mu.Unlock()
+
+	//
 
 	//TODO if we received a response from sending our digest we should have successfully de-serialised the gsa in which we can now use
 	// to build the ACK which is the delta - if err we MUST send back an err response as the waiting node is holding for an async response

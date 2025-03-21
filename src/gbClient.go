@@ -780,11 +780,13 @@ func (c *gbClient) waitForResponseAndBlock(ctx context.Context, rsp *response) (
 
 }
 
+// Must defer response cleanup in callback
 func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, handleResponse func(responsePayload, error)) {
 
 	go func() {
+
+		// TODO May need to do later after callback is handled
 		defer c.responseCleanup(rsp, uint16(rsp.id))
-		//log.Printf("waitForResponseAsync - waiting for response for ID %d", rsp.id)
 
 		resp, err := c.waitForResponse(ctx, rsp)
 

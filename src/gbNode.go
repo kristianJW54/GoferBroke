@@ -171,6 +171,14 @@ func (s *GBServer) connectToSeed() error {
 
 func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
+	if _, exists, err := s.getNodeConnFromStore(node); exists {
+		if err != nil {
+			return err
+		}
+		log.Printf("[DEBUG] Already connected to node %s, skipping dial", node)
+		return nil
+	}
+
 	s.clusterMapLock.RLock()
 	participant := s.clusterMap.participants[node]
 
@@ -526,7 +534,10 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 
 func (c *gbClient) processErr(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.reqID)
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+
+	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -544,14 +555,17 @@ func (c *gbClient) processErr(message []byte) {
 	case rsp.err <- msgErr: // Non-blocking
 		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		log.Printf("Warning: response channel full for reqID %d", reqID)
 	}
 
 }
 
 func (c *gbClient) processErrResp(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.respID)
+	// Copy IDs early to avoid race or mutation
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -571,7 +585,7 @@ func (c *gbClient) processErrResp(message []byte) {
 	case rsp.err <- msgErr: // Non-blocking
 		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
-		log.Printf("Warning: response channel full for respID %d", c.ph.respID)
+		log.Printf("Warning: response channel full for respID %d", respID)
 	}
 
 }
@@ -598,7 +612,12 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 	// We have to do this last because we will end up sending back the nodes own info
 
 	for key, value := range tmpC.delta {
-		if _, exists := c.srv.clusterMap.participants[key]; !exists {
+
+		c.srv.clusterMapLock.RLock()
+		cm := c.srv.clusterMap
+		c.srv.clusterMapLock.RUnlock()
+
+		if _, exists := cm.participants[key]; !exists {
 			err := c.srv.addParticipantFromTmp(key, value)
 			if err != nil {
 				log.Printf("AddParticipantFromTmp failed: %v", err)
@@ -614,7 +633,11 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 
 func (c *gbClient) processSelfInfo(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.reqID)
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -627,9 +650,9 @@ func (c *gbClient) processSelfInfo(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		log.Printf("Warning: response channel full for reqID %d", reqID)
 		return
 	}
 
@@ -639,10 +662,13 @@ func (c *gbClient) processSelfInfo(message []byte) {
 
 func (c *gbClient) processDiscoveryReq(message []byte) {
 
+	reqID := c.ph.reqID
+
 	// First de-serialise the discovery request
 	known, err := deserialiseKnownAddressNodes(message)
 	if err != nil {
 		log.Printf("deserialise KnownAddressNodes failed: %v", err)
+		return
 	}
 
 	cereal, err := c.discoveryResponse(known)
@@ -656,7 +682,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	}
 
 	// Echo back the reqID
-	pay, err := prepareRequest(cereal, 1, DISCOVERY_RES, c.ph.reqID, uint16(0))
+	pay, err := prepareRequest(cereal, 1, DISCOVERY_RES, reqID, uint16(0))
 	if err != nil {
 		log.Printf("prepareRequest failed: %v", err)
 	}
@@ -671,7 +697,11 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 
 func (c *gbClient) processDiscoveryRes(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.reqID)
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -684,10 +714,10 @@ func (c *gbClient) processDiscoveryRes(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		log.Printf("Warning: response channel full for reqID %d", reqID)
 		return
 	}
 
@@ -695,13 +725,16 @@ func (c *gbClient) processDiscoveryRes(message []byte) {
 
 func (c *gbClient) processHandShake(message []byte) {
 
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+
 	tmpC, err := deserialiseDelta(message)
 	if err != nil {
 		log.Printf("deserialise Delta failed: %v", err)
 		// Send err response
 	}
 
-	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(c.ph.reqID), 0)
+	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(reqID), 0)
 	if err != nil {
 		log.Printf("prepareSelfInfoSend failed: %v", err)
 	}
@@ -736,7 +769,11 @@ func (c *gbClient) processHandShake(message []byte) {
 
 func (c *gbClient) processHandShakeResp(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.reqID)
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -749,10 +786,10 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		log.Printf("Warning: response channel full for reqID %d", reqID)
 		return
 	}
 
@@ -760,7 +797,11 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 
 func (c *gbClient) processOK(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.reqID)
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -773,10 +814,10 @@ func (c *gbClient) processOK(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		log.Printf("Warning: response channel full for reqID %d", reqID)
 		return
 	}
 
@@ -784,7 +825,11 @@ func (c *gbClient) processOK(message []byte) {
 
 func (c *gbClient) processOKResp(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.respID)
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -797,10 +842,10 @@ func (c *gbClient) processOKResp(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.respID)
+		log.Printf("Warning: response channel full for respID %d", respID)
 		return
 	}
 
@@ -808,8 +853,11 @@ func (c *gbClient) processOKResp(message []byte) {
 
 func (c *gbClient) processGossSyn(message []byte) {
 
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+
 	if c.srv.discoveryPhase {
-		c.sendErr(c.ph.reqID, uint16(0), ConductingDiscoveryErr.Error())
+		c.sendErr(reqID, uint16(0), ConductingDiscoveryErr.Error())
 		return
 	}
 
@@ -820,8 +868,8 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	senderName := sender
 
-	// Does the sending node need to defer?
-	// If it does - then we must construct an error response, so it can exit out of it's round
+	//Does the sending node need to defer?
+	//If it does - then we must construct an error response, so it can exit out of it's round
 	deferGossip, err := c.srv.deferGossipRound(senderName)
 	if err != nil {
 		log.Printf("error deferring gossip - %v", err)
@@ -848,7 +896,11 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 func (c *gbClient) processGossSynAck(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.reqID)
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
@@ -860,10 +912,8 @@ func (c *gbClient) processGossSynAck(message []byte) {
 	msg := make([]byte, len(message))
 	copy(msg, message)
 
-	respID := c.ph.respID
-
 	select {
-	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: respID, msg: msg}:
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		//TODO Error is the problem here
 	default:
 		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
@@ -874,12 +924,19 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 func (c *gbClient) processGossAck(message []byte) {
 
-	rsp, err := c.getResponseChannel(c.ph.respID)
+	log.Printf("[DEBUG] %s received GOSS_ACK message: %s", c.srv.ServerName, string(message))
+
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
 
 	if rsp == nil {
+		log.Printf("[WARN] No response channel found for respID %d", respID)
 		return
 	}
 
@@ -887,9 +944,10 @@ func (c *gbClient) processGossAck(message []byte) {
 	copy(msg, message)
 
 	select {
-	case rsp.ch <- responsePayload{reqID: c.ph.reqID, respID: c.ph.respID, msg: msg}:
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
+		log.Printf("[DEBUG] response delivered to channel for ID: %d", rsp.id)
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		log.Printf("Warning: response channel full for respID %d", respID)
 		return
 	}
 
