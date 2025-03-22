@@ -893,7 +893,7 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	}
 
 	for k, v := range *digest {
-		log.Printf("%s - checking max version for %s === %v", s.ServerName, k, v.maxVersion)
+		log.Printf("%s - checking max version inside prepare gsa for %s === %v", s.ServerName, k, v.maxVersion)
 	}
 
 	// Compare here - Will need to take a remaining size left over from generating our digest
@@ -910,17 +910,13 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 
 		if errors.Is(handledErr, Errors.EmptyParticipantHeapErr) {
 
-			cereal, err := s.serialiseGSA(d, nil, 0)
-			if err != nil {
-				return nil, err
-			}
-			return cereal, nil
+			return d, nil
 		}
 		return nil, nil
 
 	}
 
-	// Modify digest if no error
+	//Modify digest if no error
 	newD, newSize, err := s.modifyDigest(d)
 	if err != nil {
 		return nil, err
@@ -985,7 +981,6 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 		// TODO When we reach here - at this point we can have a corrupt max-version - it is also only on seed-server for all nodes
 		log.Printf("%s - delta in async [][][][][][][][][] = %s", srv.ServerName, delta.msg)
-		srv.debugTrack = 1
 
 		cd, e := deserialiseDelta(delta.msg)
 		if e != nil {
@@ -1489,6 +1484,10 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
 	if err != nil {
 		log.Printf("deserialise GSA failed: %v", err)
+	}
+
+	for k, v := range *fdValue {
+		log.Printf("%s - received digest from %s-%d", s.ServerName, k, v.maxVersion)
 	}
 
 	// Use CD Value to add to process and add to out map

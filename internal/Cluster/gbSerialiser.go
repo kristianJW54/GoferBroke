@@ -524,13 +524,13 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSiz
 			copy(deltaBuf[offset:], v.key)
 			offset += len(v.key)
 
-			// Write the value type (1 byte, uint8)
-			deltaBuf[offset] = uint8(v.valueType)
-			offset++
-
 			// Write version (8 bytes, uint64)
 			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(v.version))
 			offset += 8
+
+			// Write the value type (1 byte, uint8)
+			deltaBuf[offset] = uint8(v.valueType)
+			offset++
 
 			// Write the value
 			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.value)))
@@ -919,11 +919,6 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err
 
 func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaSize int) ([]byte, error) {
 
-	// First check if delta is nil and size is 0 so, we can only process digest
-	if delta == nil && deltaSize == 0 {
-		return digest, nil
-	}
-
 	digestLen := int(binary.BigEndian.Uint32(digest[1:5]))
 	if digestLen != len(digest) {
 		return nil, fmt.Errorf("length does not match")
@@ -975,13 +970,13 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 			copy(gsaBuff[offset:], v.key)
 			offset += len(v.key)
 
-			// Write the value type (1 byte, uint8)
-			gsaBuff[offset] = uint8(v.valueType)
-			offset++
-
 			// Write version (8 bytes, uint64)
 			binary.BigEndian.PutUint64(gsaBuff[offset:], uint64(v.version))
 			offset += 8
+
+			// Write the value type (1 byte, uint8)
+			gsaBuff[offset] = uint8(v.valueType)
+			offset++
 
 			// Write the value
 			binary.BigEndian.PutUint32(gsaBuff[offset:], uint32(len(v.value)))

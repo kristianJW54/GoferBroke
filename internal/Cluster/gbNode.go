@@ -894,10 +894,6 @@ func (c *gbClient) processGossSyn(message []byte) {
 		log.Printf("sendGossSynAck failed: %v", err)
 	}
 
-	for k, v := range *d {
-		log.Printf("%s - sent gsa with %s-%d", c.srv.ServerName, k, v.maxVersion)
-	}
-
 	return
 
 }
