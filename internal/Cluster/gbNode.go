@@ -868,10 +868,6 @@ func (c *gbClient) processGossSyn(message []byte) {
 		log.Printf("error serialising digest - %v", err)
 	}
 
-	for k, v := range *d {
-		log.Printf("%s - checking digest received for %s === %v", c.srv.ServerName, k, v.maxVersion)
-	}
-
 	senderName := sender
 
 	//Does the sending node need to defer?

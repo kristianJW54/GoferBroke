@@ -95,6 +95,7 @@ const (
 	CONNECTED_TO_CLUSTER
 	GOSSIP_SIGNALLED
 	GOSSIP_EXITED
+	PHI_STARTED
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -182,6 +183,7 @@ type GBServer struct {
 	// with special selfInfo methods which update and manage the servers own info within the cluster map
 	//Server Info for gossip
 	clusterMap ClusterMap
+	phi        phiControl
 
 	// Configurations and extensibility should be handled in Options which will be embedded here
 	//Distributed Info
@@ -331,6 +333,7 @@ func (s *GBServer) StartServer() {
 	} else {
 		selfInfo := initSelfParticipant(s.ServerName, s.addr)
 		s.clusterMap = *initClusterMap(s.ServerName, s.nodeTCPAddr, selfInfo)
+		s.phi = *initPhiControl()
 	}
 
 	//Checks and other start up here
@@ -367,9 +370,8 @@ func (s *GBServer) StartServer() {
 	// Will need to start a monitoring internal state method which will spawn waiting go routines to monitor changes
 	// internally and when signalled, update the changes by grabbing the server locks and unlocking after done
 
-	// Also will need a start gossiping method call once this setup is done - this will start the gossiping routines
-	// Which will use the cluster map etc...
-	// Gossiping cannot start until the seeds have sent over the cluster map and state flag is moved from JOINING to CONNECTED_TO_CLUSTER
+	//-- Start a background process to delete dead nodes
+	//-- Start a background process to delete tombstone deltas
 
 	// Main routines will be :....
 	// - System monitoring
@@ -382,6 +384,8 @@ func (s *GBServer) StartServer() {
 
 	// We wait for start up to complete here
 	s.startupSync.Wait()
+
+	// Start up phi process which will wait for the gossip signal
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	if !s.gbConfig.Internal.disableGossip {

@@ -24,7 +24,7 @@ const (
 	DEFAULT_MAX_DELTA_PER_PARTICIPANT = 5
 )
 
-// TODO May want a config mutex lock??
+// TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
 
 type GbConfig struct {
 	SeedServers map[string]Seeds `gb:"seed"`
@@ -50,6 +50,8 @@ type ClusterOptions struct {
 	maxParticipantHeapSize        int
 	preferredAddrGroup            string
 	discoveryPercentage           int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
+	paWindowSize                  int
+	paThreshold                   int
 }
 
 type InternalOptions struct {

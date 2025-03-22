@@ -170,9 +170,9 @@ type deltaQueue struct {
 type deltaHeap []*deltaQueue
 
 type Participant struct {
-	name       string // Possibly can remove
-	keyValues  map[string]*Delta
-	paValue    float64 // Not to be gossiped
+	name      string // Possibly can remove
+	keyValues map[string]*Delta
+	//paDetection *phiAccrual
 	maxVersion int64
 	pm         sync.RWMutex
 }
@@ -183,7 +183,6 @@ type ClusterMap struct {
 
 	// TODO Need to find a more efficient way of selecting random nodes to gossip with from the map rather than storing an array
 	participantArray []string
-	phiAccMap        map[string]*phiAccrual
 	// TODO Move cluster map lock from server to here
 }
 
@@ -199,12 +198,17 @@ type participantHeap []*participantQueue
 //-------------------
 //Heartbeat Monitoring + Failure Detection
 
+type phiControl struct {
+	threshold    int
+	windowSize   int
+	phiSemaphore chan struct{}
+}
+
 type phiAccrual struct {
-	threshold   int
-	windowSize  int
 	lastBeat    int64
 	currentBeat int64
-	window      map[int]int64
+	window      []int64
+	windowIndex int
 	pa          sync.Mutex
 }
 
@@ -326,7 +330,6 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
 		make([]string, 0),
-		make(map[string]*phiAccrual),
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
@@ -600,6 +603,58 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 	}
 
 	return cereal, nil
+}
+
+//=======================================================
+// Phi Accrual Failure Detection
+//=======================================================
+
+func initPhiControl() *phiControl {
+
+	// Should be taken from config
+	return &phiControl{
+		10,
+		50,
+		make(chan struct{}),
+	}
+
+}
+
+func (s *GBServer) tryStartPhiProcess() bool {
+	if !s.flags.isSet(GOSSIP_SIGNALLED) || s.serverContext.Err() != nil || s.flags.isSet(PHI_STARTED) {
+		return false
+	}
+
+	select {
+	case s.phi.phiSemaphore <- struct{}{}:
+		s.flags.set(PHI_STARTED)
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *GBServer) endPhiProcess() {
+	select {
+	case <-s.phi.phiSemaphore:
+	default:
+	}
+	s.flags.clear(PHI_STARTED)
+}
+
+func (s *GBServer) startPhiProcess() {
+
+	log.Printf("STARTED ===================================================")
+
+	// Need to wait for the gossip signal to be signalled
+	// Also use a defer condition for contextFunc()
+
+	// Then start ticker process
+
+}
+
+func (p *phiAccrual) recordHeartbeat() {
+
 }
 
 //=======================================================================
@@ -892,10 +947,6 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 		return nil, fmt.Errorf("compareAndBuildDelta - generate digest error: %w", err)
 	}
 
-	for k, v := range *digest {
-		log.Printf("%s - checking max version inside prepare gsa for %s === %v", s.ServerName, k, v.maxVersion)
-	}
-
 	// Compare here - Will need to take a remaining size left over from generating our digest
 	partQueue, err := s.generateParticipantHeap(sender, digest)
 	if err != nil {
@@ -1041,6 +1092,10 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 
 }
 
+//========================================================================================
+// GOSSIP
+//========================================================================================
+
 //=======================================================
 // Gossip Signalling + Process
 //=======================================================
@@ -1183,8 +1238,10 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 			return
 		}
 
+		go s.startPhiProcess()
+
 		s.gossip.gossipOK = s.startGossipProcess()
-		//s.gossip.gossipOK = true // For removing the gossip process to test other parts of the system
+
 		s.gossip.gossMu.Unlock()
 
 	}
@@ -1267,6 +1324,8 @@ func (s *GBServer) startGossipProcess() bool {
 			// Create a context for the gossip round
 			ctx, cancel := context.WithTimeout(s.serverContext, 4*time.Second)
 
+			// go s.runPhiCheck()
+
 			// Start a new gossip round
 			s.gossip.gossWg.Add(1)
 			s.startGoRoutine(s.ServerName, "main-gossip-round", func() {
@@ -1288,8 +1347,9 @@ func (s *GBServer) startGossipProcess() bool {
 	}
 }
 
-//--------------------
+//=======================================================
 // Gossip Round
+//=======================================================
 
 // TODO Think about introducing a gossip result struct for a channel to feed back errors
 // type GossipResult struct {
@@ -1372,12 +1432,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 			defer func() {
 				done <- struct{}{}
 
-				s.clusterMapLock.RLock()
-				myOldVersion := s.clusterMap.participants[s.ServerName].maxVersion
-				s.clusterMapLock.RUnlock()
-
-				log.Printf("my old version %v", myOldVersion)
-
 				s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
 					err := updateHeartBeat(participant, timeOfUpdate)
 					if err != nil {
@@ -1385,12 +1439,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 					}
 					return nil
 				})
-
-				s.clusterMapLock.RLock()
-				myVersion := s.clusterMap.participants[s.ServerName].maxVersion
-				s.clusterMapLock.RUnlock()
-
-				log.Printf("my new version: %v", myVersion)
 
 			}()
 
@@ -1486,10 +1534,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 		log.Printf("deserialise GSA failed: %v", err)
 	}
 
-	for k, v := range *fdValue {
-		log.Printf("%s - received digest from %s-%d", s.ServerName, k, v.maxVersion)
-	}
-
 	// Use CD Value to add to process and add to out map
 	if cdValue != nil {
 		err = s.addGSADeltaToMap(cdValue)
@@ -1521,6 +1565,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	if err != nil {
 		log.Printf("Error in gossip round (stage %d): %v", stage, err)
 	}
+
+	// Update Phi Accrual for Failure Detection
 
 	select {
 	case <-ctx.Done():
