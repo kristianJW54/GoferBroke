@@ -202,6 +202,9 @@ type phiControl struct {
 	threshold    int
 	windowSize   int
 	phiSemaphore chan struct{}
+	phiControl   chan bool
+	phiOK        bool
+	mu           sync.Mutex
 }
 
 type phiAccrual struct {
@@ -616,12 +619,16 @@ func initPhiControl() *phiControl {
 		10,
 		50,
 		make(chan struct{}),
+		make(chan bool),
+		false,
+		sync.Mutex{},
 	}
 
 }
 
 func (s *GBServer) tryStartPhiProcess() bool {
-	if !s.flags.isSet(GOSSIP_SIGNALLED) || s.serverContext.Err() != nil || s.flags.isSet(PHI_STARTED) {
+	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+		log.Printf("%s - Cannot start phi: shutting down or context canceled", s.ServerName)
 		return false
 	}
 
@@ -642,14 +649,76 @@ func (s *GBServer) endPhiProcess() {
 	s.flags.clear(PHI_STARTED)
 }
 
-func (s *GBServer) startPhiProcess() {
-
-	log.Printf("STARTED ===================================================")
-
-	// Need to wait for the gossip signal to be signalled
+func (s *GBServer) phiProcess(ctx context.Context) {
+	// Need to wait for the gossip signal to be signalled - here we use the gossipMutex which is the mutex passed to the sync.Cond
 	// Also use a defer condition for contextFunc()
 
+	stopCondition := context.AfterFunc(ctx, func() {
+		// Notify all waiting goroutines to proceed if needed.
+		s.gossip.gossSignal.L.Lock()
+		defer s.gossip.gossSignal.L.Unlock()
+		s.flags.clear(PHI_STARTED)
+		s.flags.set(PHI_EXITED)
+	})
+	defer stopCondition()
+
 	// Then start ticker process
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+
+		s.gossip.gossMu.Lock()
+
+		if s.serverContext.Err() != nil {
+			log.Printf("%s - gossip process exiting due to context cancellation", s.ServerName)
+			//s.endGossip()
+			s.gossip.gossMu.Unlock()
+			return
+		}
+
+		// Wait for gossipOK to become true, or until serverContext is canceled.
+		if !s.phi.phiOK || !s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+
+			log.Printf("waiting for gossip signal...")
+			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
+
+		}
+
+		if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+			log.Printf("PHI - SHUTTING DOWN")
+			s.gossip.gossMu.Unlock()
+			return
+		}
+
+		s.gossip.gossMu.Unlock()
+
+		s.phi.phiOK = s.startPhiProcess()
+		//log.Printf("running phi check")
+
+	}
+
+}
+
+func (s *GBServer) startPhiProcess() bool {
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.serverContext.Done():
+			log.Printf("phi process exiting due to context cancellation")
+			return false
+		case ctrl := <-s.phi.phiControl:
+			if !ctrl {
+				log.Printf("phi stopped through control channel ------------")
+				return false
+			}
+		case <-ticker.C:
+			log.Printf("running phi check")
+		}
+	}
 
 }
 
@@ -1122,6 +1191,7 @@ func (s *GBServer) checkGossipCondition() {
 
 	} else if nodes < 1 && s.flags.isSet(GOSSIP_SIGNALLED) {
 		s.gossip.gossipControlChannel <- false
+		s.phi.phiControl <- false
 		s.serverLock.Lock()
 		s.flags.clear(GOSSIP_SIGNALLED)
 		s.serverLock.Unlock()
@@ -1238,10 +1308,14 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 			return
 		}
 
-		go s.startPhiProcess()
+		s.gossip.gossMu.Unlock()
 
-		s.gossip.gossipOK = s.startGossipProcess()
+		// now safe to call
+		ok := s.startGossipProcess()
 
+		// optionally re-acquire if needed
+		s.gossip.gossMu.Lock()
+		s.gossip.gossipOK = ok
 		s.gossip.gossMu.Unlock()
 
 	}
@@ -1340,6 +1414,8 @@ func (s *GBServer) startGossipProcess() bool {
 			if !gossipState {
 				// If gossipControlChannel sends 'false', stop the gossiping process
 				log.Printf("Gossip control received false, stopping gossip process")
+				// Pause the phi process also
+				s.phi.phiControl <- false
 				s.gossip.gossWg.Wait() // Wait for the rounds to finish
 				return false
 			}
@@ -1376,38 +1452,38 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	}
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
-	if s.discoveryPhase {
-		//	// TODO Need a better load seed mechanism
-		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
-		if !ok {
-			log.Printf("No connection to discover addresses in the map")
-		}
-
-		seed, ok := conn.(*gbClient)
-		if ok {
-			err := s.conductDiscovery(s.serverContext, seed)
-			if err != nil {
-				handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
-
-					if len(gbError) > 1 {
-						log.Printf("gb error = %v", gbError[2])
-						return gbError[2]
-					}
-					return err
-				})
-
-				if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
-					log.Printf("%s - exiting discovery phase", s.ServerName)
-					s.discoveryPhase = false
-				} else {
-					log.Printf("Discovery failed: %v", err)
-				}
-
-			}
-			return
-		}
-		return
-	}
+	//if s.discoveryPhase {
+	//	//	// TODO Need a better load seed mechanism
+	//	conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
+	//	if !ok {
+	//		log.Printf("No connection to discover addresses in the map")
+	//	}
+	//
+	//	seed, ok := conn.(*gbClient)
+	//	if ok {
+	//		err := s.conductDiscovery(s.serverContext, seed)
+	//		if err != nil {
+	//			handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
+	//
+	//				if len(gbError) > 1 {
+	//					log.Printf("gb error = %v", gbError[2])
+	//					return gbError[2]
+	//				}
+	//				return err
+	//			})
+	//
+	//			if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
+	//				log.Printf("%s - exiting discovery phase", s.ServerName)
+	//				s.discoveryPhase = false
+	//			} else {
+	//				log.Printf("Discovery failed: %v", err)
+	//			}
+	//
+	//		}
+	//		return
+	//	}
+	//	return
+	//}
 
 	// Channel to signal when individual gossip tasks complete
 	done := make(chan struct{}, pl)
@@ -1480,7 +1556,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- Dial Check -------------//
 
 	//s.serverLock.Lock()
-	conn, exists, err := s.getNodeConnFromStore(node)
+	_, exists, err := s.getNodeConnFromStore(node)
 	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 	//s.serverLock.Unlock()
 	// TODO Fix nil pointer deference here
@@ -1514,51 +1590,51 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	stage = 1
 	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
 
-	// Stage 1: Send Digest
-	resp, err := s.sendDigest(ctx, conn)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
-		} else {
-			log.Printf("Error in gossip round (stage %d): %v", stage, err)
-			return
-		}
-		return
-	}
-
-	//------------- GOSS_SYN_ACK Stage 2 -------------//
-	stage = 2
-
-	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
-	if err != nil {
-		log.Printf("deserialise GSA failed: %v", err)
-	}
-
-	// Use CD Value to add to process and add to out map
-	if cdValue != nil {
-		err = s.addGSADeltaToMap(cdValue)
-		if err != nil {
-			log.Printf("addGSADeltaToMap failed: %v", err)
-		}
-	}
-
-	//------------- GOSS_ACK Stage 3 -------------//
-	stage = 3
-
-	ack, err := s.prepareACK(sender, fdValue)
-	if err != nil || ack == nil {
-		conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Error())
-		return
-	}
-
-	pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
-	if err != nil {
-		return
-	}
-
-	conn.mu.Lock()
-	conn.enqueueProto(pay)
-	conn.mu.Unlock()
+	//// Stage 1: Send Digest
+	//resp, err := s.sendDigest(ctx, conn)
+	//if err != nil {
+	//	if errors.Is(err, context.Canceled) {
+	//		log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+	//	} else {
+	//		log.Printf("Error in gossip round (stage %d): %v", stage, err)
+	//		return
+	//	}
+	//	return
+	//}
+	//
+	////------------- GOSS_SYN_ACK Stage 2 -------------//
+	//stage = 2
+	//
+	//sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
+	//if err != nil {
+	//	log.Printf("deserialise GSA failed: %v", err)
+	//}
+	//
+	//// Use CD Value to add to process and add to out map
+	//if cdValue != nil {
+	//	err = s.addGSADeltaToMap(cdValue)
+	//	if err != nil {
+	//		log.Printf("addGSADeltaToMap failed: %v", err)
+	//	}
+	//}
+	//
+	////------------- GOSS_ACK Stage 3 -------------//
+	//stage = 3
+	//
+	//ack, err := s.prepareACK(sender, fdValue)
+	//if err != nil || ack == nil {
+	//	conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Error())
+	//	return
+	//}
+	//
+	//pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
+	//if err != nil {
+	//	return
+	//}
+	//
+	//conn.mu.Lock()
+	//conn.enqueueProto(pay)
+	//conn.mu.Unlock()
 
 	//------------- Handle Completion -------------
 

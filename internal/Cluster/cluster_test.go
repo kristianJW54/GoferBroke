@@ -745,13 +745,21 @@ func TestPhiProcessStart(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 
+	gbs3, _ := NewServer("test-server", 3, config, "localhost", "8085", "8084", lc)
+
+	go gbs3.StartServer()
+	time.Sleep(5 * time.Second)
+
+	gbs3.serverContext.Done()
 	gbs.serverContext.Done()
 	go gbs.Shutdown()
+	go gbs3.Shutdown()
 
 	time.Sleep(1 * time.Second)
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
+	gbs3.logActiveGoRoutines()
 
 	time.Sleep(2 * time.Second)
 

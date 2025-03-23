@@ -96,6 +96,7 @@ const (
 	GOSSIP_SIGNALLED
 	GOSSIP_EXITED
 	PHI_STARTED
+	PHI_EXITED
 )
 
 //goland:noinspection GoMixedReceiverTypes
@@ -386,6 +387,11 @@ func (s *GBServer) StartServer() {
 	s.startupSync.Wait()
 
 	// Start up phi process which will wait for the gossip signal
+	s.startGoRoutine(s.ServerName, "phi-process", func() {
+
+		s.phiProcess(s.serverContext)
+
+	})
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	if !s.gbConfig.Internal.disableGossip {
