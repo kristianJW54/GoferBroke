@@ -113,7 +113,7 @@ func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 
 			value := delta.value
 			// Calculate the size for this delta
-			length += 14 + +len(delta.key) + len(value) // 14 bytes for metadata + value length
+			length += DELTA_META_SIZE + len(delta.keyGroup) + len(delta.key) + len(value) // 14 bytes for metadata + value length
 		} else {
 			// Log missing delta and continue
 			fmt.Printf("Warning: Delta is nil for participant %s\n", self.name)
@@ -148,6 +148,12 @@ func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 	for _, value := range self.keyValues {
 
 		v := value
+
+		deltaBuf[offset] = uint8(len(v.keyGroup))
+		offset++
+		copy(deltaBuf[offset:], v.keyGroup)
+		offset += len(v.keyGroup)
+
 		key := value.key
 		// Write key (which is similar to how we handle name)
 		deltaBuf[offset] = uint8(len(key))
@@ -519,6 +525,12 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSiz
 
 		for _, v := range value {
 
+			// TODO Want to add a key group e.g. [LOG], [DB], [SYSTEM], [MY_BOOK]
+			deltaBuf[offset] = uint8(len(v.keyGroup))
+			offset++
+			copy(deltaBuf[offset:], v.keyGroup)
+			offset += len(v.keyGroup)
+
 			deltaBuf[offset] = uint8(len(v.key))
 			offset++
 			copy(deltaBuf[offset:], v.key)
@@ -608,6 +620,12 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 		for j := 0; j < int(deltaSize); j++ {
 
+			// Key Group
+			keyGroupLen := int(delta[offset])
+			keyGroup := string(delta[offset+1 : offset+1+keyGroupLen])
+			offset += 1 + keyGroupLen
+
+			// Key
 			keyLen := int(delta[offset])
 
 			start := offset + 1
@@ -638,10 +656,11 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			// Value
 			value := delta[offset : offset+vLength]
 
-			d.keyValues[key] = &Delta{
-				valueType: vType,
+			d.keyValues[makeDeltaKey(keyGroup, key)] = &Delta{
+				keyGroup:  keyGroup,
 				key:       key,
 				version:   VersionTime.Unix(),
+				valueType: vType,
 				value:     value,
 			}
 
@@ -702,6 +721,11 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 
 		for j := 0; j < int(deltaSize); j++ {
 
+			// Key Group
+			keyGroupLen := int(delta[offset])
+			keyGroup := string(delta[offset+1 : offset+1+keyGroupLen])
+			offset += 1 + keyGroupLen
+
 			keyLen := int(delta[offset])
 
 			start := offset + 1
@@ -732,10 +756,11 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 			// Value
 			value := delta[offset : offset+vLength]
 
-			d.keyValues[key] = &Delta{
-				valueType: vType,
+			d.keyValues[makeDeltaKey(keyGroup, key)] = &Delta{
+				keyGroup:  keyGroup,
 				key:       key,
 				version:   VersionTime.Unix(),
+				valueType: vType,
 				value:     value,
 			}
 
@@ -964,6 +989,11 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 		offset += 2
 
 		for _, v := range value {
+
+			gsaBuff[offset] = uint8(len(v.keyGroup))
+			offset++
+			copy(gsaBuff[offset:], v.keyGroup)
+			offset += len(v.keyGroup)
 
 			gsaBuff[offset] = uint8(len(v.key))
 			offset++

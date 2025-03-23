@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -139,6 +140,18 @@ const (
 	_UPDATE_INTERVAL_ = "UPDATE_INTERVAL"
 )
 
+// Standard Delta Key-Groups
+const (
+	ADDR_DKG      = "address"
+	SYSTEM_DKG    = "system"
+	LOCAL_LOG_DKG = "local_log"
+	CONFIG_DKG    = "config"
+)
+
+const (
+	DELTA_META_SIZE = 15
+)
+
 type Seed struct {
 	seedAddr *net.TCPAddr
 }
@@ -150,9 +163,10 @@ type Seed struct {
 
 type Delta struct {
 	index     int
+	keyGroup  string
 	key       string
-	valueType byte // Type could be internal, config, state, client
 	version   int64
+	valueType byte   // This should be string, int, int64, float64 etc
 	value     []byte // Value should go last for easier de-serialisation
 	// Could add user defined metadata later on??
 }
@@ -163,6 +177,7 @@ type Delta struct {
 type deltaQueue struct {
 	index    int
 	overload bool
+	keyGroup string
 	key      string
 	version  int64
 }
@@ -170,8 +185,8 @@ type deltaQueue struct {
 type deltaHeap []*deltaQueue
 
 type Participant struct {
-	name      string // Possibly can remove
-	keyValues map[string]*Delta
+	name      string            // Possibly can remove
+	keyValues map[string]*Delta // composite key - flattened -> group:key
 	//paDetection *phiAccrual
 	maxVersion int64
 	pm         sync.RWMutex
@@ -325,6 +340,17 @@ func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 //=======================================================
 // Cluster Map Handling
 //=======================================================
+
+func makeDeltaKey(group, key string) string {
+	return fmt.Sprintf("%s:%s", group, key)
+}
+
+func parseDeltaKey(key string) (string, string) {
+	parts := strings.Split(key, ":")
+	return parts[0], parts[1]
+}
+
+//---------------------
 
 // TODO We need to return error for this and handle them accordingly
 func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
@@ -962,6 +988,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			// Overloaded check and trace here (only if they are gossiped?)
 
 			heap.Push(&dh, &deltaQueue{
+				keyGroup: delta.keyGroup,
 				key:      delta.key,
 				version:  delta.version,
 				overload: overloaded,
@@ -984,7 +1011,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			d := heap.Pop(&dh).(*deltaQueue)
 			delta := participant.keyValues[d.key]
 			// Calc size to do a remaining check before committing to selecting
-			size := 14 + len(d.key) + len(delta.value)
+			size := DELTA_META_SIZE + len(d.keyGroup) + len(d.key) + len(delta.value)
 
 			if size+sizeOfDelta > remaining {
 				break

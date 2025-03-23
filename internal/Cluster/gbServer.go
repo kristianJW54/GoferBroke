@@ -574,34 +574,38 @@ func initSelfParticipant(name, addr string) *Participant {
 	// TODO Address needs more attention with configuration, different types of addresses and address key groups
 	// Add the _ADDRESS_ delta
 	addrDelta := &Delta{
+		keyGroup:  ADDR_DKG,
 		key:       _ADDRESS_,
 		valueType: INTERNAL_D,
 		version:   t,
 		value:     []byte(addr),
 	}
-	p.keyValues[_ADDRESS_] = addrDelta
+
+	p.keyValues[makeDeltaKey(addrDelta.keyGroup, addrDelta.key)] = addrDelta
 
 	// Add the _NODE_CONNS_ delta
 	numNodeConnBytes := make([]byte, 1)
 	numNodeConnBytes[0] = 0
 	nodeConnsDelta := &Delta{
+		keyGroup:  SYSTEM_DKG,
 		key:       _NODE_CONNS_,
 		valueType: INTERNAL_D,
 		version:   t,
 		value:     numNodeConnBytes,
 	}
-	p.keyValues[_NODE_CONNS_] = nodeConnsDelta
+	p.keyValues[makeDeltaKey(nodeConnsDelta.keyGroup, nodeConnsDelta.key)] = nodeConnsDelta
 
 	// Add the _HEARTBEAT_ delta
 	heart := make([]byte, 8)
 	binary.BigEndian.PutUint64(heart, uint64(t))
 	heartbeatDelta := &Delta{
+		keyGroup:  SYSTEM_DKG,
 		key:       _HEARTBEAT_,
 		valueType: INTERNAL_D,
 		version:   t,
 		value:     heart,
 	}
-	p.keyValues[_HEARTBEAT_] = heartbeatDelta
+	p.keyValues[makeDeltaKey(heartbeatDelta.keyGroup, heartbeatDelta.key)] = heartbeatDelta
 
 	return p
 
