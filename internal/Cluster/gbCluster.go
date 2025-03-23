@@ -440,6 +440,8 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	// Deep copy each key-value pair
 	for k, v := range tmpP.keyValues {
 
+		log.Printf("key coming through from self info - %s", k)
+
 		valueByte := make([]byte, len(v.value))
 		copy(valueByte, v.value)
 
@@ -449,6 +451,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 		newParticipant.keyValues[k] = &Delta{
 			index:     v.index,
+			keyGroup:  v.keyGroup,
 			key:       v.key,
 			valueType: v.valueType,
 			version:   v.version,

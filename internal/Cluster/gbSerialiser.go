@@ -632,12 +632,13 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			end := start + keyLen
 
 			key := string(delta[start:end])
+			newKey := makeDeltaKey(keyGroup, key)
 
 			offset += 1
 			offset += keyLen
 
 			d := cDelta.delta[name]
-			d.keyValues[key] = &Delta{}
+			d.keyValues[newKey] = &Delta{}
 
 			// Version
 			v := binary.BigEndian.Uint64(delta[offset : offset+8])
@@ -656,7 +657,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			// Value
 			value := delta[offset : offset+vLength]
 
-			d.keyValues[makeDeltaKey(keyGroup, key)] = &Delta{
+			d.keyValues[newKey] = &Delta{
 				keyGroup:  keyGroup,
 				key:       key,
 				version:   VersionTime.Unix(),
@@ -732,12 +733,13 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 			end := start + keyLen
 
 			key := string(delta[start:end])
+			newKey := makeDeltaKey(keyGroup, key)
 
 			offset += 1
 			offset += keyLen
 
 			d := cDelta.delta[name]
-			d.keyValues[key] = &Delta{}
+			d.keyValues[newKey] = &Delta{}
 
 			// Version
 			v := binary.BigEndian.Uint64(delta[offset : offset+8])
@@ -756,7 +758,7 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 			// Value
 			value := delta[offset : offset+vLength]
 
-			d.keyValues[makeDeltaKey(keyGroup, key)] = &Delta{
+			d.keyValues[newKey] = &Delta{
 				keyGroup:  keyGroup,
 				key:       key,
 				version:   VersionTime.Unix(),

@@ -387,11 +387,11 @@ func (s *GBServer) StartServer() {
 	s.startupSync.Wait()
 
 	// Start up phi process which will wait for the gossip signal
-	s.startGoRoutine(s.ServerName, "phi-process", func() {
-
-		s.phiProcess(s.serverContext)
-
-	})
+	//s.startGoRoutine(s.ServerName, "phi-process", func() {
+	//
+	//	s.phiProcess(s.serverContext)
+	//
+	//})
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	if !s.gbConfig.Internal.disableGossip {
@@ -872,9 +872,11 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 
 func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
 
-	binary.BigEndian.PutUint64(self.keyValues[_HEARTBEAT_].value, uint64(timeOfUpdate))
+	key := makeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)
+
+	binary.BigEndian.PutUint64(self.keyValues[key].value, uint64(timeOfUpdate))
 	self.pm.Lock()
-	self.keyValues[_HEARTBEAT_].version = timeOfUpdate
+	self.keyValues[key].version = timeOfUpdate
 	self.pm.Unlock()
 
 	return nil
