@@ -333,6 +333,7 @@ const (
 	ADD_DICSOVERY_CODE          = 60
 	EMPTY_PARTICIPANT_HEAP_CODE = 61
 	GOSS_ACK_CODE               = 62
+	NODE_NOT_FOUND_CODE         = 63
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -360,6 +361,7 @@ var KnownInternalErrors = map[int]*GBError{
 	ADD_DICSOVERY_CODE:          &GBError{Code: ADD_DICSOVERY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "add discovery failed"},
 	EMPTY_PARTICIPANT_HEAP_CODE: &GBError{Code: EMPTY_PARTICIPANT_HEAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "empty participant heap"},
 	GOSS_ACK_CODE:               &GBError{Code: GOSS_ACK_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "goss ack error"},
+	NODE_NOT_FOUND_CODE:         &GBError{Code: NODE_NOT_FOUND_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "node not found in cluster map"},
 }
 
 var (
@@ -369,6 +371,7 @@ var (
 	AddDiscoveryErr         = KnownInternalErrors[ADD_DICSOVERY_CODE]
 	EmptyParticipantHeapErr = KnownInternalErrors[EMPTY_PARTICIPANT_HEAP_CODE]
 	GossAckErr              = KnownInternalErrors[GOSS_ACK_CODE]
+	NodeNotFoundErr         = KnownInternalErrors[NODE_NOT_FOUND_CODE]
 )
 
 var (

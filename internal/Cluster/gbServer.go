@@ -334,7 +334,7 @@ func (s *GBServer) StartServer() {
 	} else {
 		selfInfo := initSelfParticipant(s.ServerName, s.addr)
 		s.clusterMap = *initClusterMap(s.ServerName, s.nodeTCPAddr, selfInfo)
-		s.phi = *initPhiControl()
+		s.phi = *s.initPhiControl()
 	}
 
 	//Checks and other start up here
@@ -389,6 +389,7 @@ func (s *GBServer) StartServer() {
 	// Start up phi process which will wait for the gossip signal
 	//s.startGoRoutine(s.ServerName, "phi-process", func() {
 	//
+	//	// Phi cleanup needed?
 	//	s.phiProcess(s.serverContext)
 	//
 	//})

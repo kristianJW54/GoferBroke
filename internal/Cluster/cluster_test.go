@@ -707,60 +707,12 @@ func TestLiveGossip(t *testing.T) {
 
 }
 
-func TestPhiProcessStart(t *testing.T) {
+func TestPhiAccrual(t *testing.T) {
 
-	lc := net.ListenConfig{}
+	testWindow := []int64{1, 1, 1, 2, 1, 1, 1, 2, 1, 1}
 
-	ip := "127.0.0.1" // Use the full IP address
-	port := "8081"
-
-	// Initialize config with the seed server address
-	config := &GbConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
-				SeedIP:   ip,
-				SeedPort: port,
-			},
-		},
-		Internal: &InternalOptions{
-			//disableGossip: true,
-		},
-		Cluster: &ClusterOptions{},
+	pa := &phiAccrual{
+		window: testWindow,
 	}
-
-	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
-
-	go gbs.StartServer()
-	time.Sleep(1 * time.Second)
-	go gbs2.StartServer()
-	time.Sleep(1 * time.Second)
-
-	time.Sleep(3 * time.Second)
-
-	gbs2.serverContext.Done()
-	go gbs2.Shutdown()
-
-	gbs.gossip.gossipControlChannel <- false
-
-	time.Sleep(5 * time.Second)
-
-	gbs3, _ := NewServer("test-server", 3, config, "localhost", "8085", "8084", lc)
-
-	go gbs3.StartServer()
-	time.Sleep(5 * time.Second)
-
-	gbs3.serverContext.Done()
-	gbs.serverContext.Done()
-	go gbs.Shutdown()
-	go gbs3.Shutdown()
-
-	time.Sleep(1 * time.Second)
-
-	gbs.logActiveGoRoutines()
-	gbs2.logActiveGoRoutines()
-	gbs3.logActiveGoRoutines()
-
-	time.Sleep(2 * time.Second)
 
 }

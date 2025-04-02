@@ -330,7 +330,10 @@ func (s *GBServer) getKnownAddressNodes() ([]string, error) {
 	known := make([]string, 0)
 
 	for _, p := range cm.participants {
-		if _, exists := p.keyValues[_ADDRESS_]; exists {
+
+		addrKey := fmt.Sprintf("%s:%s", ADDR_DKG, _ADDRESS_)
+
+		if _, exists := p.keyValues[addrKey]; exists {
 			known = append(known, p.name)
 		}
 	}
@@ -376,7 +379,9 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 
 		addrMap[name] = make([]string, 0)
 
-		tcpKey := cm.participants[name].keyValues[_ADDRESS_].key
+		key := fmt.Sprintf("%s:%s", ADDR_DKG, _ADDRESS_)
+
+		tcpKey := cm.participants[name].keyValues[key].key
 
 		if sizeEstimate+len(tcpKey) > DEFAULT_MAX_DISCOVERY_SIZE {
 			return addrMap, nil
@@ -384,6 +389,7 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 			addrMap[name] = append(addrMap[name], tcpKey)
 		}
 
+		// TODO Need to look into this with the formatting of our keys [group:key]
 		if conf.Internal.addressKeys != nil {
 
 			for _, addr := range conf.Internal.addressKeys {
@@ -580,8 +586,6 @@ func (c *gbClient) processErrResp(message []byte) {
 	copy(msg, message)
 
 	msgErr := Errors.BytesToError(msg)
-
-	log.Printf("GOT ERR RESP ========================= %v", msgErr)
 
 	select {
 	case rsp.err <- msgErr: // Non-blocking

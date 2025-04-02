@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"strconv"
@@ -131,13 +132,14 @@ const (
 
 // Internal Delta Keys [NOT TO BE USED EXTERNALLY]
 const (
-	_ADDRESS_         = "TCP"
-	_CPU_USAGE_       = "CPU_USAGE"
-	_MEMORY_USAGE     = "MEMORY_USAGE"
-	_NODE_CONNS_      = "NODE_CONNS"
-	_CLIENT_CONNS_    = "CLIENT_CONNS"
-	_HEARTBEAT_       = "HEARTBEAT"
-	_UPDATE_INTERVAL_ = "UPDATE_INTERVAL"
+	_ADDRESS_         = "tcp"
+	_CPU_USAGE_       = "cpu_usage"
+	_MEMORY_USAGE     = "memory_usage"
+	_NODE_CONNS_      = "node_conns"
+	_CLIENT_CONNS_    = "client_conns"
+	_HEARTBEAT_       = "heartbeat"
+	_UPDATE_INTERVAL_ = "update_interval"
+	_NETWORK_LOAD_    = "network_load"
 )
 
 // Standard Delta Key-Groups
@@ -185,11 +187,11 @@ type deltaQueue struct {
 type deltaHeap []*deltaQueue
 
 type Participant struct {
-	name      string            // Possibly can remove
-	keyValues map[string]*Delta // composite key - flattened -> group:key
-	//paDetection *phiAccrual
-	maxVersion int64
-	pm         sync.RWMutex
+	name        string            // Possibly can remove
+	keyValues   map[string]*Delta // composite key - flattened -> group:key
+	paDetection *phiAccrual
+	maxVersion  int64
+	pm          sync.RWMutex
 }
 
 type ClusterMap struct {
@@ -219,12 +221,12 @@ type phiControl struct {
 	phiSemaphore chan struct{}
 	phiControl   chan bool
 	phiOK        bool
-	mu           sync.Mutex
+	suspicion    float64
+	mu           sync.RWMutex
 }
 
 type phiAccrual struct {
 	lastBeat    int64
-	currentBeat int64
 	window      []int64
 	windowIndex int
 	pa          sync.Mutex
@@ -405,11 +407,14 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 					participant.pm.Unlock()
 				}
 			}
-		}
-		// If here then we have a new participant to add
-		err := s.addParticipantFromTmp(name, d)
-		if err != nil {
-			return err
+		} else {
+
+			// If here then we have a new participant to add
+			err := s.addParticipantFromTmp(name, d)
+			if err != nil {
+				return err
+			}
+
 		}
 	}
 	return nil
@@ -431,16 +436,15 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	// Step 1: Add participant to the participants map
 	newParticipant := &Participant{
-		name:      name,
-		keyValues: make(map[string]*Delta), // Allocate a new map
+		name:        name,
+		keyValues:   make(map[string]*Delta), // Allocate a new map
+		paDetection: s.initPhiAccrual(),
 	}
 
 	var maxV int64
 
 	// Deep copy each key-value pair
 	for k, v := range tmpP.keyValues {
-
-		log.Printf("key coming through from self info - %s", k)
 
 		valueByte := make([]byte, len(v.value))
 		copy(valueByte, v.value)
@@ -482,6 +486,7 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 		part := s.clusterMap.participants[name]
 
 		for addrKey, addrValue := range disc.addr {
+			log.Printf("address key == %v", addrKey)
 			if _, exist := part.keyValues[addrKey]; exist {
 
 				//Clear reference to discovery for faster GC collection
@@ -493,9 +498,12 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 			valueByte := make([]byte, len(addrValue))
 			copy(valueByte, addrValue)
 
+			key, group := parseDeltaKey(addrKey)
+
 			// If the address is not present then we add and let the value be updated along with the version during gossip
 			part.keyValues[addrKey] = &Delta{
-				key:       addrKey,
+				key:       key,
+				keyGroup:  group,
 				valueType: ADDR_V,
 				version:   0,
 				value:     valueByte,
@@ -641,7 +649,25 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 // Phi Accrual Failure Detection
 //=======================================================
 
-func initPhiControl() *phiControl {
+// Phi calculates the suspicion level of a participant using the ϕ accrual failure detection model.
+//
+// From the paper "The ϕ Accrual Failure Detector" (Hayashibara et al., 2004):
+//
+//     ϕ(t_now) = -log₁₀(P_later(t_now - T_last))
+//
+// Where:
+//   - t_now:      the current timestamp in milliseconds
+//   - T_last:     the timestamp when the last heartbeat was received from this participant
+//   - Δt = t_now - T_last: time since the last heartbeat
+//   - P_later(Δt): the probability that the next heartbeat would arrive *after* Δt,
+//                  based on the historical distribution of heartbeat inter-arrival times
+//
+// A higher ϕ value indicates higher suspicion of failure. Typically, ϕ ≥ 8 implies strong suspicion.
+//
+// This implementation assumes a normal distribution of inter-arrival times and uses a sliding
+// window to estimate the mean and standard deviation for the participant's heartbeat intervals.
+
+func (s *GBServer) initPhiControl() *phiControl {
 
 	// Should be taken from config
 	return &phiControl{
@@ -650,9 +676,18 @@ func initPhiControl() *phiControl {
 		make(chan struct{}),
 		make(chan bool),
 		false,
-		sync.Mutex{},
+		0.0,
+		sync.RWMutex{},
 	}
 
+}
+
+func (s *GBServer) initPhiAccrual() *phiAccrual {
+	return &phiAccrual{
+		lastBeat:    0,
+		window:      make([]int64, 10), //Should be from config or default
+		windowIndex: 0,
+	}
 }
 
 func (s *GBServer) tryStartPhiProcess() bool {
@@ -751,7 +786,137 @@ func (s *GBServer) startPhiProcess() bool {
 
 }
 
-func (p *phiAccrual) recordHeartbeat() {
+//----------------------------------
+// Calculation of phi
+
+func (s *GBServer) recordPhi(node string) error {
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap.participants
+	s.clusterMapLock.RUnlock()
+
+	if node, exists := cm[node]; exists {
+
+		now := time.Now().Unix()
+
+		node.pm.RLock()
+		p := node.paDetection
+		node.pm.RUnlock()
+
+		interval := now - p.lastBeat
+
+		p.pa.Lock()
+
+		if p.lastBeat != 0 {
+
+			p.window[node.paDetection.windowIndex] = interval
+			p.windowIndex = (p.windowIndex + 1) % len(p.window)
+
+		}
+
+		p.lastBeat = now
+		p.pa.Unlock()
+
+		log.Printf("updated index for %s = %v", node.name, p.windowIndex)
+		log.Printf("window for %s = %+v ---- %s", node.name, p.window, s.ServerName)
+
+	} else {
+		return Errors.NodeNotFoundErr
+	}
+
+	return nil
+
+}
+
+func getMean(array []int64) float64 {
+	if len(array) == 0 {
+		return 0.0
+	}
+	var sum float64
+	for _, v := range array {
+		sum += float64(v)
+	}
+	return sum / float64(len(array))
+}
+
+func getVariance(array []int64) float64 {
+
+	if len(array) == 0 {
+		return 0.0
+	}
+
+	var sumOfSquaredDiffs float64
+
+	mean := getMean(array)
+
+	for _, v := range array {
+		sqrDiff := float64(v) - mean
+		sumOfSquaredDiffs += sqrDiff * sqrDiff
+	}
+
+	return sumOfSquaredDiffs / float64(len(array))
+
+}
+
+func std(array []int64) float64 {
+	return math.Sqrt(getVariance(array))
+}
+
+func cdf(mean, std, v float64) float64 {
+	return (1.0 / 2.0) * (1 + math.Erf((v-mean)/(std*math.Sqrt2)))
+}
+
+// Phi returns the φ-failure for the given value and distribution.
+func phi(v float64, d []int64) float64 {
+	if len(d) == 0 {
+		return 0.0 // no data to reason about
+	}
+
+	mean := getMean(d)
+	stdDev := std(d)
+
+	if stdDev == 0 {
+		if v < mean {
+			return 0.0
+		}
+		// heartbeat is late, but variance is 0
+		// assume max suspicion
+		return 10.0
+	}
+
+	cdfValue := cdf(mean, stdDev, v)
+	p := 1 - cdfValue
+
+	if p < 1e-10 { // avoid log(0)
+		p = 1e-10
+	}
+
+	return -math.Log10(p)
+}
+
+func (s *GBServer) calculatePhi() error {
+
+	// Periodically run a phi check on all participant in the cluster
+
+	// First calculate mean
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap.participants
+	s.clusterMapLock.RUnlock()
+
+	for _, participant := range cm {
+
+		lastBeat := participant.paDetection.lastBeat
+		window := participant.paDetection.window
+
+		now := time.Now().Unix()
+
+		phi := phi(float64(now-lastBeat), window)
+
+		log.Printf("phi score = %v", phi)
+
+	}
+
+	return nil
 
 }
 
@@ -1012,9 +1177,10 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		for dh.Len() > 0 {
 
 			d := heap.Pop(&dh).(*deltaQueue)
-			delta := participant.keyValues[d.key]
+
+			delta := participant.keyValues[makeDeltaKey(d.keyGroup, d.key)]
 			// Calc size to do a remaining check before committing to selecting
-			size := DELTA_META_SIZE + len(d.keyGroup) + len(d.key) + len(delta.value)
+			size := DELTA_META_SIZE + len(delta.keyGroup) + len(delta.key) + len(delta.value)
 
 			if size+sizeOfDelta > remaining {
 				break
@@ -1157,6 +1323,10 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 
 	// Compare here - Will need to take a remaining size left over from generating our digest
+	if fd == nil {
+		return nil, Errors.WrapGBError(Errors.GossAckErr, Errors.NoDigestErr)
+	}
+
 	partQueue, err := s.generateParticipantHeap(sender, fd)
 	if err != nil {
 
@@ -1482,38 +1652,38 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	}
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
-	//if s.discoveryPhase {
-	//	//	// TODO Need a better load seed mechanism
-	//	conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
-	//	if !ok {
-	//		log.Printf("No connection to discover addresses in the map")
-	//	}
-	//
-	//	seed, ok := conn.(*gbClient)
-	//	if ok {
-	//		err := s.conductDiscovery(s.serverContext, seed)
-	//		if err != nil {
-	//			handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
-	//
-	//				if len(gbError) > 1 {
-	//					log.Printf("gb error = %v", gbError[2])
-	//					return gbError[2]
-	//				}
-	//				return err
-	//			})
-	//
-	//			if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
-	//				log.Printf("%s - exiting discovery phase", s.ServerName)
-	//				s.discoveryPhase = false
-	//			} else {
-	//				log.Printf("Discovery failed: %v", err)
-	//			}
-	//
-	//		}
-	//		return
-	//	}
-	//	return
-	//}
+	if s.discoveryPhase {
+		//	// TODO Need a better load seed mechanism
+		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
+		if !ok {
+			log.Printf("No connection to discover addresses in the map")
+		}
+
+		seed, ok := conn.(*gbClient)
+		if ok {
+			err := s.conductDiscovery(s.serverContext, seed)
+			if err != nil {
+				handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
+
+					if len(gbError) > 1 {
+						log.Printf("gb error = %v", gbError[2])
+						return gbError[2]
+					}
+					return err
+				})
+
+				if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
+					log.Printf("%s - exiting discovery phase", s.ServerName)
+					s.discoveryPhase = false
+				} else {
+					log.Printf("Discovery failed: %v", err)
+				}
+
+			}
+			return
+		}
+		return
+	}
 
 	// Channel to signal when individual gossip tasks complete
 	done := make(chan struct{}, pl)
@@ -1586,7 +1756,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- Dial Check -------------//
 
 	//s.serverLock.Lock()
-	_, exists, err := s.getNodeConnFromStore(node)
+	conn, exists, err := s.getNodeConnFromStore(node)
 	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
 	//s.serverLock.Unlock()
 	// TODO Fix nil pointer deference here
@@ -1610,6 +1780,11 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	var stage int
 
+	err = s.recordPhi(node)
+	if err != nil {
+		log.Printf("error in gossip with node %s ----> %v", node, err)
+	}
+
 	// So what we can do is set up a progress and error collection
 
 	//------------- GOSS_SYN Stage 1 -------------//
@@ -1620,51 +1795,53 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	stage = 1
 	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
 
-	//// Stage 1: Send Digest
-	//resp, err := s.sendDigest(ctx, conn)
-	//if err != nil {
-	//	if errors.Is(err, context.Canceled) {
-	//		log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
-	//	} else {
-	//		log.Printf("Error in gossip round (stage %d): %v", stage, err)
-	//		return
-	//	}
-	//	return
-	//}
-	//
-	////------------- GOSS_SYN_ACK Stage 2 -------------//
-	//stage = 2
-	//
-	//sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
-	//if err != nil {
-	//	log.Printf("deserialise GSA failed: %v", err)
-	//}
-	//
-	//// Use CD Value to add to process and add to out map
-	//if cdValue != nil {
-	//	err = s.addGSADeltaToMap(cdValue)
-	//	if err != nil {
-	//		log.Printf("addGSADeltaToMap failed: %v", err)
-	//	}
-	//}
-	//
-	////------------- GOSS_ACK Stage 3 -------------//
-	//stage = 3
-	//
-	//ack, err := s.prepareACK(sender, fdValue)
-	//if err != nil || ack == nil {
-	//	conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Error())
-	//	return
-	//}
-	//
-	//pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
-	//if err != nil {
-	//	return
-	//}
-	//
-	//conn.mu.Lock()
-	//conn.enqueueProto(pay)
-	//conn.mu.Unlock()
+	// Stage 1: Send Digest
+	resp, err := s.sendDigest(ctx, conn)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+		} else {
+			log.Printf("Error in gossip round (stage %d): %v", stage, err)
+			return
+		}
+		return
+	}
+
+	//------------- GOSS_SYN_ACK Stage 2 -------------//
+	stage = 2
+
+	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
+	if err != nil {
+		log.Printf("deserialise GSA failed: %v", err)
+	}
+
+	// Use CD Value to add to process and add to out map
+	if cdValue != nil {
+		err = s.addGSADeltaToMap(cdValue)
+		if err != nil {
+			log.Printf("addGSADeltaToMap failed: %v", err)
+		}
+	}
+
+	//------------- GOSS_ACK Stage 3 -------------//
+	stage = 3
+
+	ack, err := s.prepareACK(sender, fdValue)
+	if err != nil || ack == nil {
+		log.Printf("BREAK %s", s.ServerName)
+		log.Printf("prepareACK failed: %v", err)
+		conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Error())
+		return
+	}
+
+	pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
+	if err != nil {
+		return
+	}
+
+	conn.mu.Lock()
+	conn.enqueueProto(pay)
+	conn.mu.Unlock()
 
 	//------------- Handle Completion -------------
 

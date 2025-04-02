@@ -36,10 +36,12 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 		go func() {
 			defer g.grWg.Done()
 			defer func() {
+
+				// TODO Think about if we actually want to recover - we should not be having routine problems
 				// Recover from any panic that may occur in the goroutine
-				if r := recover(); r != nil {
-					fmt.Printf("%s Recovered panic in goroutine %s: %v\n", serverName, name, r)
-				}
+				//if r := recover(); r != nil {
+				//	fmt.Printf("%s Recovered panic in goroutine %s: %v\n", serverName, name, r)
+				//}
 
 				// If tracking is enabled, decrement the number of routines and remove from the map
 				atomic.AddInt64(&g.numRoutines, -1)
