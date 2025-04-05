@@ -221,7 +221,6 @@ type phiControl struct {
 	phiSemaphore chan struct{}
 	phiControl   chan bool
 	phiOK        bool
-	suspicion    float64
 	mu           sync.RWMutex
 }
 
@@ -229,6 +228,8 @@ type phiAccrual struct {
 	lastBeat    int64
 	window      []int64
 	windowIndex int
+	score       float64
+	dead        bool
 	pa          sync.Mutex
 }
 
@@ -667,26 +668,54 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 // This implementation assumes a normal distribution of inter-arrival times and uses a sliding
 // window to estimate the mean and standard deviation for the participant's heartbeat intervals.
 
+// We don't gossip phi scores or node failures to others in the cluster as the detection is based on local time
+// It is for other nodes to detect failed nodes themselves
+
+func (s *GBServer) generateDefaultThreshold() int {
+	if s.phi.windowSize == 0 {
+		return 0
+	}
+
+	if s.phi.windowSize < 10 {
+		return 2
+	} else if s.phi.windowSize < 30 {
+		return 4
+	} else if s.phi.windowSize < 100 {
+		return 6
+	}
+	return 8 // very stable, high-confidence threshold
+}
+
 func (s *GBServer) initPhiControl() *phiControl {
+
+	var paWindowSize int
+
+	if s.gbConfig.Cluster.paWindowSize == 0 {
+		paWindowSize = DEFAULT_PA_WINDOW_SIZE
+	} else {
+		paWindowSize = s.gbConfig.Cluster.paWindowSize
+	}
 
 	// Should be taken from config
 	return &phiControl{
-		10,
-		50,
+		s.generateDefaultThreshold(),
+		paWindowSize,
 		make(chan struct{}),
 		make(chan bool),
 		false,
-		0.0,
 		sync.RWMutex{},
 	}
 
 }
 
 func (s *GBServer) initPhiAccrual() *phiAccrual {
+
 	return &phiAccrual{
 		lastBeat:    0,
-		window:      make([]int64, 10), //Should be from config or default
+		window:      make([]int64, s.phi.windowSize), //Should be from config or default
 		windowIndex: 0,
+		score:       0.00,
+		dead:        false,
 	}
 }
 
@@ -698,7 +727,6 @@ func (s *GBServer) tryStartPhiProcess() bool {
 
 	select {
 	case s.phi.phiSemaphore <- struct{}{}:
-		s.flags.set(PHI_STARTED)
 		return true
 	default:
 		return false
@@ -710,7 +738,6 @@ func (s *GBServer) endPhiProcess() {
 	case <-s.phi.phiSemaphore:
 	default:
 	}
-	s.flags.clear(PHI_STARTED)
 }
 
 func (s *GBServer) phiProcess(ctx context.Context) {
@@ -725,10 +752,6 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 		s.flags.set(PHI_EXITED)
 	})
 	defer stopCondition()
-
-	// Then start ticker process
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
 
 	for {
 
@@ -766,7 +789,7 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 
 func (s *GBServer) startPhiProcess() bool {
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -781,6 +804,30 @@ func (s *GBServer) startPhiProcess() bool {
 			}
 		case <-ticker.C:
 			log.Printf("running phi check")
+
+			//if !s.tryStartPhiProcess() {
+			//
+			//	if s.flags.isSet(SHUTTING_DOWN) {
+			//		log.Printf("%s - Phi process is shutting down, exiting", s.ServerName)
+			//		return false
+			//	}
+			//
+			//	log.Printf("%s - Skipping phi check - already running", s.ServerName)
+			//	continue
+			//}
+
+			// TODO We are only calculating once so far - need to fix
+
+			ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+
+			s.startGoRoutine(s.ServerName, "main-phi-process-check", func() {
+
+				defer cancel()
+
+				s.calculatePhi(ctx)
+
+			})
+
 		}
 	}
 
@@ -869,54 +916,71 @@ func cdf(mean, std, v float64) float64 {
 // Phi returns the φ-failure for the given value and distribution.
 func phi(v float64, d []int64) float64 {
 	if len(d) == 0 {
-		return 0.0 // no data to reason about
+		return 0.0 // no data
 	}
 
 	mean := getMean(d)
 	stdDev := std(d)
 
 	if stdDev == 0 {
-		if v < mean {
-			return 0.0
+		if v <= mean {
+			return 0.0 // received on time or early
 		}
-		// heartbeat is late, but variance is 0
-		// assume max suspicion
-		return 10.0
+		return 10.0 // very suspicious, heartbeat is late and we expected precise intervals
 	}
 
 	cdfValue := cdf(mean, stdDev, v)
 	p := 1 - cdfValue
 
-	if p < 1e-10 { // avoid log(0)
+	if p < 1e-10 {
 		p = 1e-10
 	}
 
 	return -math.Log10(p)
 }
 
-func (s *GBServer) calculatePhi() error {
+func (s *GBServer) calculatePhi(ctx context.Context) {
 
 	// Periodically run a phi check on all participant in the cluster
-
-	// First calculate mean
-	s.clusterMapLock.RLock()
-	cm := s.clusterMap.participants
-	s.clusterMapLock.RUnlock()
-
-	for _, participant := range cm {
-
-		lastBeat := participant.paDetection.lastBeat
-		window := participant.paDetection.window
+	select {
+	case <-ctx.Done():
+		log.Printf("%s - phi process exiting due to context cancellation", s.ServerName)
+		return
+	default:
+		// First calculate mean
+		s.clusterMapLock.RLock()
+		cm := s.clusterMap.participants
+		s.clusterMapLock.RUnlock()
 
 		now := time.Now().Unix()
 
-		phi := phi(float64(now-lastBeat), window)
+		for _, participant := range cm {
 
-		log.Printf("phi score = %v", phi)
+			participant.pm.RLock()
+			if participant.name == s.ServerName || participant.paDetection.dead {
+				participant.pm.RUnlock()
+				continue
+			}
+			participant.pm.RUnlock()
+
+			// If we expect other processes to access window then we may need to lock and also copy...
+			lastBeat := participant.paDetection.lastBeat
+			window := participant.paDetection.window
+
+			phi := phi(float64(now-lastBeat), window)
+
+			log.Printf("%s - phi score for %s = %.2f", s.ServerName, participant.name, phi)
+
+			participant.pm.Lock()
+			participant.paDetection.score = phi
+			if phi > float64(s.phi.threshold) {
+				participant.paDetection.dead = true
+			}
+			participant.pm.Unlock()
+
+		}
 
 	}
-
-	return nil
 
 }
 
@@ -1587,8 +1651,6 @@ func (s *GBServer) startGossipProcess() bool {
 					log.Printf("%s - Gossip process is shutting down, exiting", s.ServerName)
 					return false
 				}
-
-				// TODO Currently the context.Err() is nil when we get stuck in the skip loop
 
 				log.Printf("%s - Skipping gossip round because a round is already active", s.ServerName)
 

@@ -22,6 +22,8 @@ const (
 	DEFAULT_DISCOVERY_PERCENTAGE      = 50
 	DEFAULT_MAX_GSA                   = DEFAULT_MAX_DELTA_SIZE * 2
 	DEFAULT_MAX_DELTA_PER_PARTICIPANT = 5
+	DEFAULT_PA_WINDOW_SIZE            = 100
+	DEFAULT_PA_THRESHOLD              = 8
 )
 
 // TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config

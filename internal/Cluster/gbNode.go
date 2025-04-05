@@ -298,6 +298,16 @@ func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participan
 
 }
 
+// Assume no lock held coming
+func (s *GBServer) updateParticipant(node *Participant, timeOfUpdate int64, update func(node *Participant, timeOfUpdate int64) error) {
+
+	err := update(node, timeOfUpdate)
+	if err != nil {
+		log.Printf("error %v", err)
+	}
+
+}
+
 // Thread safe
 // prepareSelfInfoSend gathers the servers deltas into a participant to send over the network. We only send our self info under the assumption that we are a new node
 // and have nothing stored in the cluster map. If we do, and StartServer has been called again, or we have reconnected, then the receiving node will detect this by
