@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"strconv"
@@ -216,8 +215,8 @@ type participantHeap []*participantQueue
 //Heartbeat Monitoring + Failure Detection
 
 type phiControl struct {
-	threshold    int
 	windowSize   int
+	threshold    int
 	phiSemaphore chan struct{}
 	phiControl   chan bool
 	phiOK        bool
@@ -644,344 +643,6 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 	}
 
 	return cereal, nil
-}
-
-//=======================================================
-// Phi Accrual Failure Detection
-//=======================================================
-
-// Phi calculates the suspicion level of a participant using the ϕ accrual failure detection model.
-//
-// From the paper "The ϕ Accrual Failure Detector" (Hayashibara et al., 2004):
-//
-//     ϕ(t_now) = -log₁₀(P_later(t_now - T_last))
-//
-// Where:
-//   - t_now:      the current timestamp in milliseconds
-//   - T_last:     the timestamp when the last heartbeat was received from this participant
-//   - Δt = t_now - T_last: time since the last heartbeat
-//   - P_later(Δt): the probability that the next heartbeat would arrive *after* Δt,
-//                  based on the historical distribution of heartbeat inter-arrival times
-//
-// A higher ϕ value indicates higher suspicion of failure. Typically, ϕ ≥ 8 implies strong suspicion.
-//
-// This implementation assumes a normal distribution of inter-arrival times and uses a sliding
-// window to estimate the mean and standard deviation for the participant's heartbeat intervals.
-
-// We don't gossip phi scores or node failures to others in the cluster as the detection is based on local time
-// It is for other nodes to detect failed nodes themselves
-
-func (s *GBServer) generateDefaultThreshold() int {
-	if s.phi.windowSize == 0 {
-		return 0
-	}
-
-	if s.phi.windowSize < 10 {
-		return 2
-	} else if s.phi.windowSize < 30 {
-		return 4
-	} else if s.phi.windowSize < 100 {
-		return 6
-	}
-	return 8 // very stable, high-confidence threshold
-}
-
-func (s *GBServer) initPhiControl() *phiControl {
-
-	var paWindowSize int
-
-	if s.gbConfig.Cluster.paWindowSize == 0 {
-		paWindowSize = DEFAULT_PA_WINDOW_SIZE
-	} else {
-		paWindowSize = s.gbConfig.Cluster.paWindowSize
-	}
-
-	// Should be taken from config
-	return &phiControl{
-		s.generateDefaultThreshold(),
-		paWindowSize,
-		make(chan struct{}),
-		make(chan bool),
-		false,
-		sync.RWMutex{},
-	}
-
-}
-
-func (s *GBServer) initPhiAccrual() *phiAccrual {
-
-	return &phiAccrual{
-		lastBeat:    0,
-		window:      make([]int64, s.phi.windowSize), //Should be from config or default
-		windowIndex: 0,
-		score:       0.00,
-		dead:        false,
-	}
-}
-
-func (s *GBServer) tryStartPhiProcess() bool {
-	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
-		log.Printf("%s - Cannot start phi: shutting down or context canceled", s.ServerName)
-		return false
-	}
-
-	select {
-	case s.phi.phiSemaphore <- struct{}{}:
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *GBServer) endPhiProcess() {
-	select {
-	case <-s.phi.phiSemaphore:
-	default:
-	}
-}
-
-func (s *GBServer) phiProcess(ctx context.Context) {
-	// Need to wait for the gossip signal to be signalled - here we use the gossipMutex which is the mutex passed to the sync.Cond
-	// Also use a defer condition for contextFunc()
-
-	stopCondition := context.AfterFunc(ctx, func() {
-		// Notify all waiting goroutines to proceed if needed.
-		s.gossip.gossSignal.L.Lock()
-		defer s.gossip.gossSignal.L.Unlock()
-		s.flags.clear(PHI_STARTED)
-		s.flags.set(PHI_EXITED)
-	})
-	defer stopCondition()
-
-	for {
-
-		s.gossip.gossMu.Lock()
-
-		if s.serverContext.Err() != nil {
-			log.Printf("%s - gossip process exiting due to context cancellation", s.ServerName)
-			//s.endGossip()
-			s.gossip.gossMu.Unlock()
-			return
-		}
-
-		// Wait for gossipOK to become true, or until serverContext is canceled.
-		if !s.phi.phiOK || !s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
-
-			log.Printf("waiting for gossip signal...")
-			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
-
-		}
-
-		if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
-			log.Printf("PHI - SHUTTING DOWN")
-			s.gossip.gossMu.Unlock()
-			return
-		}
-
-		s.gossip.gossMu.Unlock()
-
-		s.phi.phiOK = s.startPhiProcess()
-		//log.Printf("running phi check")
-
-	}
-
-}
-
-func (s *GBServer) startPhiProcess() bool {
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.serverContext.Done():
-			log.Printf("phi process exiting due to context cancellation")
-			return false
-		case ctrl := <-s.phi.phiControl:
-			if !ctrl {
-				log.Printf("phi stopped through control channel ------------")
-				return false
-			}
-		case <-ticker.C:
-			log.Printf("running phi check")
-
-			//if !s.tryStartPhiProcess() {
-			//
-			//	if s.flags.isSet(SHUTTING_DOWN) {
-			//		log.Printf("%s - Phi process is shutting down, exiting", s.ServerName)
-			//		return false
-			//	}
-			//
-			//	log.Printf("%s - Skipping phi check - already running", s.ServerName)
-			//	continue
-			//}
-
-			// TODO We are only calculating once so far - need to fix
-
-			ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
-
-			s.startGoRoutine(s.ServerName, "main-phi-process-check", func() {
-
-				defer cancel()
-
-				s.calculatePhi(ctx)
-
-			})
-
-		}
-	}
-
-}
-
-//----------------------------------
-// Calculation of phi
-
-func (s *GBServer) recordPhi(node string) error {
-
-	s.clusterMapLock.RLock()
-	cm := s.clusterMap.participants
-	s.clusterMapLock.RUnlock()
-
-	if node, exists := cm[node]; exists {
-
-		now := time.Now().Unix()
-
-		node.pm.RLock()
-		p := node.paDetection
-		node.pm.RUnlock()
-
-		interval := now - p.lastBeat
-
-		p.pa.Lock()
-
-		if p.lastBeat != 0 {
-
-			p.window[node.paDetection.windowIndex] = interval
-			p.windowIndex = (p.windowIndex + 1) % len(p.window)
-
-		}
-
-		p.lastBeat = now
-		p.pa.Unlock()
-
-		log.Printf("updated index for %s = %v", node.name, p.windowIndex)
-		log.Printf("window for %s = %+v ---- %s", node.name, p.window, s.ServerName)
-
-	} else {
-		return Errors.NodeNotFoundErr
-	}
-
-	return nil
-
-}
-
-func getMean(array []int64) float64 {
-	if len(array) == 0 {
-		return 0.0
-	}
-	var sum float64
-	for _, v := range array {
-		sum += float64(v)
-	}
-	return sum / float64(len(array))
-}
-
-func getVariance(array []int64) float64 {
-
-	if len(array) == 0 {
-		return 0.0
-	}
-
-	var sumOfSquaredDiffs float64
-
-	mean := getMean(array)
-
-	for _, v := range array {
-		sqrDiff := float64(v) - mean
-		sumOfSquaredDiffs += sqrDiff * sqrDiff
-	}
-
-	return sumOfSquaredDiffs / float64(len(array))
-
-}
-
-func std(array []int64) float64 {
-	return math.Sqrt(getVariance(array))
-}
-
-func cdf(mean, std, v float64) float64 {
-	return (1.0 / 2.0) * (1 + math.Erf((v-mean)/(std*math.Sqrt2)))
-}
-
-// Phi returns the φ-failure for the given value and distribution.
-func phi(v float64, d []int64) float64 {
-	if len(d) == 0 {
-		return 0.0 // no data
-	}
-
-	mean := getMean(d)
-	stdDev := std(d)
-
-	if stdDev == 0 {
-		if v <= mean {
-			return 0.0 // received on time or early
-		}
-		return 10.0 // very suspicious, heartbeat is late and we expected precise intervals
-	}
-
-	cdfValue := cdf(mean, stdDev, v)
-	p := 1 - cdfValue
-
-	if p < 1e-10 {
-		p = 1e-10
-	}
-
-	return -math.Log10(p)
-}
-
-func (s *GBServer) calculatePhi(ctx context.Context) {
-
-	// Periodically run a phi check on all participant in the cluster
-	select {
-	case <-ctx.Done():
-		log.Printf("%s - phi process exiting due to context cancellation", s.ServerName)
-		return
-	default:
-		// First calculate mean
-		s.clusterMapLock.RLock()
-		cm := s.clusterMap.participants
-		s.clusterMapLock.RUnlock()
-
-		now := time.Now().Unix()
-
-		for _, participant := range cm {
-
-			participant.pm.RLock()
-			if participant.name == s.ServerName || participant.paDetection.dead {
-				participant.pm.RUnlock()
-				continue
-			}
-			participant.pm.RUnlock()
-
-			// If we expect other processes to access window then we may need to lock and also copy...
-			lastBeat := participant.paDetection.lastBeat
-			window := participant.paDetection.window
-
-			phi := phi(float64(now-lastBeat), window)
-
-			log.Printf("%s - phi score for %s = %.2f", s.ServerName, participant.name, phi)
-
-			participant.pm.Lock()
-			participant.paDetection.score = phi
-			if phi > float64(s.phi.threshold) {
-				participant.paDetection.dead = true
-			}
-			participant.pm.Unlock()
-
-		}
-
-	}
-
 }
 
 //=======================================================================
@@ -1761,8 +1422,18 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 		num := rand.Intn(pl) + 1
 		selectedNode := s.clusterMap.participantArray[num]
+		if s.clusterMap.participants[selectedNode].paDetection.dead {
+			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.ServerName, selectedNode)
 
-		// TODO Check exist and dial if not --> then throw error if neither work
+			//TODO Once we have a dead node we need to move it to a deadNodeStore either after some time for garbage collection
+			// Or we move straight away and garbage collect after some time and after we have tried to revive a few times
+			// 		This may not matter as much as we are accessing from the cluster map - so we may need to keep a timer of
+			//		How long we have not successfully gossiped with a node or something which will allow us to stop or tombstone the map
+			//		So we can pause gossip and not spin
+
+			s.clusterMapLock.RUnlock()
+			return
+		}
 		s.clusterMapLock.RUnlock()
 
 		// TODO We need to collect the errors and make a decision on what to do with them based on the error itself

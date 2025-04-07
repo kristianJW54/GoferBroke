@@ -1,5 +1,9 @@
 package Cluster
 
+// TODO
+// Need two top level different configs - cluster config shared by all nodes and gossiped changes
+// Node config specific to the local node
+
 //=============================================================
 // Server Options + Config
 //=============================================================
