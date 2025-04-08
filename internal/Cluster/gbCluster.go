@@ -228,6 +228,7 @@ type phiAccrual struct {
 	window      []int64
 	windowIndex int
 	score       float64
+	warmup      bool
 	dead        bool
 	pa          sync.Mutex
 }

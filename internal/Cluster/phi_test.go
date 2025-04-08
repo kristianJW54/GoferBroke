@@ -38,9 +38,9 @@ func TestPhiCalc(t *testing.T) {
 			failed:    true,
 		},
 		{
-			name:      "not-filtering out zero samples",
-			window:    []int64{1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
-			value:     1,
+			name:      "warm up phase",
+			window:    []int64{1, 0},
+			value:     2,
 			threshold: 3,
 			failed:    false,
 		},
@@ -100,13 +100,13 @@ func TestPhiLive(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	gbs2.StartServer()
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(7 * time.Second)
 	gbs2.serverContext.Done()
 	gbs2.Shutdown()
 
 	// Shutting down here will cause the phi score of test server 2 to rise for test server 1
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(10 * time.Second)
 	gbs.serverContext.Done()
 	gbs.Shutdown()
 

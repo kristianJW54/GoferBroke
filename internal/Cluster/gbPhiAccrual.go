@@ -61,7 +61,7 @@ func (s *GBServer) initPhiControl() *phiControl {
 
 	// Should be taken from config
 	return &phiControl{
-		10, // TODO Make sure to switch back to the variable paWindowSize
+		paWindowSize, // TODO Make sure to switch back to the variable paWindowSize
 		s.generateDefaultThreshold(paWindowSize),
 		make(chan struct{}),
 		make(chan bool),
@@ -75,7 +75,7 @@ func (s *GBServer) initPhiAccrual() *phiAccrual {
 
 	return &phiAccrual{
 		lastBeat:    0,
-		window:      make([]int64, s.phi.windowSize), //Should be from config or default
+		window:      make([]int64, 10), //Should be from config or default //TODO change back paWindowSize
 		windowIndex: 0,
 		score:       0.00,
 		dead:        false,
@@ -217,8 +217,6 @@ func (s *GBServer) recordPhi(node string) error {
 
 		}
 
-		log.Printf("%s for %s --- window = %v", s.ServerName, node.name, p.window)
-
 		p.lastBeat = now
 		p.pa.Unlock()
 
@@ -268,11 +266,41 @@ func cdf(mean, std, v float64) float64 {
 	return (1.0 / 2.0) * (1 + math.Erf((v-mean)/(std*math.Sqrt2)))
 }
 
+func warmUpCheck(array []int64) (bool, []int64) {
+
+	if array[0] == 0 {
+		return true, array
+	}
+
+	midPoint := len(array) / 2
+
+	if array[midPoint] != 0 {
+		return false, array
+	}
+
+	end := len(array)
+
+	for i := 0; i < len(array)-1; i++ {
+		if array[i] == 0 && array[i+1] == 0 {
+			end = i * 2
+			if end > len(array) {
+				end = len(array)
+			}
+			break
+		}
+	}
+
+	return true, array[:end]
+
+}
+
 // Phi returns the φ-failure for the given value and distribution.
 func phi(v float64, d []int64) float64 {
 	if len(d) == 0 {
 		return 0.0 // no data
 	}
+
+	log.Printf("window = %v", d)
 
 	mean := getMean(d)
 	stdDev := std(d)
@@ -319,14 +347,19 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 			lastBeat := participant.paDetection.lastBeat
 			window := participant.paDetection.window
 
-			phi := phi(float64(now-lastBeat), window)
+			warmUp, phiWindow := warmUpCheck(window)
 
-			log.Printf("%s - phi score for %s = %.2f", s.ServerName, participant.name, phi)
+			phi := phi(float64(now-lastBeat), phiWindow)
 
+			log.Printf("%s - phi score for %s = %.2f --- last beat diff = %v", s.ServerName, participant.name, phi, now-lastBeat)
 			participant.pm.Lock()
 			participant.paDetection.score = phi
-			if phi > float64(s.phi.threshold) {
-				log.Printf("phi = %2.f - threshold = %v", phi, s.phi.threshold)
+			threshold := s.phi.threshold
+			if warmUp {
+				threshold = 3 // TODO make config - warmUp Threshold
+			}
+			if phi > float64(threshold) {
+				log.Printf("phi = %2.f - threshold = %v", phi, threshold)
 				participant.paDetection.dead = true
 			}
 			participant.pm.Unlock()
