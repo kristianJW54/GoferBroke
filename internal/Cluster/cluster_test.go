@@ -63,17 +63,125 @@ func TestParticipantHeap(t *testing.T) {
 
 }
 
+// TODO Test build delta method for normal test, drop deltas, and no delta
+func TestBuildDelta(t *testing.T) {
+
+	// Gen 3 test servers
+	// Main has newest deltas
+	// Other two have old
+	// Gen participant heap
+	// Build delta
+
+	var keyValues1 = map[string]*Delta{
+		"TEST:key6":  {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"TEST:key7":  {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+		"TEST:key8":  {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"TEST:key9":  {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+		"TEST:key11": {keyGroup: "TEST", key: "key11", valueType: INTERNAL_D, version: 1640995209, value: []byte("This is test entry number eleven.")},
+		"TEST:key12": {keyGroup: "TEST", key: "key12", valueType: INTERNAL_D, version: 1640995210, value: []byte("Entry twelve includes a longer message to check proper handling.")},
+		"TEST:key13": {keyGroup: "TEST", key: "key13", valueType: INTERNAL_D, version: 1640995211, value: []byte("Testing entry for key 13, which is designed to be unique.")},
+		"TEST:key14": {keyGroup: "TEST", key: "key14", valueType: INTERNAL_D, version: 1640995212, value: []byte("Another example message for the fourteenth key.")},
+		"TEST:key15": {keyGroup: "TEST", key: "key15", valueType: INTERNAL_D, version: 1640995213, value: []byte("The fifteenth key's entry demonstrates variety in test data.")},
+		"TEST:key16": {keyGroup: "TEST", key: "key16", valueType: INTERNAL_D, version: 1640995214, value: []byte("Testing with key16. Another sample text here.")},
+		"TEST:key17": {keyGroup: "TEST", key: "key17", valueType: INTERNAL_D, version: 1640995215, value: []byte("Key 17: A different message string to showcase the test entry.")},
+		"TEST:key18": {keyGroup: "TEST", key: "key18", valueType: INTERNAL_D, version: 1640995216, value: []byte("Eighteenth key value: a blend of letters and numbers: 1234567890.")},
+		"TEST:key19": {keyGroup: "TEST", key: "key19", valueType: INTERNAL_D, version: 1640995217, value: []byte("Entry number 19 uses special characters: !@#$%^&*()")},
+		"TEST:key20": {keyGroup: "TEST", key: "key20", valueType: INTERNAL_D, version: 1640995218, value: []byte("The final test key entry, providing closure for our sample.")},
+	}
+
+	var keyValues1Outdated = map[string]*Delta{
+		"TEST:key6":  {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995203, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"TEST:key7":  {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995204, value: []byte("A")},
+		"TEST:key8":  {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995205, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"TEST:key9":  {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995206, value: []byte("😃 Emoji support test.")},
+		"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995207, value: []byte("Another simple string.")},
+		"TEST:key11": {keyGroup: "TEST", key: "key11", valueType: INTERNAL_D, version: 1640995208, value: []byte("This is test entry number eleven.")},
+		"TEST:key12": {keyGroup: "TEST", key: "key12", valueType: INTERNAL_D, version: 1640995209, value: []byte("Entry twelve includes a longer message to check proper handling.")},
+		"TEST:key13": {keyGroup: "TEST", key: "key13", valueType: INTERNAL_D, version: 1640995210, value: []byte("Testing entry for key 13, which is designed to be unique.")},
+		"TEST:key14": {keyGroup: "TEST", key: "key14", valueType: INTERNAL_D, version: 1640995211, value: []byte("Another example message for the fourteenth key.")},
+		"TEST:key15": {keyGroup: "TEST", key: "key15", valueType: INTERNAL_D, version: 1640995212, value: []byte("The fifteenth key's entry demonstrates variety in test data.")},
+		"TEST:key16": {keyGroup: "TEST", key: "key16", valueType: INTERNAL_D, version: 1640995213, value: []byte("Testing with key16. Another sample text here.")},
+		"TEST:key17": {keyGroup: "TEST", key: "key17", valueType: INTERNAL_D, version: 1640995214, value: []byte("Key 17: A different message string to showcase the test entry.")},
+		"TEST:key18": {keyGroup: "TEST", key: "key18", valueType: INTERNAL_D, version: 1640995215, value: []byte("Eighteenth key value: a blend of letters and numbers: 1234567890.")},
+		"TEST:key19": {keyGroup: "TEST", key: "key19", valueType: INTERNAL_D, version: 1640995216, value: []byte("Entry number 19 uses special characters: !@#$%^&*()")},
+		"TEST:key20": {keyGroup: "TEST", key: "key20", valueType: INTERNAL_D, version: 1640995217, value: []byte("The final test key entry, providing closure for our sample.")},
+	}
+
+	gbs := GenerateDefaultTestServer("server-1", keyValues1, 3)
+	gbs2 := GenerateDefaultTestServer("server-2", keyValues1Outdated, 3)
+
+	//gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, gbs2.ServerName)
+	//gbs.clusterMap.participants[gbs2.ServerName] = &Participant{
+	//	name:       gbs2.ServerName,
+	//	keyValues:  keyValues1Outdated,
+	//	maxVersion: gbs2.clusterMap.participants[gbs2.ServerName].maxVersion,
+	//}
+	//
+	//gbs2.clusterMap.participantArray = append(gbs.clusterMap.participantArray, gbs.ServerName)
+	//gbs2.clusterMap.participants[gbs.ServerName] = &Participant{
+	//	name:       gbs.ServerName,
+	//	keyValues:  keyValues1,
+	//	maxVersion: gbs.clusterMap.participants[gbs.ServerName].maxVersion,
+	//}
+
+	for name, part := range gbs.clusterMap.participants {
+		log.Printf("name = %s", name)
+		log.Printf("part = %+v", part.name)
+	}
+
+	d, size, err := gbs2.generateDigest()
+	if err != nil {
+		t.Errorf("Error generating digest: %v", err)
+	}
+
+	//Modify digest if no error
+	//newD, newSize, err := gbs.modifyDigest(d)
+	//if err != nil {
+	//	t.Errorf("Error generating digest: %v", err)
+	//}
+
+	remaining := DEFAULT_MAX_GSA - size
+
+	_, fd, err := deSerialiseDigest(d)
+	if err != nil {
+		t.Errorf("Error de-serialising digest: %v", err)
+	}
+
+	for _, v := range *fd {
+		log.Printf("v = %+v", v)
+	}
+
+	ph, err := gbs.generateParticipantHeap(gbs2.ServerName, fd)
+	log.Printf("len of ph = %d", len(ph))
+
+	delta, size, err := gbs.buildDelta(&ph, remaining)
+	if err != nil {
+		t.Errorf("Error building delta: %v", err)
+	}
+
+	log.Printf("size of delta = %v", size)
+
+	for k, v := range delta {
+		log.Printf("k = %v", k)
+		for _, value := range v {
+			log.Printf("value = %+v", value)
+		}
+	}
+
+}
+
 // TODO Delta heap test for ordering of deltas in most outdated first
 
 func TestDeltaHeap(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
-	keyValues := map[string]*Delta{
-		"key6":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("A")},
-		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  {valueType: INTERNAL_D, version: 1640995203, value: []byte("😃 Emoji support test.")},
-		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+	var keyValues = map[string]*Delta{
+		"TEST:key6":  {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995203, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"TEST:key7":  {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
+		"TEST:key8":  {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"TEST:key9":  {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
 	}
 
 	dh := make(deltaHeap, 5)

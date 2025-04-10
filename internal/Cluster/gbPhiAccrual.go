@@ -75,7 +75,7 @@ func (s *GBServer) initPhiAccrual() *phiAccrual {
 
 	return &phiAccrual{
 		lastBeat:    0,
-		window:      make([]int64, 10), //Should be from config or default //TODO change back paWindowSize
+		window:      make([]int64, s.phi.windowSize), //Should be from config or default //TODO change back paWindowSize
 		windowIndex: 0,
 		score:       0.00,
 		dead:        false,
