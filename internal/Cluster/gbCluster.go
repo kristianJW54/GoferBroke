@@ -147,6 +147,7 @@ const (
 	SYSTEM_DKG    = "system"
 	LOCAL_LOG_DKG = "local_log"
 	CONFIG_DKG    = "config"
+	TEST_DKG      = "test"
 )
 
 const (
@@ -220,17 +221,18 @@ type phiControl struct {
 	phiSemaphore chan struct{}
 	phiControl   chan bool
 	phiOK        bool
+	warmUpBucket int
 	mu           sync.RWMutex
 }
 
 type phiAccrual struct {
-	lastBeat    int64
-	window      []int64
-	windowIndex int
-	score       float64
-	warmup      bool
-	dead        bool
-	pa          sync.Mutex
+	lastBeat     int64
+	window       []int64
+	windowIndex  int
+	score        float64
+	warmupBucket int
+	dead         bool
+	pa           sync.Mutex
 }
 
 //=======================================================
@@ -518,8 +520,9 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 	}
 
 	newParticipant := &Participant{
-		name:      name,
-		keyValues: make(map[string]*Delta),
+		name:        name,
+		keyValues:   make(map[string]*Delta),
+		paDetection: s.initPhiAccrual(),
 	}
 
 	for addrKey, addrValue := range disc.addr {
@@ -1514,11 +1517,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	var stage int
 
-	err = s.recordPhi(node)
-	if err != nil {
-		log.Printf("error in gossip with node %s ----> %v", node, err)
-	}
-
 	// So what we can do is set up a progress and error collection
 
 	//------------- GOSS_SYN Stage 1 -------------//
@@ -1562,7 +1560,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	ack, err := s.prepareACK(sender, fdValue)
 	if err != nil || ack == nil {
-		log.Printf("BREAK %s", s.ServerName)
 		log.Printf("prepareACK failed: %v", err)
 		conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Error())
 		return
@@ -1578,6 +1575,11 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	conn.mu.Unlock()
 
 	//------------- Handle Completion -------------
+
+	err = s.recordPhi(node)
+	if err != nil {
+		log.Printf("error in gossip with node %s ----> %v", node, err)
+	}
 
 	if err != nil {
 		log.Printf("Error in gossip round (stage %d): %v", stage, err)

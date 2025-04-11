@@ -66,19 +66,43 @@ func (s *GBServer) initPhiControl() *phiControl {
 		make(chan struct{}),
 		make(chan bool),
 		false,
+		setWarmupBucket(paWindowSize),
 		sync.RWMutex{},
 	}
+
+}
+
+func setWarmupBucket(windowSize int) int {
+
+	if windowSize >= DEFAULT_PA_WINDOW_SIZE {
+		return 10
+	} else if windowSize > 5 {
+		return 3
+	} else {
+		return 1
+	}
+}
+
+// Lock must be held coming in
+func (s *GBServer) increaseWarmupBucket(participant *Participant) {
+
+	if participant.paDetection.warmupBucket < s.phi.windowSize {
+		participant.paDetection.warmupBucket++
+	}
+
+	log.Printf("warmupBucket for %s = %d/%d", participant.name, participant.paDetection.warmupBucket, s.phi.warmUpBucket)
 
 }
 
 func (s *GBServer) initPhiAccrual() *phiAccrual {
 
 	return &phiAccrual{
-		lastBeat:    0,
-		window:      make([]int64, s.phi.windowSize), //Should be from config or default //TODO change back paWindowSize
-		windowIndex: 0,
-		score:       0.00,
-		dead:        false,
+		lastBeat:     0,
+		window:       make([]int64, s.phi.windowSize), //Should be from config or default //TODO change back paWindowSize
+		windowIndex:  0,
+		score:        0.00,
+		warmupBucket: 0,
+		dead:         false,
 	}
 }
 
@@ -198,13 +222,13 @@ func (s *GBServer) recordPhi(node string) error {
 	cm := s.clusterMap.participants
 	s.clusterMapLock.RUnlock()
 
-	if node, exists := cm[node]; exists {
+	if n, exists := cm[node]; exists {
 
-		now := time.Now().Unix()
+		now := time.Now().UnixMilli()
 
-		node.pm.RLock()
-		p := node.paDetection
-		node.pm.RUnlock()
+		n.pm.RLock()
+		p := n.paDetection
+		n.pm.RUnlock()
 
 		interval := now - p.lastBeat
 
@@ -212,12 +236,13 @@ func (s *GBServer) recordPhi(node string) error {
 
 		if p.lastBeat != 0 {
 
-			p.window[node.paDetection.windowIndex] = interval
+			p.window[n.paDetection.windowIndex] = interval
 			p.windowIndex = (p.windowIndex + 1) % len(p.window)
 
 		}
 
 		p.lastBeat = now
+		s.increaseWarmupBucket(cm[n.name])
 		p.pa.Unlock()
 
 	} else {
@@ -266,32 +291,26 @@ func cdf(mean, std, v float64) float64 {
 	return (1.0 / 2.0) * (1 + math.Erf((v-mean)/(std*math.Sqrt2)))
 }
 
-func warmUpCheck(array []int64) (bool, []int64) {
+func (s *GBServer) warmUpCheck(participant *Participant, array []int64) []int64 {
+	switch {
+	case participant.paDetection.warmupBucket == 0:
+		// Very early: just use 1 sample
+		return array[:1]
 
-	if array[0] == 0 {
-		return true, array
-	}
+	case participant.paDetection.warmupBucket == s.phi.windowSize:
+		// Fully warmed up
+		return array
 
-	midPoint := len(array) / 2
-
-	if array[midPoint] != 0 {
-		return false, array
-	}
-
-	end := len(array)
-
-	for i := 0; i < len(array)-1; i++ {
-		if array[i] == 0 && array[i+1] == 0 {
-			end = i * 2
-			if end > len(array) {
-				end = len(array)
-			}
-			break
+	default:
+		// In warm-up phase: return a small padded window
+		warmupBucket := participant.paDetection.warmupBucket
+		sliceSize := warmupBucket + 10
+		log.Printf("slice size = %v", sliceSize)
+		if sliceSize > len(array) {
+			sliceSize = len(array)
 		}
+		return array[:sliceSize]
 	}
-
-	return true, array[:end]
-
 }
 
 // Phi returns the φ-failure for the given value and distribution.
@@ -299,8 +318,6 @@ func phi(v float64, d []int64) float64 {
 	if len(d) == 0 {
 		return 0.0 // no data
 	}
-
-	log.Printf("window = %v", d)
 
 	mean := getMean(d)
 	stdDev := std(d)
@@ -332,12 +349,12 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 		cm := s.clusterMap.participants
 		s.clusterMapLock.RUnlock()
 
-		now := time.Now().Unix()
+		now := time.Now().UnixMilli()
 
 		for _, participant := range cm {
 
 			participant.pm.RLock()
-			if participant.name == s.ServerName || participant.paDetection.dead {
+			if participant.name == s.ServerName || participant.paDetection.dead || s.discoveryPhase {
 				participant.pm.RUnlock()
 				continue
 			}
@@ -347,19 +364,23 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 			lastBeat := participant.paDetection.lastBeat
 			window := participant.paDetection.window
 
-			warmUp, phiWindow := warmUpCheck(window)
+			phiWindow := s.warmUpCheck(participant, window)
 
-			phi := phi(float64(now-lastBeat), phiWindow)
+			delta := now - lastBeat
 
-			log.Printf("%s - phi score for %s = %.2f --- last beat diff = %v", s.ServerName, participant.name, phi, now-lastBeat)
+			phi := phi(float64(delta), phiWindow)
+
+			log.Printf("%s - window = %v", s.ServerName, phiWindow)
+
+			log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s",
+				s.ServerName, phi, delta, s.ServerName, participant.name)
 			participant.pm.Lock()
 			participant.paDetection.score = phi
 			threshold := s.phi.threshold
-			if warmUp {
-				threshold = 3 // TODO make config - warmUp Threshold
+			if participant.paDetection.warmupBucket <= 10 {
+				threshold = 20 // TODO make config - warmUp Threshold -- Maybe want this high because this is warming up and may have skewed numbers
 			}
 			if phi > float64(threshold) {
-				log.Printf("phi = %2.f - threshold = %v", phi, threshold)
 				participant.paDetection.dead = true
 			}
 			participant.pm.Unlock()

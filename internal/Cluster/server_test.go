@@ -67,7 +67,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//log.Printf("%s --> temp client is %s --> direction %s", gbs.ServerName, client.name, client.directionType)
 	//log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.name, client2.directionType)
 
-	time.Sleep(6 * time.Second)
+	time.Sleep(20 * time.Second)
 	gbs2.Shutdown()
 	//time.Sleep(1 * time.Second)
 	gbs.Shutdown()

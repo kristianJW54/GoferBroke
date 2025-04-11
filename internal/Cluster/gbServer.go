@@ -332,9 +332,10 @@ func (s *GBServer) StartServer() {
 	if s.gbConfig.Internal.disableInitialiseSelf {
 		log.Printf("Cluster Map and Self Info not initialised")
 	} else {
-		selfInfo := initSelfParticipant(s.ServerName, s.addr)
-		s.clusterMap = *initClusterMap(s.ServerName, s.nodeTCPAddr, selfInfo)
 		s.phi = *s.initPhiControl()
+		selfInfo := initSelfParticipant(s.ServerName, s.addr)
+		selfInfo.paDetection = s.initPhiAccrual()
+		s.clusterMap = *initClusterMap(s.ServerName, s.nodeTCPAddr, selfInfo)
 	}
 
 	//Checks and other start up here

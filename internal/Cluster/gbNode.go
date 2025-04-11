@@ -183,7 +183,16 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	s.clusterMapLock.RLock()
 	participant := s.clusterMap.participants[node]
 
-	addr := participant.keyValues[_ADDRESS_].value
+	addrKey := makeDeltaKey(ADDR_DKG, _ADDRESS_)
+
+	var addr []byte
+
+	if kv, exists := participant.keyValues[addrKey]; !exists {
+		s.clusterMapLock.RUnlock()
+		return fmt.Errorf("no address key in map")
+	} else {
+		addr = kv.value
+	}
 	s.clusterMapLock.RUnlock()
 
 	parts := strings.Split(string(addr), ":")
@@ -883,6 +892,11 @@ func (c *gbClient) processGossSyn(message []byte) {
 	}
 
 	senderName := sender
+
+	err = c.srv.recordPhi(senderName)
+	if err != nil {
+		log.Printf("recordPhi failed: %v", err)
+	}
 
 	//Does the sending node need to defer?
 	//If it does - then we must construct an error response, so it can exit out of it's round

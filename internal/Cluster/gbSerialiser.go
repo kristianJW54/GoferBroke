@@ -318,7 +318,10 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 		length += 1 + len(name) + 2 // 1 byte for name length + name length + size of addr keys
 
 		for _, p := range keys {
-			value := cm.participants[name].keyValues[p].value
+
+			addrKey := makeDeltaKey(ADDR_DKG, p)
+
+			value := cm.participants[name].keyValues[addrKey].value
 			length += 5 + len(p) + len(value) // Metadata (key size, value size) + length of key + length value
 		}
 
@@ -357,7 +360,10 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 		offset += 2
 
 		for _, p := range part {
-			value := cm.participants[name].keyValues[p]
+
+			addrKey := makeDeltaKey(ADDR_DKG, p)
+
+			value := cm.participants[name].keyValues[addrKey]
 
 			// Key
 			discoveryBuf[offset] = uint8(len(p))
