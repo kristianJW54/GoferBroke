@@ -713,7 +713,7 @@ func TestLiveGossip(t *testing.T) {
 	config := &GbConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {
-				SeedIP:   ip,
+				SeedHost: ip,
 				SeedPort: port,
 			},
 		},

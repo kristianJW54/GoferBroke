@@ -2,6 +2,7 @@ package Cluster
 
 import (
 	"GoferBroke/internal/Errors"
+	"GoferBroke/internal/Network"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -39,7 +40,7 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		config = &GbConfig{
 			SeedServers: map[string]Seeds{
 				"seed1": {
-					SeedIP:   ip,
+					SeedHost: ip,
 					SeedPort: port,
 				},
 			},
@@ -54,7 +55,7 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		config = &GbConfig{
 			SeedServers: map[string]Seeds{
 				"seed1": {
-					SeedIP:   clusterIP,
+					SeedHost: clusterIP,
 					SeedPort: clusterPort,
 				},
 			},
@@ -160,6 +161,8 @@ type GBServer struct {
 	ServerID
 	ServerName    string //ID and timestamp
 	initialised   int64  //time of server creation - can point to ServerID timestamp
+	host          string
+	port          string
 	addr          string
 	nodeTCPAddr   *net.TCPAddr
 	clientTCPAddr *net.TCPAddr
@@ -176,7 +179,7 @@ type GBServer struct {
 	serverContextCancel context.CancelFunc
 
 	gbConfig *GbConfig
-	seedAddr []*net.TCPAddr
+	seedAddr []*seedEntry
 
 	// Options - for config - tls etc...
 
@@ -226,6 +229,12 @@ type GBServer struct {
 	debugTrack int
 }
 
+type seedEntry struct {
+	host     string
+	port     string
+	resolved *net.TCPAddr
+}
+
 func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
 
 	if len([]byte(serverName)) > ServerNameMaxLength {
@@ -238,6 +247,13 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		log.Fatal(err)
 	}
 
+	if Network.IsPrivate(nodeTCPAddr.IP) {
+		log.Println("================== Node ip is private -- discovering public address..")
+	}
+
+	// TODO for our own node address - we resolve but we may also need to discover out public IP - do a .IP.Public check
+
+	// TODO for client addresses do we use same host? and specify a port range?
 	cAddr := net.JoinHostPort("0.0.0.0", clientPort)
 
 	clientAddr, err := net.ResolveTCPAddr("tcp", cAddr)
@@ -268,6 +284,8 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		ServerID:            *serverID,
 		ServerName:          srvName,
 		initialised:         int64(serverID.timeUnix),
+		host:                nodeHost,
+		port:                nodePort,
 		addr:                addr,
 		nodeTCPAddr:         nodeTCPAddr,
 		clientTCPAddr:       clientAddr,
@@ -276,7 +294,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		serverContextCancel: cancel,
 
 		gbConfig:    gbConfig,
-		seedAddr:    make([]*net.TCPAddr, 0),
+		seedAddr:    make([]*seedEntry, 0),
 		clientStore: make(map[uint64]*gbClient),
 
 		gossip:     goss,
@@ -403,6 +421,8 @@ func (s *GBServer) StartServer() {
 				s.gossipProcess(s.serverContext)
 			})
 	}
+
+	// May need to periodically check our node addr? and ensure we are resolved and reachable etc
 }
 
 //=======================================================
@@ -517,7 +537,7 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 		}
 		// Use this node's TCP address as the seed
 		s.serverLock.Lock()
-		s.seedAddr = append(s.seedAddr, s.nodeTCPAddr)
+		s.seedAddr = append(s.seedAddr, &seedEntry{host: s.host, port: s.port, resolved: s.nodeTCPAddr})
 		s.serverLock.Unlock()
 		//log.Printf("seed server list --> %v\n", s.seedAddr)
 		return nil
@@ -529,16 +549,70 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 		defer s.serverLock.Unlock()
 
 		for _, value := range s.gbConfig.SeedServers {
-			addr := net.JoinHostPort(value.SeedIP, value.SeedPort)
+			addr := net.JoinHostPort(value.SeedHost, value.SeedPort)
 			tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 			if err != nil {
 				return err
 			}
-			s.seedAddr = append(s.seedAddr, tcpAddr)
+			s.seedAddr = append(s.seedAddr, &seedEntry{host: value.SeedHost, port: value.SeedPort, resolved: tcpAddr})
 		}
 
 	}
 	return nil
+}
+
+func (s *GBServer) tryReconnectToSeed(connIndex int) (net.Conn, error) {
+
+	s.serverLock.RLock()
+	currAddr := s.seedAddr[connIndex]
+	s.serverLock.RUnlock()
+
+	addrResolve, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(currAddr.host, currAddr.port))
+	if err != nil {
+		return nil, err
+	}
+
+	if !currAddr.resolved.IP.Equal(addrResolve.IP) {
+		s.serverLock.Lock()
+		s.seedAddr[connIndex].resolved = addrResolve
+		log.Printf("updating seed addr %v - from %s to %s", connIndex, currAddr.resolved.String(), addrResolve.String())
+		s.serverLock.Unlock()
+	}
+
+	conn, err := net.Dial("tcp", addrResolve.String())
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, nil
+
+}
+
+func (s *GBServer) dialSeed() (net.Conn, error) {
+
+	s.serverLock.RLock()
+	seeds := s.seedAddr
+	s.serverLock.RUnlock()
+
+	for i, addr := range seeds {
+
+		conn, err := net.Dial("tcp", addr.resolved.String())
+		if err == nil {
+			return conn, nil
+		}
+
+		log.Printf("Failed to dial seed %s: %v -- trying reconnect and addr resolving...", addr.host, err)
+
+		//Try to refresh DNS and reconnect
+		conn, err = s.tryReconnectToSeed(i)
+		if err == nil {
+			return conn, nil
+		}
+
+	}
+
+	return nil, fmt.Errorf("failed to dial seed")
+
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
@@ -546,7 +620,7 @@ func (s *GBServer) seedCheck() int {
 
 	if len(s.seedAddr) >= 1 {
 		for _, addr := range s.seedAddr {
-			if addr.IP.Equal(s.nodeTCPAddr.IP) && addr.Port == s.nodeTCPAddr.Port {
+			if addr.resolved.IP.Equal(s.nodeTCPAddr.IP) && addr.resolved.Port == s.nodeTCPAddr.Port {
 				return 1
 			}
 		}

@@ -18,7 +18,7 @@ func TestServerNameLengthError(t *testing.T) {
 	config := &GbConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {
-				SeedIP:   ip,
+				SeedHost: ip,
 				SeedPort: port,
 			},
 		},
@@ -37,14 +37,14 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	lc := net.ListenConfig{}
 
-	ip := "127.0.0.1" // Use the full IP address
+	ip := "localhost" // Use the full IP address
 	port := "8081"
 
 	// Initialize config with the seed server address
 	config := &GbConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {
-				SeedIP:   ip,
+				SeedHost: ip,
 				SeedPort: port,
 			},
 		},
@@ -67,7 +67,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	//log.Printf("%s --> temp client is %s --> direction %s", gbs.ServerName, client.name, client.directionType)
 	//log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.name, client2.directionType)
 
-	time.Sleep(20 * time.Second)
+	time.Sleep(10 * time.Second)
 	gbs2.Shutdown()
 	//time.Sleep(1 * time.Second)
 	gbs.Shutdown()
@@ -96,7 +96,7 @@ func TestGossipSignal(t *testing.T) {
 	config := &GbConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {
-				SeedIP:   ip,
+				SeedHost: ip,
 				SeedPort: port,
 			},
 		},
@@ -160,7 +160,7 @@ func TestGossipDifferentStates(t *testing.T) {
 	config := &GbConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {
-				SeedIP:   "127.0.0.1",
+				SeedHost: "127.0.0.1",
 				SeedPort: "8081",
 			},
 		},

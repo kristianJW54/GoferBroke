@@ -91,15 +91,10 @@ func (s *GBServer) connectToSeed() error {
 	ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second) // TODO will be configurable
 	defer cancel()
 
-	// TODO Do we need any DNS Lookups or resolving here?
-	var addr []string
-	for _, value := range s.gbConfig.SeedServers {
-		a := net.JoinHostPort(value.SeedIP, value.SeedPort)
-		addr = append(addr, a)
-	}
-
-	conn, err := net.Dial("tcp", addr[0])
+	// Replace with method
+	conn, err := net.Dial("tcp", s.seedAddr[0].resolved.String()) // Replace with select random seed addr method
 	if err != nil {
+		// Try re-connect and resolve DNS
 		return fmt.Errorf("connect to seed - net dial: %s", err)
 	}
 

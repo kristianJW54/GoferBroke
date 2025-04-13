@@ -40,7 +40,7 @@ type GbConfig struct {
 
 type Seeds struct {
 	Name     string
-	SeedIP   string
+	SeedHost string
 	SeedPort string
 }
 
