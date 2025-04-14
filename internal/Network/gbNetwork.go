@@ -85,6 +85,64 @@ func DetermineNodeNetworkType(configNetType int, ip net.IP) (NodeNetworkReachabi
 
 }
 
+func DiscoverLocalIPFromUndefined(clusterNetworkTypePrivate bool, ip net.IP) (net.IP, error) {
+
+	if !ip.IsUnspecified() {
+		return ip, fmt.Errorf("IP address is not unspecified")
+	}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("error getting network interfaces: %v", err)
+	}
+
+	for _, i := range ifaces {
+
+		// Skip interfaces that are down or loopback
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+
+			ip = ip.To4()
+			if ip == nil {
+				continue
+			}
+
+			if ip.IsLoopback() || ip.IsUnspecified() {
+				continue
+			}
+
+			// Decide what to accept based on cluster type
+			if clusterNetworkTypePrivate && ip.IsPrivate() {
+				return ip, nil
+			}
+
+			if !clusterNetworkTypePrivate && !ip.IsPrivate() {
+				return ip, nil
+			}
+
+		}
+	}
+
+	return nil, fmt.Errorf("no local IP address found")
+
+}
+
 func DetermineClusterNetworkType() {
 
 }

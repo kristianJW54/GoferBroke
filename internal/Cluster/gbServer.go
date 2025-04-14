@@ -70,7 +70,10 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 	}
 
 	// Create and start the server
-	gbs, _ := NewServer(name, uuid, config, nodeConfig, nodeIp, nodePort, "8080", lc)
+	gbs, err := NewServer(name, uuid, config, nodeConfig, nodeIp, nodePort, "8080", lc)
+	if err != nil {
+		return err
+	}
 
 	go func() {
 		log.Println("Starting server...")
@@ -163,13 +166,20 @@ func (sf *ServerID) updateTime() {
 type GBServer struct {
 	//Server Info - can add separate info struct later
 	ServerID
-	ServerName    string //ID and timestamp
-	initialised   int64  //time of server creation - can point to ServerID timestamp
-	host          string
-	port          string
-	addr          string
-	nodeTCPAddr   *net.TCPAddr
-	clientTCPAddr *net.TCPAddr
+	ServerName       string //ID and timestamp
+	initialised      int64  //time of server creation - can point to ServerID timestamp
+	host             string
+	port             string
+	addr             string
+	boundTCPAddr     *net.TCPAddr
+	advertiseAddress *net.TCPAddr
+	clientTCPAddr    *net.TCPAddr
+
+	//Distributed Info
+	gossip          *gossip
+	isSeed          bool
+	canBeRendezvous bool // TODO Change to reachable state machine
+	discoveryPhase  bool
 
 	flags serverFlags
 
@@ -182,6 +192,7 @@ type GBServer struct {
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
 
+	// Configurations and extensibility should be handled in Options which will be embedded here
 	// Config + Options
 	gbClusterConfig *GbClusterConfig
 	gbNodeConfig    *GbNodeConfig
@@ -194,13 +205,6 @@ type GBServer struct {
 	//Server Info for gossip
 	clusterMap ClusterMap
 	phi        phiControl
-
-	// Configurations and extensibility should be handled in Options which will be embedded here
-	//Distributed Info
-	gossip          *gossip
-	isSeed          bool
-	canBeRendezvous bool // TODO Change to reachable state machine
-	discoveryPhase  bool
 
 	//Connection Handling
 	gcid uint64 // Global client ID counter
@@ -293,7 +297,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 		host:                nodeHost,
 		port:                nodePort,
 		addr:                addr,
-		nodeTCPAddr:         nodeTCPAddr,
+		boundTCPAddr:        nodeTCPAddr,
 		clientTCPAddr:       clientAddr,
 		listenConfig:        lc,
 		serverContext:       ctx,
@@ -361,7 +365,7 @@ func (s *GBServer) StartServer() {
 		s.phi = *s.initPhiControl()
 		selfInfo := initSelfParticipant(s.ServerName, s.addr)
 		selfInfo.paDetection = s.initPhiAccrual()
-		s.clusterMap = *initClusterMap(s.ServerName, s.nodeTCPAddr, selfInfo)
+		s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
 	}
 
 	//Checks and other start up here
@@ -550,12 +554,12 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 	// Check if no seed servers are configured
 	if s.gbClusterConfig.SeedServers == nil {
 		// Ensure s.nodeTCPAddr is initialized
-		if s.nodeTCPAddr == nil {
+		if s.boundTCPAddr == nil {
 			return fmt.Errorf("nodeTCPAddr is not initialized")
 		}
 		// Use this node's TCP address as the seed
 		s.serverLock.Lock()
-		s.seedAddr = append(s.seedAddr, &seedEntry{host: s.host, port: s.port, resolved: s.nodeTCPAddr})
+		s.seedAddr = append(s.seedAddr, &seedEntry{host: s.host, port: s.port, resolved: s.boundTCPAddr})
 		s.serverLock.Unlock()
 		//log.Printf("seed server list --> %v\n", s.seedAddr)
 		return nil
@@ -638,7 +642,7 @@ func (s *GBServer) seedCheck() int {
 
 	if len(s.seedAddr) >= 1 {
 		for _, addr := range s.seedAddr {
-			if addr.resolved.IP.Equal(s.nodeTCPAddr.IP) && addr.resolved.Port == s.nodeTCPAddr.Port {
+			if addr.resolved.IP.Equal(s.boundTCPAddr.IP) && addr.resolved.Port == s.boundTCPAddr.Port {
 				return 1
 			}
 		}
@@ -762,7 +766,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	//log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
 
-	nl, err := s.listenConfig.Listen(s.serverContext, s.nodeTCPAddr.Network(), s.nodeTCPAddr.String())
+	nl, err := s.listenConfig.Listen(s.serverContext, s.boundTCPAddr.Network(), s.boundTCPAddr.String())
 	if err != nil {
 		log.Printf("Error creating listener: %s\n", err)
 	}
