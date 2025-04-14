@@ -30,43 +30,43 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 
 	lc := net.ListenConfig{}
 
-	var config *GbConfig
+	var config *GbClusterConfig
+	var nodeConfig *GbNodeConfig
 
+	// TODO This needs to change - cannot be localhost
 	if clusterIP == "" && clusterPort == "" {
-		ip := "localhost" // Use the localhost for now - will change when actually config is implemented
+		ip := "localhost" // Use the localhost for now - will change when actual config is implemented
 		port := "8081"
 
 		// Initialize config with the seed server address
-		config = &GbConfig{
+		config = &GbClusterConfig{
 			SeedServers: map[string]Seeds{
 				"seed1": {
 					SeedHost: ip,
 					SeedPort: port,
 				},
 			},
-			Internal: &InternalOptions{},
-			Cluster:  &ClusterOptions{},
+			Cluster: &ClusterOptions{},
 		}
 		log.Println("Config initialized:", config)
 	} else {
 
 		log.Printf("cluster ip == %s", clusterIP)
 
-		config = &GbConfig{
+		config = &GbClusterConfig{
 			SeedServers: map[string]Seeds{
 				"seed1": {
 					SeedHost: clusterIP,
 					SeedPort: clusterPort,
 				},
 			},
-			Internal: &InternalOptions{},
-			Cluster:  &ClusterOptions{},
+			Cluster: &ClusterOptions{},
 		}
 		log.Println("Config initialized:", config)
 	}
 
 	// Create and start the server
-	gbs, _ := NewServer(name, uuid, config, nodeIp, nodePort, "8080", lc)
+	gbs, _ := NewServer(name, uuid, config, nodeConfig, nodeIp, nodePort, "8080", lc)
 
 	go func() {
 		log.Println("Starting server...")
@@ -178,8 +178,10 @@ type GBServer struct {
 	serverContext       context.Context
 	serverContextCancel context.CancelFunc
 
-	gbConfig *GbConfig
-	seedAddr []*seedEntry
+	// Config + Options
+	gbClusterConfig *GbClusterConfig
+	gbNodeConfig    *GbNodeConfig
+	seedAddr        []*seedEntry
 
 	// Options - for config - tls etc...
 
@@ -191,13 +193,10 @@ type GBServer struct {
 
 	// Configurations and extensibility should be handled in Options which will be embedded here
 	//Distributed Info
-	gossip         *gossip
-	isOriginal     bool
-	discoveryPhase bool
-	// Metrics or values for gossip
-	// CPU Load
-	// Latency ...
-	// Other Use Cases such as shard assignment, state, config changes etc, all should be gossiped
+	gossip          *gossip
+	isSeed          bool
+	canBeRendezvous bool // TODO Change to reachable state machine
+	discoveryPhase  bool
 
 	//Connection Handling
 	gcid uint64 // Global client ID counter
@@ -235,7 +234,7 @@ type seedEntry struct {
 	resolved *net.TCPAddr
 }
 
-func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
+func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
 
 	if len([]byte(serverName)) > ServerNameMaxLength {
 		return nil, fmt.Errorf("server name length exceeds %d", ServerNameMaxLength)
@@ -248,8 +247,15 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 	}
 
 	if Network.IsPrivate(nodeTCPAddr.IP) {
-		log.Println("================== Node ip is private -- discovering public address..")
+		log.Println("================== Node ip is private")
 	}
+
+	nodeType, err := Network.DetermineNodeNetworkType(int(gbNodeConfig.NetworkType), nodeTCPAddr.IP)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Println("================== Node type:", nodeType)
 
 	// TODO for our own node address - we resolve but we may also need to discover out public IP - do a .IP.Public check
 
@@ -293,12 +299,14 @@ func NewServer(serverName string, uuid int, gbConfig *GbConfig, nodeHost string,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
 
-		gbConfig:    gbConfig,
-		seedAddr:    make([]*seedEntry, 0),
-		clientStore: make(map[uint64]*gbClient),
+		gbClusterConfig: gbConfig,
+		gbNodeConfig:    gbNodeConfig,
+		seedAddr:        make([]*seedEntry, 0),
+		clientStore:     make(map[uint64]*gbClient),
 
-		gossip:     goss,
-		isOriginal: false,
+		gossip:          goss,
+		isSeed:          false,
+		canBeRendezvous: false,
 		//numNodeConnections:   0,
 		//numClientConnections: 0,
 
@@ -333,13 +341,13 @@ func (s *GBServer) StartServer() {
 	s.flags.clear(SHUTTING_DOWN)
 	s.serverLock.Unlock()
 
-	if !s.gbConfig.Internal.disableUpdateServerTimeStampOnStartup {
+	if !s.gbNodeConfig.Internal.disableUpdateServerTimeStampOnStartup {
 		s.updateTime() // To sync to when the server is started
 		srvName := s.String()
 		s.ServerName = srvName
 	}
 
-	if s.gbConfig.Internal.isTestMode {
+	if s.gbNodeConfig.Internal.isTestMode {
 		// Add debug mode output
 		log.Printf("Server starting in test mode: %s\n", s.ServerName)
 	} else {
@@ -347,7 +355,7 @@ func (s *GBServer) StartServer() {
 
 	}
 	//s.clusterMapLock.Lock()
-	if s.gbConfig.Internal.disableInitialiseSelf {
+	if s.gbNodeConfig.Internal.disableInitialiseSelf {
 		log.Printf("Cluster Map and Self Info not initialised")
 	} else {
 		s.phi = *s.initPhiControl()
@@ -365,9 +373,9 @@ func (s *GBServer) StartServer() {
 
 	// Move this seed logic elsewhere
 	if s.seedCheck() == 1 {
-		s.isOriginal = true
+		s.isSeed = true
 	} else {
-		s.isOriginal = false
+		s.isSeed = false
 		s.discoveryPhase = true
 	}
 
@@ -414,7 +422,7 @@ func (s *GBServer) StartServer() {
 	})
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
-	if !s.gbConfig.Internal.disableGossip {
+	if !s.gbNodeConfig.Internal.disableGossip {
 		s.startGoRoutine(s.ServerName, "gossip-process",
 			func() {
 				defer s.gossipCleanup()
@@ -527,10 +535,15 @@ func (s *GBServer) resetContext() {
 // TODO Resolver URL's also - to IPs and addr that can be stored as TCPAddr
 // TODO Revisit when config parsing is complete
 // TODO Think about different environments and addresses
+
+func (s *GBServer) resolveClusterNetworkType() {
+
+}
+
 func (s *GBServer) resolveConfigSeedAddr() error {
 
 	// Check if no seed servers are configured
-	if s.gbConfig.SeedServers == nil {
+	if s.gbClusterConfig.SeedServers == nil {
 		// Ensure s.nodeTCPAddr is initialized
 		if s.nodeTCPAddr == nil {
 			return fmt.Errorf("nodeTCPAddr is not initialized")
@@ -543,12 +556,12 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 		return nil
 	}
 
-	if len(s.gbConfig.SeedServers) >= 1 {
+	if len(s.gbClusterConfig.SeedServers) >= 1 {
 
 		s.serverLock.Lock()
 		defer s.serverLock.Unlock()
 
-		for _, value := range s.gbConfig.SeedServers {
+		for _, value := range s.gbClusterConfig.SeedServers {
 			addr := net.JoinHostPort(value.SeedHost, value.SeedPort)
 			tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 			if err != nil {
@@ -774,7 +787,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	//---------------- Seed Dial ----------------//
 	// This is essentially a solicit. If we are not a seed server then we must be the one to initiate a connection with the seed in order to join the cluster
 	// A connectToSeed routine will be launched and blocks on a response. Once a response is given by the seed, we can move to connected state.
-	if !s.isOriginal {
+	if !s.isSeed {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
 		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {

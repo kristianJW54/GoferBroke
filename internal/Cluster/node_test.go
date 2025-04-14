@@ -13,7 +13,8 @@ func TestBuildAddrMap(t *testing.T) {
 	testStruct := []struct {
 		name         string
 		known        []string
-		config       GbConfig
+		config       GbClusterConfig
+		nodeConfig   GbNodeConfig
 		addrMapCheck map[string][]string
 	}{
 		{
@@ -22,12 +23,14 @@ func TestBuildAddrMap(t *testing.T) {
 				gbs.clusterMap.participantArray[1],
 				gbs.clusterMap.participantArray[2],
 			},
-			config: GbConfig{
+			config: GbClusterConfig{
 				SeedServers: make(map[string]Seeds),
+				Cluster:     &ClusterOptions{},
+			},
+			nodeConfig: GbNodeConfig{
 				Internal: &InternalOptions{
 					addressKeys: nil,
 				},
-				Cluster: &ClusterOptions{},
 			},
 			addrMapCheck: map[string][]string{
 				gbs.clusterMap.participantArray[0]: {
@@ -47,14 +50,14 @@ func TestBuildAddrMap(t *testing.T) {
 				gbs.clusterMap.participantArray[1],
 				gbs.clusterMap.participantArray[3],
 			},
-			config: GbConfig{
+			config: GbClusterConfig{
 				SeedServers: make(map[string]Seeds),
+				Cluster:     &ClusterOptions{},
+			},
+			nodeConfig: GbNodeConfig{
 				Internal: &InternalOptions{
-					addressKeys: []string{
-						"CLOUD",
-					},
+					addressKeys: nil,
 				},
-				Cluster: &ClusterOptions{},
 			},
 			addrMapCheck: map[string][]string{
 				gbs.clusterMap.participantArray[0]: {
@@ -76,7 +79,7 @@ func TestBuildAddrMap(t *testing.T) {
 	for _, tt := range testStruct {
 		t.Run(tt.name, func(t *testing.T) {
 
-			gbs.gbConfig = &tt.config
+			gbs.gbClusterConfig = &tt.config
 
 			am, err := gbs.buildAddrGroupMap(tt.known)
 			if err != nil {

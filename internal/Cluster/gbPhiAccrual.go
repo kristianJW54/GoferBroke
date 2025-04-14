@@ -53,10 +53,10 @@ func (s *GBServer) initPhiControl() *phiControl {
 
 	var paWindowSize int
 
-	if s.gbConfig.Cluster.paWindowSize == 0 {
+	if s.gbClusterConfig.Cluster.paWindowSize == 0 {
 		paWindowSize = DEFAULT_PA_WINDOW_SIZE
 	} else {
-		paWindowSize = s.gbConfig.Cluster.paWindowSize
+		paWindowSize = s.gbClusterConfig.Cluster.paWindowSize
 	}
 
 	// Should be taken from config

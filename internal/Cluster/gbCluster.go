@@ -617,8 +617,8 @@ func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 
 	perc := percMakeup(current, int(addrNodes.addrCount))
 
-	if s.gbConfig.Cluster.discoveryPercentage != 0 {
-		if perc >= int(s.gbConfig.Cluster.discoveryPercentage) {
+	if s.gbClusterConfig.Cluster.discoveryPercentage != 0 {
+		if perc >= int(s.gbClusterConfig.Cluster.discoveryPercentage) {
 			s.discoveryPhase = false
 		}
 	} else if perc >= DEFAULT_DISCOVERY_PERCENTAGE {

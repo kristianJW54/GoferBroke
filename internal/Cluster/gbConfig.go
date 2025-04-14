@@ -32,10 +32,9 @@ const (
 
 // TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
 
-type GbConfig struct {
+type GbClusterConfig struct {
 	SeedServers map[string]Seeds `gb:"seed"`
 	Cluster     *ClusterOptions
-	Internal    *InternalOptions
 }
 
 type Seeds struct {
@@ -43,6 +42,15 @@ type Seeds struct {
 	SeedHost string
 	SeedPort string
 }
+
+type ClusterNetworkType int
+
+const (
+	C_UNDEFINED ClusterNetworkType = iota
+	C_PRIVATE
+	C_PUBLIC
+	C_DYNAMIC
+)
 
 type ClusterOptions struct {
 	maxGossipSize                 uint16
@@ -58,6 +66,23 @@ type ClusterOptions struct {
 	discoveryPercentage           int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
 	paWindowSize                  int
 	paThreshold                   int
+	clusterNetworkType            ClusterNetworkType
+}
+
+type NodeNetworkType int
+
+const (
+	UNDEFINED NodeNetworkType = iota
+	PRIVATE
+	PUBLIC
+)
+
+type GbNodeConfig struct {
+	Host        string
+	Port        string
+	NetworkType NodeNetworkType
+	ClientPort  string
+	Internal    *InternalOptions
 }
 
 type InternalOptions struct {

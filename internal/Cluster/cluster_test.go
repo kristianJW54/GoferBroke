@@ -184,12 +184,11 @@ func TestDeltaHeap(t *testing.T) {
 func TestUpdateHeartBeat(t *testing.T) {
 
 	// Initialize config with the seed server address
-	config := &GbConfig{
+	config := &GbClusterConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {},
 		},
-		Internal: &InternalOptions{},
-		Cluster:  &ClusterOptions{},
+		Cluster: &ClusterOptions{},
 	}
 
 	mockServer := &GBServer{
@@ -197,7 +196,7 @@ func TestUpdateHeartBeat(t *testing.T) {
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
 		},
-		gbConfig: config,
+		gbClusterConfig: config,
 	}
 
 	keyValues := map[string]*Delta{
@@ -248,12 +247,11 @@ func TestClusterMapLocks(t *testing.T) {
 	// Tasks should be: Add participant, read cluster map, update cluster map, update self info
 
 	// Initialize config with the seed server address
-	config := &GbConfig{
+	config := &GbClusterConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {},
 		},
-		Internal: &InternalOptions{},
-		Cluster:  &ClusterOptions{},
+		Cluster: &ClusterOptions{},
 	}
 
 	mockServer := &GBServer{
@@ -261,7 +259,7 @@ func TestClusterMapLocks(t *testing.T) {
 		clusterMap: ClusterMap{
 			participants: make(map[string]*Participant, 1),
 		},
-		gbConfig: config,
+		gbClusterConfig: config,
 	}
 
 	keyValues := map[string]*Delta{
@@ -710,22 +708,21 @@ func TestLiveGossip(t *testing.T) {
 	port := "8081"
 
 	// Initialize config with the seed server address
-	config := &GbConfig{
+	config := &GbClusterConfig{
 		SeedServers: map[string]Seeds{
 			"seed1": {
 				SeedHost: ip,
 				SeedPort: port,
 			},
 		},
-		Internal: &InternalOptions{
-			//disableGossip: true,
-		},
 		Cluster: &ClusterOptions{},
 	}
 
-	gbs, _ := NewServer("test-server", 1, config, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", 2, config, "localhost", "8082", "8083", lc)
-	gbs3, _ := NewServer("test-server", 3, config, "localhost", "8085", "8084", lc)
+	nodeConfig := &GbNodeConfig{}
+
+	gbs, _ := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs3, _ := NewServer("test-server", 3, config, nodeConfig, "localhost", "8085", "8084", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)

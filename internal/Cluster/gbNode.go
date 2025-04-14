@@ -285,7 +285,7 @@ func (s *GBServer) getSelfInfo() *Participant {
 
 func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) {
 
-	if s.gbConfig.Internal.disableInternalGossipSystemUpdate {
+	if s.gbNodeConfig.Internal.disableInternalGossipSystemUpdate {
 		log.Printf("internal systems gossip update is off")
 	}
 
@@ -367,7 +367,7 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 	sizeEstimate += NODE_HEADER_SIZE_V1
 
 	s.configLock.RLock()
-	conf := s.gbConfig
+	conf := s.gbNodeConfig
 	s.configLock.RUnlock()
 
 	s.clusterMapLock.RLock()
