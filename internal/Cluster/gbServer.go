@@ -31,7 +31,11 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 	lc := net.ListenConfig{}
 
 	var config *GbClusterConfig
-	var nodeConfig *GbNodeConfig
+
+	// TODO default to 0.0.0.0. maybe ??
+	nodeConfig := &GbNodeConfig{
+		Internal: &InternalOptions{},
+	}
 
 	// TODO This needs to change - cannot be localhost
 	if clusterIP == "" && clusterPort == "" {
@@ -246,10 +250,6 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 		log.Fatal(err)
 	}
 
-	if Network.IsPrivate(nodeTCPAddr.IP) {
-		log.Println("================== Node ip is private")
-	}
-
 	nodeType, err := Network.DetermineNodeNetworkType(int(gbNodeConfig.NetworkType), nodeTCPAddr.IP)
 	if err != nil {
 		return nil, err
@@ -372,6 +372,8 @@ func (s *GBServer) StartServer() {
 	}
 
 	// Move this seed logic elsewhere
+	//TODO If we are not the seed - then we need to include a reset logic where we try to connect to seed and if there is nothing - then we need to come
+	// enter a retry phase with backoff until either a seed joins and is reachable or we abort and ask for a seed to be started
 	if s.seedCheck() == 1 {
 		s.isSeed = true
 	} else {
@@ -385,6 +387,9 @@ func (s *GBServer) StartServer() {
 	//s.serverLock.Unlock()
 
 	//---------------- Node Accept Loop ----------------//
+
+	// Here we attempt to dial and connect to seed
+
 	s.startupSync.Add(1)
 	s.AcceptNodeLoop("node-test")
 
@@ -787,6 +792,9 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	//---------------- Seed Dial ----------------//
 	// This is essentially a solicit. If we are not a seed server then we must be the one to initiate a connection with the seed in order to join the cluster
 	// A connectToSeed routine will be launched and blocks on a response. Once a response is given by the seed, we can move to connected state.
+
+	// If a seed node hasn't been added OR we have been started before the seed node then we can initiate a retry until fail and end server
+
 	if !s.isSeed {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()

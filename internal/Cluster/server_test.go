@@ -60,11 +60,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 		//NetworkType: 2,
 	}
 
+	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	time.Sleep(1 * time.Second)
 	gbs, err := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
 	if err != nil {
 		t.Errorf("TestServerRunningTwoNodes should not have returned an error - got %v", err)
 	}
-	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
