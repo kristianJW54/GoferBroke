@@ -1,5 +1,10 @@
 package Cluster
 
+import (
+	"GoferBroke/internal/Network"
+	"fmt"
+)
+
 // TODO
 // Need two top level different configs - cluster config shared by all nodes and gossiped changes
 // Node config specific to the local node
@@ -50,6 +55,7 @@ const (
 	C_PRIVATE
 	C_PUBLIC
 	C_DYNAMIC
+	C_LOCAL
 )
 
 type ClusterOptions struct {
@@ -105,3 +111,80 @@ type InternalOptions struct {
 //TODO Need config initializer here to set values and any defaults needed
 
 // TODO need update functions and methods for when server runs background processes to update config based on gossip
+
+func ConfigInitialNetworkCheck(cluster *GbClusterConfig, node *GbNodeConfig, reach Network.NodeNetworkReachability) error {
+
+	c := cluster.Cluster.clusterNetworkType
+	n := node.NetworkType
+
+	switch c {
+	case C_UNDEFINED:
+		return fmt.Errorf("cluster network type cannot be undefined")
+	case C_PUBLIC:
+		if n == PRIVATE {
+			return fmt.Errorf("private node trying to join on a public only cluster")
+		} else {
+			switch reach {
+			case Network.LoopbackOnly:
+				return fmt.Errorf("loopback node trying to join on a public cluster")
+			case Network.PrivateOnly:
+				return fmt.Errorf("private node trying to join on a public cluster")
+			case Network.NATMapped:
+				return fmt.Errorf("NATMapped node trying to join on a public cluster")
+			case Network.RelayRequired:
+				return fmt.Errorf("relay node trying to join on a public cluster")
+			case Network.Unreachable:
+				return nil
+			case Network.PublicUnverified:
+				return nil
+			case Network.PublicReachable:
+				return nil
+			case Network.PublicOpen:
+				return nil
+			}
+		}
+
+	case C_PRIVATE:
+		if n == PUBLIC {
+			return fmt.Errorf("public node trying to join on a private only cluster")
+		} else {
+			switch reach {
+			case Network.LoopbackOnly:
+				return fmt.Errorf("loopback node trying to join on a private cluster")
+			case Network.PrivateOnly:
+				return nil
+			case Network.NATMapped:
+				return nil
+			case Network.RelayRequired:
+				return fmt.Errorf("relay node trying to join on a private cluster")
+			case Network.Unreachable:
+				return nil
+			case Network.PublicReachable:
+				return fmt.Errorf("public node trying to join on a private cluster")
+			case Network.PublicOpen:
+				return fmt.Errorf("public node trying to join on a private cluster")
+			case Network.PublicUnverified:
+				return fmt.Errorf("public node trying to join on a private cluster")
+			}
+		}
+	case C_DYNAMIC:
+		switch reach {
+		case Network.LoopbackOnly:
+			return fmt.Errorf("loopback node trying to join on a non-local cluster")
+		default:
+			return nil
+		}
+	case C_LOCAL:
+		switch reach {
+		case Network.LoopbackOnly:
+			return nil
+		default:
+			return fmt.Errorf("non-loopback node trying to join on a local cluster")
+		}
+	}
+
+	return fmt.Errorf("unknown cluster network type - %d", c)
+
+}
+
+// Need to do a further config check for LOCAL and loopback

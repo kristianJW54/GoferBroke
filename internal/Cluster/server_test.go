@@ -51,20 +51,23 @@ func TestServerRunningTwoNodes(t *testing.T) {
 			},
 		},
 		Cluster: &ClusterOptions{
-			clusterNetworkType: C_UNDEFINED,
+			clusterNetworkType: C_LOCAL,
 		},
 	}
 
 	nodeConfig := &GbNodeConfig{
 		Internal: &InternalOptions{},
-		//NetworkType: 2,
 	}
 
-	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
-	time.Sleep(1 * time.Second)
 	gbs, err := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
 	if err != nil {
 		t.Errorf("TestServerRunningTwoNodes should not have returned an error - got %v", err)
+		return
+	}
+	gbs2, err := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	if err != nil {
+		t.Errorf("TestServerRunningTwoNodes should not have returned an error - got %v", err)
+		return
 	}
 
 	go gbs.StartServer()
@@ -115,7 +118,9 @@ func TestGossipSignal(t *testing.T) {
 		Cluster: &ClusterOptions{},
 	}
 
-	nodeConfig := &GbNodeConfig{}
+	nodeConfig := &GbNodeConfig{
+		Internal: &InternalOptions{},
+	}
 
 	gbs, _ := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
 	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)

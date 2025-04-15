@@ -105,19 +105,19 @@ var keyValues1LowerVersion = map[string]*Delta{
 }
 
 var addressTestingKVs = map[string]*Delta{
-	"TEST:TCP": {keyGroup: "TEST", key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	"address:tcp": {keyGroup: ADDR_DKG, key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
 }
 
 var multipleAddressTestingKVs = map[string]*Delta{
-	"TEST:TCP":   {keyGroup: "TEST", key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
-	"TEST:CLOUD": {keyGroup: "TEST", key: "CLOUD", valueType: ADDR_V, version: 1640995204, value: []byte("137.184.248.0")},
-	"TEST:DNS":   {keyGroup: "TEST", key: "DNS", valueType: ADDR_V, version: 1640995204, value: []byte("example.com")},
+	"address:tcp":   {keyGroup: ADDR_DKG, key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	"address:CLOUD": {keyGroup: ADDR_DKG, key: "CLOUD", valueType: ADDR_V, version: 1640995204, value: []byte("137.184.248.0")},
+	"address:DNS":   {keyGroup: ADDR_DKG, key: "DNS", valueType: ADDR_V, version: 1640995204, value: []byte("example.com")},
 }
 
 var keyValues2 = map[string]*Delta{
-	"TEST:TCP":        {keyGroup: "TEST", key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
-	"TEST:NODE_CONNS": {keyGroup: "TEST", key: _NODE_CONNS_, valueType: NUM_NODE_CONN_V, version: 1640995205, value: []byte{0}},
-	"TEST:HEARTBEAT":  {keyGroup: "TEST", key: _HEARTBEAT_, valueType: HEARTBEAT_V, version: 1640995206, value: int64ToBytes(1640995206)},
+	"address:tcp":        {keyGroup: ADDR_DKG, key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	"address:NODE_CONNS": {keyGroup: ADDR_DKG, key: _NODE_CONNS_, valueType: NUM_NODE_CONN_V, version: 1640995205, value: []byte{0}},
+	"address:HEARTBEAT":  {keyGroup: ADDR_DKG, key: _HEARTBEAT_, valueType: HEARTBEAT_V, version: 1640995206, value: int64ToBytes(1640995206)},
 }
 
 // TODO Make another one of these but with config

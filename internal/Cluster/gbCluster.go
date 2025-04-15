@@ -132,6 +132,7 @@ const (
 // Internal Delta Keys [NOT TO BE USED EXTERNALLY]
 const (
 	_ADDRESS_         = "tcp"
+	_REACHABLE_       = "reachability"
 	_CPU_USAGE_       = "cpu_usage"
 	_MEMORY_USAGE     = "memory_usage"
 	_NODE_CONNS_      = "node_conns"
@@ -145,6 +146,7 @@ const (
 const (
 	ADDR_DKG      = "address"
 	SYSTEM_DKG    = "system"
+	NETWORK_DKG   = "network"
 	LOCAL_LOG_DKG = "local_log"
 	CONFIG_DKG    = "config"
 	TEST_DKG      = "test"
@@ -184,11 +186,19 @@ type deltaQueue struct {
 	version  int64
 }
 
+type connectionMetaData struct {
+	inboundSuccess    bool
+	advertisedAddr    *net.TCPAddr
+	reachableClaim    int
+	reachableObserved int
+}
+
 type deltaHeap []*deltaQueue
 
 type Participant struct {
 	name        string            // Possibly can remove
 	keyValues   map[string]*Delta // composite key - flattened -> group:key
+	connection  *connectionMetaData
 	paDetection *phiAccrual
 	maxVersion  int64
 	pm          sync.RWMutex

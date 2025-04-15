@@ -28,6 +28,31 @@ const (
 	PublicOpen
 )
 
+func ParseReachability(reach NodeNetworkReachability) (string, error) {
+
+	switch reach {
+	case Unreachable:
+		return "Unreachable", nil
+	case LoopbackOnly:
+		return "LoopbackOnly", nil
+	case PrivateOnly:
+		return "PrivateOnly", nil
+	case PublicUnverified:
+		return "PublicUnverified", nil
+	case PublicReachable:
+		return "PublicReachable", nil
+	case NATMapped:
+		return "NATMapped", nil
+	case RelayRequired:
+		return "RelayRequired", nil
+	case PublicOpen:
+		return "PublicOpen", nil
+	}
+
+	return "", fmt.Errorf("un recognized node network reachability value: %d", reach)
+
+}
+
 func IsPrivate(ip net.IP) bool {
 	return ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() || ip == nil
 }

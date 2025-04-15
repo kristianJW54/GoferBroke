@@ -359,16 +359,12 @@ func (s *GBServer) getKnownAddressNodes() ([]string, error) {
 
 func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error) {
 
-	// First need to check if we have a config of addr keys
-	// If not we assume only _ADDRESS_ "TCP" address is needed and build
+	// We go through each participant in the map and build an addr map of advertised addrs
+	// We may want to only include a certain network type...?
 
 	var sizeEstimate int
 
 	sizeEstimate += NODE_HEADER_SIZE_V1
-
-	s.configLock.RLock()
-	conf := s.gbNodeConfig
-	s.configLock.RUnlock()
 
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
@@ -393,32 +389,19 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 
 		addrMap[name] = make([]string, 0)
 
-		key := fmt.Sprintf("%s:%s", ADDR_DKG, _ADDRESS_)
+		for key, value := range n.keyValues {
+			if value.keyGroup == ADDR_DKG {
+				log.Printf("tcpKey = %v", key)
 
-		tcpKey := cm.participants[name].keyValues[key].key
-
-		if sizeEstimate+len(tcpKey) > DEFAULT_MAX_DISCOVERY_SIZE {
-			return addrMap, nil
-		} else {
-			addrMap[name] = append(addrMap[name], tcpKey)
-		}
-
-		// TODO Need to look into this with the formatting of our keys [group:key]
-		if conf.Internal.addressKeys != nil {
-
-			for _, addr := range conf.Internal.addressKeys {
-				if a, exists := cm.participants[name].keyValues[addr]; exists {
-
-					if sizeEstimate+len(addr) > DEFAULT_MAX_DISCOVERY_SIZE {
-						return addrMap, nil
-					}
-
-					addrMap[name] = append(addrMap[name], a.key)
+				if sizeEstimate+len(key) > DEFAULT_MAX_DISCOVERY_SIZE {
+					return addrMap, nil
+				} else {
+					addrMap[name] = append(addrMap[name], value.key)
 				}
+			} else {
+				continue
 			}
-
 		}
-
 	}
 
 	if len(addrMap) == 0 {

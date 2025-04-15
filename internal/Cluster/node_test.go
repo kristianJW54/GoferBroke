@@ -8,29 +8,18 @@ import (
 
 func TestBuildAddrMap(t *testing.T) {
 
-	gbs := GenerateDefaultTestServer("main-server", multipleAddressTestingKVs, 5)
+	gbs := GenerateDefaultTestServer("main-server", addressTestingKVs, 5)
 
 	testStruct := []struct {
 		name         string
 		known        []string
-		config       GbClusterConfig
-		nodeConfig   GbNodeConfig
 		addrMapCheck map[string][]string
 	}{
 		{
-			name: "no-config tcp only",
+			name: "normal - three participants with addresses",
 			known: []string{
 				gbs.clusterMap.participantArray[1],
 				gbs.clusterMap.participantArray[2],
-			},
-			config: GbClusterConfig{
-				SeedServers: make(map[string]Seeds),
-				Cluster:     &ClusterOptions{},
-			},
-			nodeConfig: GbNodeConfig{
-				Internal: &InternalOptions{
-					addressKeys: nil,
-				},
 			},
 			addrMapCheck: map[string][]string{
 				gbs.clusterMap.participantArray[0]: {
@@ -50,15 +39,6 @@ func TestBuildAddrMap(t *testing.T) {
 				gbs.clusterMap.participantArray[1],
 				gbs.clusterMap.participantArray[3],
 			},
-			config: GbClusterConfig{
-				SeedServers: make(map[string]Seeds),
-				Cluster:     &ClusterOptions{},
-			},
-			nodeConfig: GbNodeConfig{
-				Internal: &InternalOptions{
-					addressKeys: nil,
-				},
-			},
 			addrMapCheck: map[string][]string{
 				gbs.clusterMap.participantArray[0]: {
 					_ADDRESS_,
@@ -66,11 +46,9 @@ func TestBuildAddrMap(t *testing.T) {
 				},
 				gbs.clusterMap.participantArray[2]: {
 					_ADDRESS_,
-					"CLOUD",
 				},
 				gbs.clusterMap.participantArray[4]: {
 					_ADDRESS_,
-					"CLOUD",
 				},
 			},
 		},
@@ -78,8 +56,6 @@ func TestBuildAddrMap(t *testing.T) {
 
 	for _, tt := range testStruct {
 		t.Run(tt.name, func(t *testing.T) {
-
-			gbs.gbClusterConfig = &tt.config
 
 			am, err := gbs.buildAddrGroupMap(tt.known)
 			if err != nil {

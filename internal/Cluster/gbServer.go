@@ -174,6 +174,7 @@ type GBServer struct {
 	boundTCPAddr     *net.TCPAddr
 	advertiseAddress *net.TCPAddr
 	clientTCPAddr    *net.TCPAddr
+	reachability     Network.NodeNetworkReachability
 
 	//Distributed Info
 	gossip          *gossip
@@ -259,9 +260,12 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 		return nil, err
 	}
 
-	log.Println("================== Node type:", nodeType)
+	err = ConfigInitialNetworkCheck(gbConfig, gbNodeConfig, nodeType)
+	if err != nil {
+		return nil, err
+	}
 
-	// TODO for our own node address - we resolve but we may also need to discover out public IP - do a .IP.Public check
+	log.Println("================== Node type:", nodeType)
 
 	// TODO for client addresses do we use same host? and specify a port range?
 	cAddr := net.JoinHostPort("0.0.0.0", clientPort)
@@ -291,14 +295,16 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
-		ServerID:            *serverID,
-		ServerName:          srvName,
-		initialised:         int64(serverID.timeUnix),
-		host:                nodeHost,
-		port:                nodePort,
-		addr:                addr,
-		boundTCPAddr:        nodeTCPAddr,
-		clientTCPAddr:       clientAddr,
+		ServerID:      *serverID,
+		ServerName:    srvName,
+		initialised:   int64(serverID.timeUnix),
+		host:          nodeHost,
+		port:          nodePort,
+		addr:          addr,
+		boundTCPAddr:  nodeTCPAddr,
+		clientTCPAddr: clientAddr,
+		reachability:  nodeType,
+
 		listenConfig:        lc,
 		serverContext:       ctx,
 		serverContextCancel: cancel,
@@ -366,6 +372,7 @@ func (s *GBServer) StartServer() {
 		selfInfo := initSelfParticipant(s.ServerName, s.addr)
 		selfInfo.paDetection = s.initPhiAccrual()
 		s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
+
 	}
 
 	//Checks and other start up here
@@ -545,25 +552,24 @@ func (s *GBServer) resetContext() {
 // TODO Revisit when config parsing is complete
 // TODO Think about different environments and addresses
 
-func (s *GBServer) resolveClusterNetworkType() {
-
-}
-
 func (s *GBServer) resolveConfigSeedAddr() error {
 
+	//TODO Need to review this - do we want the nodes address being used as seed if we don't know the advertise or definite reachability
+	// or know if aligned to the cluster network type?
+
 	// Check if no seed servers are configured
-	if s.gbClusterConfig.SeedServers == nil {
-		// Ensure s.nodeTCPAddr is initialized
-		if s.boundTCPAddr == nil {
-			return fmt.Errorf("nodeTCPAddr is not initialized")
-		}
-		// Use this node's TCP address as the seed
-		s.serverLock.Lock()
-		s.seedAddr = append(s.seedAddr, &seedEntry{host: s.host, port: s.port, resolved: s.boundTCPAddr})
-		s.serverLock.Unlock()
-		//log.Printf("seed server list --> %v\n", s.seedAddr)
-		return nil
-	}
+	//if s.gbClusterConfig.SeedServers == nil {
+	//	// Ensure s.nodeTCPAddr is initialized
+	//	if s.boundTCPAddr == nil {
+	//		return fmt.Errorf("nodeTCPAddr is not initialized")
+	//	}
+	//	// Use this node's TCP address as the seed
+	//	s.serverLock.Lock()
+	//	s.seedAddr = append(s.seedAddr, &seedEntry{host: s.host, port: s.port, resolved: s.boundTCPAddr})
+	//	s.serverLock.Unlock()
+	//	//log.Printf("seed server list --> %v\n", s.seedAddr)
+	//	return nil
+	//}
 
 	if len(s.gbClusterConfig.SeedServers) >= 1 {
 
@@ -620,6 +626,14 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 
 		conn, err := net.Dial("tcp", addr.resolved.String())
 		if err == nil {
+			localAddr := conn.LocalAddr().(*net.TCPAddr)
+			s.serverLock.RLock()
+			if s.advertiseAddress != localAddr {
+				log.Printf("updating local address from %s to %s", s.advertiseAddress, localAddr.String())
+				s.advertiseAddress = localAddr
+				s.serverLock.RUnlock()
+			}
+			s.serverLock.RUnlock()
 			return conn, nil
 		}
 
@@ -657,6 +671,27 @@ func (s *GBServer) seedCheck() int {
 //=======================================================
 
 // TODO This needs to be a carefully considered initialisation which takes into account the server configurations
+
+func initConnectionMetaData(reachableClaim int, givenAddr *net.TCPAddr, inbound bool) (*connectionMetaData, error) {
+
+	var netType int
+
+	if givenAddr != nil {
+		reach, err := Network.DetermineNodeNetworkType(reachableClaim, givenAddr.IP)
+		if err != nil {
+			return nil, err
+		}
+		netType = int(reach)
+	}
+
+	return &connectionMetaData{
+		inbound,
+		givenAddr,
+		reachableClaim,
+		netType,
+	}, nil
+
+}
 
 // And environment + users use case
 func initSelfParticipant(name, addr string) *Participant {
