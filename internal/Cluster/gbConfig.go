@@ -3,6 +3,7 @@ package Cluster
 import (
 	"GoferBroke/internal/Network"
 	"fmt"
+	"strings"
 )
 
 // TODO
@@ -107,6 +108,28 @@ type InternalOptions struct {
 }
 
 //=====================================================================
+
+func ParseConfigNetworkType(netType string) (ClusterNetworkType, error) {
+
+	nt := strings.Trim(netType, " ")
+	nt = strings.ToUpper(nt)
+
+	switch nt {
+	case "UNDEFINED":
+		return C_UNDEFINED, nil
+	case "PRIVATE":
+		return C_PRIVATE, nil
+	case "PUBLIC":
+		return C_PUBLIC, nil
+	case "DYNAMIC":
+		return C_DYNAMIC, nil
+	case "LOCAL":
+		return C_LOCAL, nil
+	}
+
+	return 0, fmt.Errorf("invalid network type: %s", nt)
+
+}
 
 //TODO Need config initializer here to set values and any defaults needed
 

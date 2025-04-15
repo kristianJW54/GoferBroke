@@ -21,6 +21,7 @@ func main() {
 	idFlag := flag.Int("ID", 1, "uuid for server")
 	clusterIP := flag.String("clusterIP", "", "ip of the cluster seed")
 	clusterPort := flag.String("clusterPort", "", "port of the cluster seed")
+	clusterNetwork := flag.String("clusterNetwork", "", "network type [PUBLIC, PRIVATE, LOCAL]")
 	ipFlag := flag.String("nodeIP", "", "ip address for node")
 	portFlag := flag.String("nodePort", "", "port number for node")
 
@@ -31,12 +32,12 @@ func main() {
 	ctx := context.Background()
 
 	// Call run and check for any errors
-	if err := Cluster.Run(ctx, os.Stdout, *nameFlag, *idFlag, *clusterIP, *clusterPort, *ipFlag, *portFlag); err != nil {
+	if err := Cluster.Run(ctx, os.Stdout, *nameFlag, *idFlag, *clusterIP, *clusterPort, *clusterNetwork, *ipFlag, *portFlag); err != nil {
 		log.Fatalf("Error running server: %v\n", err)
 	}
 
-	log.Printf("Name: %s, ID: %d, ClusterIP: %s, ClusterPort: %s, NodeIP: %s, NodePort: %s\n",
-		*nameFlag, *idFlag, *clusterIP, *clusterPort, *ipFlag, *portFlag)
+	log.Printf("Name: %s, ID: %d, ClusterIP: %s, ClusterPort: %s, ClusterNetwork: %s, NodeIP: %s, NodePort: %s\n",
+		*nameFlag, *idFlag, *clusterIP, *clusterPort, *clusterNetwork, *ipFlag, *portFlag)
 
 	log.Println("Server exited.")
 

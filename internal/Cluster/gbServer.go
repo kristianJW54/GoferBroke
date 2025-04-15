@@ -20,7 +20,7 @@ import (
 
 const ServerNameMaxLength = 32 - (8 + 1)
 
-func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clusterPort, nodeIp, nodePort string) error {
+func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clusterPort, clusterNetwork, nodeIp, nodePort string) error {
 
 	log.SetOutput(w)
 
@@ -37,10 +37,14 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		Internal: &InternalOptions{},
 	}
 
+	var cn ClusterNetworkType
+
+	cn, err := ParseConfigNetworkType(clusterNetwork)
+
 	// TODO This needs to change - cannot be localhost
 	if clusterIP == "" && clusterPort == "" {
-		ip := "localhost" // Use the localhost for now - will change when actual config is implemented
-		port := "8081"
+		ip := nodeIp // Use interface for now - will change when actual config is implemented
+		port := nodePort
 
 		// Initialize config with the seed server address
 		config = &GbClusterConfig{
@@ -50,7 +54,9 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 					SeedPort: port,
 				},
 			},
-			Cluster: &ClusterOptions{},
+			Cluster: &ClusterOptions{
+				clusterNetworkType: cn,
+			},
 		}
 		log.Println("Config initialized:", config)
 	} else {
@@ -64,7 +70,9 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 					SeedPort: clusterPort,
 				},
 			},
-			Cluster: &ClusterOptions{},
+			Cluster: &ClusterOptions{
+				clusterNetworkType: cn,
+			},
 		}
 		log.Println("Config initialized:", config)
 	}
