@@ -104,7 +104,7 @@ func TestGossipSignal(t *testing.T) {
 
 	lc := net.ListenConfig{}
 
-	ip := "127.0.0.1" // Use the full IP address
+	ip := "localhost" // Use the full IP address
 	port := "8081"
 
 	// Initialize config with the seed server address
@@ -115,7 +115,9 @@ func TestGossipSignal(t *testing.T) {
 				SeedPort: port,
 			},
 		},
-		Cluster: &ClusterOptions{},
+		Cluster: &ClusterOptions{
+			clusterNetworkType: C_LOCAL,
+		},
 	}
 
 	nodeConfig := &GbNodeConfig{

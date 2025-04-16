@@ -96,7 +96,8 @@ type gbClient struct {
 	node
 
 	//Parsing + State
-	stateMachine
+	//stateMachine
+	parser
 
 	//Flags --> will tell us what state the client is in (connected, awaiting_syn_ack, etc...)
 	flags clientFlags
@@ -462,9 +463,9 @@ func (c *gbClient) readLoop() {
 		// Parsing the packet
 
 		if c.cType == CLIENT {
-			c.parsePacket(buff[:n])
+			c.ParsePacket(buff[:n])
 		} else if c.cType == NODE {
-			c.parsePacket(buff[:n])
+			c.ParsePacket(buff[:n])
 		}
 
 		//log.Printf("%s -- read -- %s", c.srv.ServerName, buff[:n])
@@ -844,7 +845,7 @@ func (c *gbClient) processDeltaHdr(arg []byte) error {
 
 	c.ph.command = arg[0]
 	msgLengthBytes := arg[1:3]
-	c.ph.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
+	c.ph.msgLength = binary.BigEndian.Uint16(msgLengthBytes)
 	c.ph.keyLength = int(arg[3])
 	valueLen := arg[4:6]
 	c.ph.valueLength = int(binary.BigEndian.Uint16(valueLen))
@@ -912,7 +913,7 @@ func (c *gbClient) processDelta(message []byte) error {
 	// Can use server go-routine tracker ?? Or go func() to return an error
 	// TODO Pass the header? Which should include the length, size, type and anything else needed)
 	go func() {
-		_, err := srv.parseClientDelta(message, msgLen, keyLen, valueLen)
+		_, err := srv.parseClientDelta(message, int(msgLen), keyLen, valueLen)
 		if err != nil {
 			log.Printf("error parsing client delta message: %v", err)
 		}

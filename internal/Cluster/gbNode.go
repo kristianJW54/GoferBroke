@@ -481,7 +481,7 @@ func (c *gbClient) processArg(arg []byte) error {
 		// Extract the last 4 bytes
 		msgLengthBytes := arg[6:8]
 		// Convert those 4 bytes to uint32 (BigEndian)
-		c.ph.msgLength = int(binary.BigEndian.Uint16(msgLengthBytes))
+		c.ph.msgLength = binary.BigEndian.Uint16(msgLengthBytes)
 
 		// Log the result to verify
 		//log.Printf("Extracted msgLength: %d\n", c.ph.msgLength)

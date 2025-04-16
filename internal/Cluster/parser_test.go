@@ -18,12 +18,34 @@ var testGSA = []byte{
 
 func TestParser(t *testing.T) {
 
-	pm := &parseMeta{}
+	p := parser{
+		state:    Start,
+		position: 0,
+		drop:     0,
+		argBuf:   make([]byte, 0),
+	}
+
+	c := &gbClient{
+		parser: p,
+	}
+
+	log.Printf("FULL LENGTH = %v", len(testGSA))
 
 	testPacket := testGSA
 
-	pm.ParsePacket(testPacket)
+	// Simulate packet splits:
+	// 1. Partial header
+	// 2. Rest of header + beginning of payload
+	// 3. Remaining payload + footer (\r\n)
+	broken1 := testPacket[:6]   // partial header
+	broken2 := testPacket[6:36] // rest of header + part of payload
+	broken3 := testPacket[36:]  // rest of payload + \r\n
 
-	log.Printf("msg = %s", pm.msgBuf)
+	packets := [][]byte{broken1, broken2, broken3}
 
+	for i, packet := range packets {
+		log.Printf("---- PACKET %d ----", i)
+		c.ParsePacket(packet)
+		log.Printf("state --> %v", c.parser.state)
+	}
 }

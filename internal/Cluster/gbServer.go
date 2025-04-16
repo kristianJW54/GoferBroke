@@ -723,15 +723,15 @@ func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachabilit
 	p.keyValues[makeDeltaKey(addrDelta.keyGroup, addrDelta.key)] = addrDelta
 
 	// Add the _REACHABLE_ delta
-	//reachDelta := &Delta{
-	//	keyGroup:  NETWORK_DKG,
-	//	key:       _REACHABLE_,
-	//	valueType: INTERNAL_D,
-	//	version:   t,
-	//	value:     []byte{byte(int(reach))},
-	//}
+	reachDelta := &Delta{
+		keyGroup:  NETWORK_DKG,
+		key:       _REACHABLE_,
+		valueType: INTERNAL_D,
+		version:   t,
+		value:     []byte{byte(int(reach))},
+	}
 
-	//p.keyValues[makeDeltaKey(reachDelta.keyGroup, reachDelta.key)] = reachDelta
+	p.keyValues[makeDeltaKey(reachDelta.keyGroup, reachDelta.key)] = reachDelta
 
 	// Add the _NODE_CONNS_ delta
 	numNodeConnBytes := make([]byte, 1)
