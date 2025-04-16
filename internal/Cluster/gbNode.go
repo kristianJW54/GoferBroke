@@ -92,10 +92,15 @@ func (s *GBServer) connectToSeed() error {
 	defer cancel()
 
 	// Replace with method
-	conn, err := net.Dial("tcp", s.seedAddr[0].resolved.String()) // Replace with select random seed addr method
+	//conn, err := net.Dial("tcp", s.seedAddr[0].resolved.String()) // Replace with select random seed addr method
+	//if err != nil {
+	//	// Try re-connect and resolve DNS
+	//	return fmt.Errorf("connect to seed - net dial: %s", err)
+	//}
+
+	conn, err := s.dialSeed()
 	if err != nil {
-		// Try re-connect and resolve DNS
-		return fmt.Errorf("connect to seed - net dial: %s", err)
+		return err
 	}
 
 	reqID, err := s.acquireReqID()

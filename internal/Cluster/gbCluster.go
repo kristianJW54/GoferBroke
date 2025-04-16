@@ -1016,6 +1016,8 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		return err
 	}
 
+	log.Printf("pay = %v", pay)
+
 	//log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
 
 	ctx, cancel := context.WithTimeout(c.srv.serverContext, 5*time.Second)

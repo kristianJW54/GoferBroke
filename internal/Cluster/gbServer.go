@@ -311,7 +311,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 		addr:          addr,
 		boundTCPAddr:  nodeTCPAddr,
 		clientTCPAddr: clientAddr,
-		reachability:  nodeType,
+		reachability:  1,
 
 		listenConfig:        lc,
 		serverContext:       ctx,
@@ -377,7 +377,7 @@ func (s *GBServer) StartServer() {
 		log.Printf("Cluster Map and Self Info not initialised")
 	} else {
 		s.phi = *s.initPhiControl()
-		selfInfo := initSelfParticipant(s.ServerName, s.addr)
+		selfInfo := initSelfParticipant(s.ServerName, s.addr, s.reachability)
 		selfInfo.paDetection = s.initPhiAccrual()
 		s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
 
@@ -625,38 +625,36 @@ func (s *GBServer) tryReconnectToSeed(connIndex int) (net.Conn, error) {
 }
 
 func (s *GBServer) dialSeed() (net.Conn, error) {
-
 	s.serverLock.RLock()
 	seeds := s.seedAddr
 	s.serverLock.RUnlock()
 
 	for i, addr := range seeds {
-
 		conn, err := net.Dial("tcp", addr.resolved.String())
-		if err == nil {
-			localAddr := conn.LocalAddr().(*net.TCPAddr)
-			s.serverLock.RLock()
-			if s.advertiseAddress != localAddr {
-				log.Printf("updating local address from %s to %s", s.advertiseAddress, localAddr.String())
-				s.advertiseAddress = localAddr
-				s.serverLock.RUnlock()
+		if err != nil {
+			log.Printf("Failed to dial seed %s: %v -- trying reconnect...", addr.host, err)
+			conn, err = s.tryReconnectToSeed(i)
+			if err != nil {
+				continue
 			}
-			s.serverLock.RUnlock()
-			return conn, nil
 		}
 
-		log.Printf("Failed to dial seed %s: %v -- trying reconnect and addr resolving...", addr.host, err)
+		// Connection succeeded, update local advertise address
+		localAddr := conn.LocalAddr().(*net.TCPAddr)
 
-		//Try to refresh DNS and reconnect
-		conn, err = s.tryReconnectToSeed(i)
-		if err == nil {
-			return conn, nil
+		s.serverLock.Lock()
+		if s.advertiseAddress == nil || s.advertiseAddress.String() != localAddr.String() {
+			log.Printf("Updating advertise address: %s → %s", s.advertiseAddress, localAddr.String())
+			s.advertiseAddress = localAddr
+		} else {
+			log.Printf("Local address confirmed: %s", localAddr.String())
 		}
+		s.serverLock.Unlock()
 
+		return conn, nil
 	}
 
-	return nil, fmt.Errorf("failed to dial seed")
-
+	return nil, fmt.Errorf("failed to dial any seed")
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
@@ -702,7 +700,7 @@ func initConnectionMetaData(reachableClaim int, givenAddr *net.TCPAddr, inbound 
 }
 
 // And environment + users use case
-func initSelfParticipant(name, addr string) *Participant {
+func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachability) *Participant {
 
 	t := time.Now().Unix()
 
@@ -723,6 +721,17 @@ func initSelfParticipant(name, addr string) *Participant {
 	}
 
 	p.keyValues[makeDeltaKey(addrDelta.keyGroup, addrDelta.key)] = addrDelta
+
+	// Add the _REACHABLE_ delta
+	//reachDelta := &Delta{
+	//	keyGroup:  NETWORK_DKG,
+	//	key:       _REACHABLE_,
+	//	valueType: INTERNAL_D,
+	//	version:   t,
+	//	value:     []byte{byte(int(reach))},
+	//}
+
+	//p.keyValues[makeDeltaKey(reachDelta.keyGroup, reachDelta.key)] = reachDelta
 
 	// Add the _NODE_CONNS_ delta
 	numNodeConnBytes := make([]byte, 1)

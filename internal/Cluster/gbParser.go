@@ -1,5 +1,9 @@
 package Cluster
 
+import (
+	"log"
+)
+
 const (
 	START = iota
 	VERSION1
@@ -71,6 +75,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 
 	for i = 0; i < len(packet); i++ {
 
+		//log.Printf("packet = %v", packet)
+
 		b = packet[i]
 
 		switch c.state {
@@ -93,7 +99,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 				//c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -323,7 +329,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -354,7 +360,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -385,7 +391,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -416,7 +422,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -447,7 +453,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -478,7 +484,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -509,7 +515,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 			case '\r':
 				c.drop = 1
 			case '\n':
-				if packet[i-1] == 13 {
+				if i > 0 && packet[i-1] == '\r' {
 					//log.Printf("ROUND %d DELTA = i: %d, position: %d --> b = %v %s\n", c.rounds, i, c.position, b, string(b))
 					var arg []byte
 					if c.argBuf != nil {
@@ -598,7 +604,7 @@ func (c *gbClient) parsePacket(packet []byte) {
 				c.msgBuf = c.msgBuf[:len(c.msgBuf)-2]
 			}
 
-			//log.Printf("msg buf = %v", c.msgBuf)
+			log.Printf("msg buf = %v", c.msgBuf)
 
 			c.processMessage(c.msgBuf)
 
@@ -611,6 +617,8 @@ func (c *gbClient) parsePacket(packet []byte) {
 			c.rounds = 0
 		}
 	}
+
+	//Out of the loop we process here
 
 	if c.state == MSG_PAYLOAD || c.state == MSG_R_END && c.msgBuf == nil {
 		if c.ph.msgLength > cap(c.scratch)-len(c.argBuf) {
