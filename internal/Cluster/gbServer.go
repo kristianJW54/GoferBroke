@@ -639,6 +639,9 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 			}
 		}
 
+		//TODO Only look into local addr if the bound IP is 0.0.0.0 or nil and we want to find out what IP the OS used as an outbound IP
+		// NOT FOR PORT!
+
 		// Connection succeeded, update local advertise address
 		localAddr := conn.LocalAddr().(*net.TCPAddr)
 

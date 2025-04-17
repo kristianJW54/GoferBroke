@@ -16,6 +16,27 @@ var testGSA = []byte{
 	103, 255, 102, 5, 13, 10, // payload + \r\n
 }
 
+var split1 = []byte{
+	1, 9, 0, 1, 0, 3, 0, 100, 0, 12, 13, 10, 1, 0, 0, 0, 100, 0, 2, 24, 116, 101, 115, 116, 45, 115,
+	101, 114, 118, 101, 114, 45, 50, 64, 49, 55, 52, 52, 56, 55, 54, 54, 53, 49, 24, 116, 101, 115,
+	116, 45, 115, 101, 114, 118, 101, 114, 45, 49, 64, 49, 55, 52, 52, 56, 55, 54, 54, 53, 48, 0, 0,
+	0, 0, 104, 0, 180, 106, 24, 116, 101, 115, 116, 45, 115, 101, 114, 118, 101, 114, 45, 50, 64, 49,
+	55, 52, 52, 56, 55, 54, 54, 53, 49, 0, 0, 0, 0, 104, 0, 180, 109, 13, 10, 1, 10, 0, 0, 0, 3, 0,
+	205, 0, 12, 13, 10, 2, 0, 0, 0, 205, 0, 1, 24, 116, 101, 115, 116, 45, 115, 101, 114, 118, 101,
+	114, 45, 50, 64, 49, 55, 52, 52, 56, 55, 54, 54, 53, 49, 24, 116, 101, 115, 116, 45, 115, 101,
+	114, 118, 101, 114, 45, 50, 64, 49, 55, 52, 52, 56, 55, 54, 54, 53, 49, 0, 4, 7, 97, 100, 100,
+	114, 101, 115, 115, 3, 116, 99, 112, 0, 0, 0, 0, 104, 0, 180, 107, 2, 0, 0, 0, 14, 108, 111, 99,
+	97, 108, 104, 111, 115, 116, 58, 56, 48, 56, 50, 7, 110, 101, 116, 119, 111, 114, 107, 12, 114,
+	101, 97, 99, 104, 97, 98, 105, 108, 105, 116, 121, 0, 0, 0, 0, 104, 0, 180, 107, 2, 0, 0, 0, 1,
+}
+
+var split2 = []byte{
+	1, 6, 115, 121, 115, 116, 101, 109, 10, 110, 111, 100, 101, 95, 99, 111, 110, 110, 115, 0, 0, 0,
+	0, 104, 0, 180, 107, 2, 0, 0, 0, 1, 0, 6, 115, 121, 115, 116, 101, 109, 9, 104, 101, 97, 114, 116,
+	98, 101, 97, 116, 0, 0, 0, 0, 104, 0, 180, 109, 2, 0, 0, 0, 8, 0, 0, 0, 0, 104, 0, 180, 109, 13,
+	10,
+}
+
 func TestParser(t *testing.T) {
 
 	p := parser{
@@ -47,5 +68,37 @@ func TestParser(t *testing.T) {
 		log.Printf("---- PACKET %d ----", i)
 		c.ParsePacket(packet)
 		log.Printf("state --> %v", c.parser.state)
+	}
+}
+
+func TestSplitPacketFromChunks(t *testing.T) {
+	client := &gbClient{
+		parser: parser{},
+	}
+
+	chunks := [][]byte{split1, split2}
+
+	for i, chunk := range chunks {
+		t.Logf("🔹 Feeding chunk %d (%d bytes)", i+1, len(chunk))
+
+		client.ParsePacket(chunk)
+	}
+}
+
+func BenchmarkParseThroughput(b *testing.B) {
+	client := &gbClient{
+		parser: parser{},
+	}
+
+	// Simulate one big stream from real packet chunks
+	stream := append([]byte{}, split1...)
+	stream = append(stream, split2...)
+
+	b.SetBytes(int64(len(stream))) // tell the benchmark how many bytes are processed per iteration
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		client.ParsePacket(stream)
 	}
 }

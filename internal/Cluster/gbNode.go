@@ -3,7 +3,6 @@ package Cluster
 import (
 	"GoferBroke/internal/Errors"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -466,34 +465,6 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 	return nil
 
-}
-
-func (c *gbClient) processArg(arg []byte) error {
-	// Assuming the first 3 bytes represent the command and the next bytes represent msgLength
-
-	// TODO may need a arg dispatcher or different arg processors
-
-	if len(arg) >= 4 {
-		c.ph.version = arg[0]
-		c.ph.command = arg[1]
-		c.ph.reqID = binary.BigEndian.Uint16(arg[2:4])
-		c.ph.respID = binary.BigEndian.Uint16(arg[4:6])
-		// Extract the last 4 bytes
-		msgLengthBytes := arg[6:8]
-		// Convert those 4 bytes to uint32 (BigEndian)
-		c.ph.msgLength = binary.BigEndian.Uint16(msgLengthBytes)
-
-		// Log the result to verify
-		//log.Printf("Extracted msgLength: %d\n", c.ph.msgLength)
-	} else {
-		return fmt.Errorf("argument does not have enough bytes to extract msgLength")
-	}
-
-	c.argBuf = arg
-	//log.Printf("%s response ID in processArg: %v", c.srv.ServerName, c.ph.reqID)
-	//log.Printf("arg == %v", c.argBuf)
-
-	return nil
 }
 
 //===================================================================================
