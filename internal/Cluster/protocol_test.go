@@ -179,8 +179,8 @@ func serverSetup() *GBServer {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
+		SeedServers: []Seeds{
+			{
 				SeedHost: ip,
 				SeedPort: port,
 			},

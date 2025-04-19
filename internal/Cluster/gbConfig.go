@@ -39,12 +39,12 @@ const (
 // TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
 
 type GbClusterConfig struct {
-	SeedServers map[string]Seeds `gb:"seed"`
+	Name        string
+	SeedServers []Seeds `gb:"seed"`
 	Cluster     *ClusterOptions
 }
 
 type Seeds struct {
-	Name     string
 	SeedHost string
 	SeedPort string
 }
@@ -60,20 +60,24 @@ const (
 )
 
 type ClusterOptions struct {
-	maxGossipSize                 uint16
-	maxDeltaSize                  uint16
-	maxDiscoverySize              uint16
-	discoveryPercentageProportion int
-	maxNumberOfNodes              int
-	defaultSubsetDigestNodes      int
-	maxSequenceIDPool             int
-	nodeSelectionPerGossipRound   int
-	maxParticipantHeapSize        int
-	preferredAddrGroup            string
-	discoveryPercentage           int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
-	paWindowSize                  int
-	paThreshold                   int
-	clusterNetworkType            ClusterNetworkType
+	MaxGossipSize                 uint16
+	MaxDeltaSize                  uint16
+	MaxDiscoverySize              uint16
+	DiscoveryPercentageProportion int
+	MaxNumberOfNodes              int
+	DefaultSubsetDigestNodes      int
+	MaxSequenceIDPool             int
+	NodeSelectionPerGossipRound   int
+	MaxParticipantHeapSize        int
+	PreferredAddrGroup            string
+	DiscoveryPercentage           int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
+	PaWindowSize                  int
+	PaThreshold                   int
+	ClusterNetworkType            ClusterNetworkType
+	DynamicGossipScaling          bool // Adjusts node selection, delta size, discovery size, etc based on cluster metrics and size
+	LoggingURL                    string
+	MetricsURL                    string
+	ErrorsURL                     string
 }
 
 type NodeNetworkType int
@@ -85,6 +89,8 @@ const (
 )
 
 type GbNodeConfig struct {
+	Name        string
+	ID          uint32
 	Host        string
 	Port        string
 	NetworkType NodeNetworkType
@@ -94,22 +100,56 @@ type GbNodeConfig struct {
 
 type InternalOptions struct {
 	//
-	isTestMode                            bool
-	disableInitialiseSelf                 bool
-	disableGossip                         bool
-	goRoutineTracking                     bool
-	debugMode                             bool
-	disableInternalGossipSystemUpdate     bool
-	disableUpdateServerTimeStampOnStartup bool
-	addressKeyGroup                       map[string][]string // Network group e.g. cloud, local, public and then list of ADDR keys e.g. IPv4, IPv6, WAN
-	addressKeys                           []string
+	IsTestMode                            bool
+	DisableInitialiseSelf                 bool
+	DisableGossip                         bool
+	GoRoutineTracking                     bool
+	DebugMode                             bool
+	DisableInternalGossipSystemUpdate     bool
+	DisableUpdateServerTimeStampOnStartup bool
 
 	// Need logging config also
 }
 
 //=====================================================================
 
-func ParseConfigNetworkType(netType string) (ClusterNetworkType, error) {
+func ParseNodeNetworkType(s string) (NodeNetworkType, error) {
+
+	st := strings.TrimSpace(s)
+	st = strings.ToUpper(st)
+
+	switch st {
+	case "UNDEFINED":
+		return UNDEFINED, nil
+	case "PRIVATE":
+		return PRIVATE, nil
+	case "PUBLIC":
+		return PUBLIC, nil
+	}
+
+	return UNDEFINED, fmt.Errorf("invalid node network type: %s", st)
+
+}
+
+func ParseClusterNetworkType(s string) (ClusterNetworkType, error) {
+
+	st := strings.TrimSpace(s)
+	st = strings.ToUpper(st)
+
+	switch st {
+	case "UNDEFINED":
+		return C_UNDEFINED, nil
+	case "PRIVATE":
+		return C_PRIVATE, nil
+	case "PUBLIC":
+		return C_PUBLIC, nil
+	}
+
+	return C_UNDEFINED, fmt.Errorf("invalid cluster network type: %s", st)
+
+}
+
+func ParseClusterConfigNetworkType(netType string) (ClusterNetworkType, error) {
 
 	nt := strings.Trim(netType, " ")
 	nt = strings.ToUpper(nt)
@@ -137,7 +177,7 @@ func ParseConfigNetworkType(netType string) (ClusterNetworkType, error) {
 
 func ConfigInitialNetworkCheck(cluster *GbClusterConfig, node *GbNodeConfig, reach Network.NodeNetworkReachability) error {
 
-	c := cluster.Cluster.clusterNetworkType
+	c := cluster.Cluster.ClusterNetworkType
 	n := node.NetworkType
 
 	switch c {
@@ -211,3 +251,4 @@ func ConfigInitialNetworkCheck(cluster *GbClusterConfig, node *GbNodeConfig, rea
 }
 
 // Need to do a further config check for LOCAL and loopback
+// TODO Encapsulate as much as we can into a validateConfig() check so we can pass a cluster config in and return on any errors

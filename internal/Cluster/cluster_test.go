@@ -185,8 +185,8 @@ func TestUpdateHeartBeat(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {},
+		SeedServers: []Seeds{
+			{},
 		},
 		Cluster: &ClusterOptions{},
 	}
@@ -248,8 +248,8 @@ func TestClusterMapLocks(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {},
+		SeedServers: []Seeds{
+			{},
 		},
 		Cluster: &ClusterOptions{},
 	}
@@ -709,8 +709,8 @@ func TestLiveGossip(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
+		SeedServers: []Seeds{
+			{
 				SeedHost: ip,
 				SeedPort: port,
 			},

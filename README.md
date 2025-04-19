@@ -41,19 +41,23 @@ Built for developers and system architects, GoferBroke simplifies the complexiti
 
 - Gossip Rounds Working and Exchanging ✅
 
-- Phi Accrual Failure Detection
+- Phi Accrual Failure Detection ✅
 
-- Flow Control For High Load Gossip
+- Cloud Platform Testing ✅
 
-- Handlers API For Delta Extensibility
-
-- Internal Monitoring + Tracing
-
-- TLS Encryption with Windows Cert Store
+- Go SDK
 
 - Custom Configuration Parsing
 
-- Cloud Platform Testing
+- CLI Tool
+
+- Network Types and NAT Handling
+
+- Internal Monitoring + Tracing
+
+- mTLS Encryption
+
+- Flow Control For High Load Gossip
 
 
 ## Run Locally
@@ -67,24 +71,22 @@ Clone the project
 Start a seed node in terminal
 
 ```bash
-  go run GoferBroke -name=test1 -ID=1 -nodeIP=localhost -nodePort=8081
+  go run ./cmd/server -name=test -ID=1 -clusterNetwork=LOCAL -nodeIP=localhost -nodePort=8081
 ```
 
 Start a second node in another terminal
 
 ```bash
-  go run GoferBroke -name=test2 -ID=1 -nodeIP=localhost -nodePort=8082
+  go run ./cmd/server -name=test -ID=2 -clusterNetwork=LOCAL -nodeIP=localhost -nodePort=8082
 ```
 
-To run on another machine
+To run on another machine (note: clusterNetwork must be set to the network type of the IP being used e.g. local->local=LOCAL, private->private=PRIVATE, public->public=PUBLIC, public & private=DYNAMIC
+- refer to Network_Strategy.md for further info)
 
 ```bash
-  go run GoferBroke -name=test2 -ID=1 -clusterIP=[YOUR MACHINES IP] -clusterPort=[SEED PORT YOU WANT] -nodeIP=localhost -nodePort=8082
+go run ./cmd/server -name=test1 -ID=1 -clusterIP="192.168.1.xxx" -clusterPort=8081 -clusterNetwork=PRIVATE -nodeIP="192.168.1.xxx" -nodePort=8081
+  go run ./cmd/server -name=test1 -ID=2 -clusterIP="192.168.1.xxx" -clusterPort=8081 -clusterNetwork=PRIVATE -nodeIP="192.168.1.xxx" -nodePort=8082
 ```
-
-## Video Demo - Update
-
-[![Update 1](https://github.com/kristianJW54/GoferBroke/blob/main/Video%20Demo/1%20cover.png)](https://youtu.be/MscMA-A9y7Y)
 
 ## Contributing
 

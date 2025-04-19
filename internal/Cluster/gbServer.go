@@ -39,7 +39,7 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 
 	var cn ClusterNetworkType
 
-	cn, err := ParseConfigNetworkType(clusterNetwork)
+	cn, err := ParseClusterConfigNetworkType(clusterNetwork)
 
 	// TODO This needs to change - cannot be localhost
 	if clusterIP == "" && clusterPort == "" {
@@ -48,14 +48,14 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 
 		// Initialize config with the seed server address
 		config = &GbClusterConfig{
-			SeedServers: map[string]Seeds{
-				"seed1": {
+			SeedServers: []Seeds{
+				{
 					SeedHost: ip,
 					SeedPort: port,
 				},
 			},
 			Cluster: &ClusterOptions{
-				clusterNetworkType: cn,
+				ClusterNetworkType: cn,
 			},
 		}
 		log.Println("Config initialized:", config)
@@ -64,14 +64,14 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		log.Printf("cluster ip == %s", clusterIP)
 
 		config = &GbClusterConfig{
-			SeedServers: map[string]Seeds{
-				"seed1": {
+			SeedServers: []Seeds{
+				{
 					SeedHost: clusterIP,
 					SeedPort: clusterPort,
 				},
 			},
 			Cluster: &ClusterOptions{
-				clusterNetworkType: cn,
+				ClusterNetworkType: cn,
 			},
 		}
 		log.Println("Config initialized:", config)
@@ -359,13 +359,13 @@ func (s *GBServer) StartServer() {
 	s.flags.clear(SHUTTING_DOWN)
 	s.serverLock.Unlock()
 
-	if !s.gbNodeConfig.Internal.disableUpdateServerTimeStampOnStartup {
+	if !s.gbNodeConfig.Internal.DisableUpdateServerTimeStampOnStartup {
 		s.updateTime() // To sync to when the server is started
 		srvName := s.String()
 		s.ServerName = srvName
 	}
 
-	if s.gbNodeConfig.Internal.isTestMode {
+	if s.gbNodeConfig.Internal.IsTestMode {
 		// Add debug mode output
 		log.Printf("Server starting in test mode: %s\n", s.ServerName)
 	} else {
@@ -373,7 +373,7 @@ func (s *GBServer) StartServer() {
 
 	}
 	//s.clusterMapLock.Lock()
-	if s.gbNodeConfig.Internal.disableInitialiseSelf {
+	if s.gbNodeConfig.Internal.DisableInitialiseSelf {
 		log.Printf("Cluster Map and Self Info not initialised")
 	} else {
 		s.phi = *s.initPhiControl()
@@ -446,7 +446,7 @@ func (s *GBServer) StartServer() {
 	})
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
-	if !s.gbNodeConfig.Internal.disableGossip {
+	if !s.gbNodeConfig.Internal.DisableGossip {
 		s.startGoRoutine(s.ServerName, "gossip-process",
 			func() {
 				defer s.gossipCleanup()

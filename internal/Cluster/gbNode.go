@@ -289,7 +289,7 @@ func (s *GBServer) getSelfInfo() *Participant {
 
 func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) {
 
-	if s.gbNodeConfig.Internal.disableInternalGossipSystemUpdate {
+	if s.gbNodeConfig.Internal.DisableInternalGossipSystemUpdate {
 		log.Printf("internal systems gossip update is off")
 	}
 

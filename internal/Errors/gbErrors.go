@@ -334,6 +334,7 @@ const (
 	EMPTY_PARTICIPANT_HEAP_CODE = 61
 	GOSS_ACK_CODE               = 62
 	NODE_NOT_FOUND_CODE         = 63
+	CLUSTER_CONFIG_CODE         = 64
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -362,6 +363,7 @@ var KnownInternalErrors = map[int]*GBError{
 	EMPTY_PARTICIPANT_HEAP_CODE: &GBError{Code: EMPTY_PARTICIPANT_HEAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "empty participant heap"},
 	GOSS_ACK_CODE:               &GBError{Code: GOSS_ACK_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "goss ack error"},
 	NODE_NOT_FOUND_CODE:         &GBError{Code: NODE_NOT_FOUND_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "node not found in cluster map"},
+	CLUSTER_CONFIG_CODE:         &GBError{Code: CLUSTER_CONFIG_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "seed config error"},
 }
 
 var (
@@ -372,6 +374,7 @@ var (
 	EmptyParticipantHeapErr = KnownInternalErrors[EMPTY_PARTICIPANT_HEAP_CODE]
 	GossAckErr              = KnownInternalErrors[GOSS_ACK_CODE]
 	NodeNotFoundErr         = KnownInternalErrors[NODE_NOT_FOUND_CODE]
+	ClusterConfigErr        = KnownInternalErrors[CLUSTER_CONFIG_CODE]
 )
 
 var (

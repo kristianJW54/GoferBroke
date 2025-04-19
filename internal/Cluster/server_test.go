@@ -16,8 +16,8 @@ func TestServerNameLengthError(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
+		SeedServers: []Seeds{
+			{
 				SeedHost: ip,
 				SeedPort: port,
 			},
@@ -44,14 +44,14 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
+		SeedServers: []Seeds{
+			{
 				SeedHost: ip,
 				SeedPort: port,
 			},
 		},
 		Cluster: &ClusterOptions{
-			clusterNetworkType: C_LOCAL,
+			ClusterNetworkType: C_LOCAL,
 		},
 	}
 
@@ -109,14 +109,14 @@ func TestGossipSignal(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
+		SeedServers: []Seeds{
+			{
 				SeedHost: ip,
 				SeedPort: port,
 			},
 		},
 		Cluster: &ClusterOptions{
-			clusterNetworkType: C_LOCAL,
+			ClusterNetworkType: C_LOCAL,
 		},
 	}
 
@@ -171,15 +171,15 @@ func TestGossipDifferentStates(t *testing.T) {
 	lc := net.ListenConfig{}
 
 	testConfig := &InternalOptions{
-		isTestMode:                            true,
-		disableGossip:                         false,
-		disableInitialiseSelf:                 false,
-		disableInternalGossipSystemUpdate:     true,
-		disableUpdateServerTimeStampOnStartup: true,
+		IsTestMode:                            true,
+		DisableGossip:                         false,
+		DisableInitialiseSelf:                 false,
+		DisableInternalGossipSystemUpdate:     true,
+		DisableUpdateServerTimeStampOnStartup: true,
 	}
 	config := &GbClusterConfig{
-		SeedServers: map[string]Seeds{
-			"seed1": {
+		SeedServers: []Seeds{
+			{
 				SeedHost: "127.0.0.1",
 				SeedPort: "8081",
 			},
