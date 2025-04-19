@@ -104,6 +104,13 @@ func DetermineNodeNetworkType(configNetType int, ip net.IP) (NodeNetworkReachabi
 		default:
 			return Unreachable, fmt.Errorf("network types mismatch - config specifies node network type as PUBLIC but detected Private IP Address - check node address and network type")
 		}
+	case 3:
+		switch initial {
+		case LoopbackOnly:
+			return initial, nil
+		default:
+			return Unreachable, fmt.Errorf("network type is configureed for loopback only")
+		}
 	}
 
 	return Unreachable, fmt.Errorf("determine network type failed")

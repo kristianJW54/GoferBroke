@@ -1,13 +1,13 @@
 package Cluster
 
 import (
-	"GoferBroke/internal/Errors"
 	"bytes"
 	"container/heap"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"math/rand"
 	"net"

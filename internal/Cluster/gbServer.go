@@ -1,11 +1,11 @@
 package Cluster
 
 import (
-	"GoferBroke/internal/Errors"
-	"GoferBroke/internal/Network"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
+	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"io"
 	"log"
 	"net"

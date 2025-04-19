@@ -1,9 +1,9 @@
 package Cluster
 
 import (
-	"GoferBroke/internal/Errors"
 	"encoding/binary"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"time"
 )
 

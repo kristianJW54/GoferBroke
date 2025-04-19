@@ -1,8 +1,8 @@
 package Cluster
 
 import (
-	"GoferBroke/internal/Network"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"strings"
 )
 
@@ -86,6 +86,7 @@ const (
 	UNDEFINED NodeNetworkType = iota
 	PRIVATE
 	PUBLIC
+	LOCAL
 )
 
 type GbNodeConfig struct {
@@ -125,6 +126,8 @@ func ParseNodeNetworkType(s string) (NodeNetworkType, error) {
 		return PRIVATE, nil
 	case "PUBLIC":
 		return PUBLIC, nil
+	case "LOCAL":
+		return LOCAL, nil
 	}
 
 	return UNDEFINED, fmt.Errorf("invalid node network type: %s", st)
@@ -143,6 +146,8 @@ func ParseClusterNetworkType(s string) (ClusterNetworkType, error) {
 		return C_PRIVATE, nil
 	case "PUBLIC":
 		return C_PUBLIC, nil
+	case "LOCAL":
+		return C_LOCAL, nil
 	}
 
 	return C_UNDEFINED, fmt.Errorf("invalid cluster network type: %s", st)

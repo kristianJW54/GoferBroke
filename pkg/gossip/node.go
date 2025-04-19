@@ -1,10 +1,10 @@
 package gossip
 
 import (
-	"GoferBroke/internal/Cluster"
-	"GoferBroke/internal/Errors"
 	"errors"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Cluster"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"net"
 )
 
@@ -57,20 +57,20 @@ func (nc *NodeConfig) InitConfig() error {
 // Methods for config internal control
 // May need locks if we are modifying internal state during live server...?
 
-func (nc *Node) EnableDebug() {
-	nc.nodeConfig.Internal.DebugMode = true
+func (n *Node) EnableDebug() {
+	n.nodeConfig.Internal.DebugMode = true
 }
 
-func (nc *Node) DisableDebug() {
-	nc.nodeConfig.Internal.DebugMode = false
+func (n *Node) DisableDebug() {
+	n.nodeConfig.Internal.DebugMode = false
 }
 
-func (nc *Node) EnableGoRoutineTracking() {
-	nc.nodeConfig.Internal.GoRoutineTracking = true
+func (n *Node) EnableGoRoutineTracking() {
+	n.nodeConfig.Internal.GoRoutineTracking = true
 }
 
-func (nc *Node) DisableGoRoutineTracking() {
-	nc.nodeConfig.Internal.GoRoutineTracking = false
+func (n *Node) DisableGoRoutineTracking() {
+	n.nodeConfig.Internal.GoRoutineTracking = false
 }
 
 //=====================================================================
@@ -156,4 +156,14 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 
 	return newNode, nil
 
+}
+
+// Starting and stopping
+
+func (n *Node) Start() {
+	go n.server.StartServer()
+}
+
+func (n *Node) Stop() {
+	n.server.Shutdown()
 }

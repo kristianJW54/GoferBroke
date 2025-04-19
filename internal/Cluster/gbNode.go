@@ -1,9 +1,9 @@
 package Cluster
 
 import (
-	"GoferBroke/internal/Errors"
 	"context"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"net"
 	"slices"

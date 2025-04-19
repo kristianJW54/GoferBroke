@@ -1,4 +1,9 @@
-package basic_node
+package main
+
+import (
+	"github.com/kristianJW54/GoferBroke/pkg/gossip"
+	"time"
+)
 
 // Basic Node using user specified config structs
 
@@ -16,31 +21,88 @@ package basic_node
 // It will be created with a cluster wide config that the whole of the cluster will adhere and, its own internal node config
 // which marks it as a unique node the cluster
 
-// Example code block
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-// Example code
+func main() {
 
-// We now need to distribute the database and expand the cluster. To do so we create a new application instance with the same
-// Cluster config, but this time we dynamically create a new node config which will specify a new node
+	// Declare cluster wide config - same for all application instances - changes would be gossiped to nodes and applied
+	clusterConfig := &gossip.ClusterConfig{
+		Name: "database_cluster",
+		SeedServers: []gossip.Seeds{
+			{
+				SeedHost: "localhost",
+				SeedPort: "8081",
+			},
+		},
+		NetworkType: "LOCAL",
+	}
 
-// this will be called node-2
+	// In production this would be dynamically loaded from environment variables or such to ensure unique instances
+	node1Config := &gossip.NodeConfig{
+		Name:        "node",
+		ID:          1,
+		Host:        "localhost",
+		Port:        "8081",
+		NetworkType: "LOCAL",
+		ClientPort:  "8083",
+	}
 
-// Application-2 will join the cluster as a follower (as per Raft protocol) but crucially for the gossip protocol, node-2 will be embedded and will reach out
-// to node-1 and the two will begin gossiping state and exchanging deltas
+	// Initialise our configs
+	err := clusterConfig.InitConfig()
+	if err != nil {
+		panic(err)
+	}
+	err = node1Config.InitConfig()
+	if err != nil {
+		panic(err)
+	}
 
-// We now have a gossip cluster and the database application has two distributed instances which are keeping in sync and detecting each others
-// failures or state changes
+	// Now we create our node-1
+	node1, err := gossip.NewNodeFromConfig(clusterConfig, node1Config)
+	if err != nil {
+		panic(err)
+	}
 
-// the application can now continue with its purpose of replicating database logs from leaders to followers with a high degree of certainty that
-// nodes in the cluster are available
+	node1.Start()
+
+	// We now need to distribute the database and expand the cluster. To do so we create a new application instance with the same
+	// Cluster config, but this time we dynamically create a new node config which will specify a new node
+
+	// this will be called node-2
+
+	// Application-2 will join the cluster as a follower (as per Raft protocol) but crucially for the gossip protocol, node-2 will be embedded and will reach out
+	// to node-1 and the two will begin gossiping state and exchanging deltas
+
+	// We now have a gossip cluster and the database application has two distributed instances which are keeping in sync and detecting each others
+	// failures or state changes
+
+	// the application can now continue with its purpose of replicating database logs from leaders to followers with a high degree of certainty that
+	// nodes in the cluster are available
+
+	// Create node-2 config which would be in a new application instance
+	node1Config2 := &gossip.NodeConfig{
+		Name:        "node",
+		ID:          2,
+		Host:        "localhost",
+		Port:        "8082",
+		NetworkType: "LOCAL",
+		ClientPort:  "8083",
+	}
+
+	err = node1Config2.InitConfig()
+	if err != nil {
+		panic(err)
+	}
+
+	// Now we create our node-1
+	node2, err := gossip.NewNodeFromConfig(clusterConfig, node1Config2)
+	if err != nil {
+		panic(err)
+	}
+
+	node2.Start()
+
+	time.Sleep(10 * time.Second)
+	node2.Stop()
+	time.Sleep(1 * time.Second)
+	node1.Stop()
+
+}

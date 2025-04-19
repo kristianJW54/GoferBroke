@@ -1,11 +1,11 @@
 package Cluster
 
 import (
-	"GoferBroke/internal/Errors"
 	"bufio"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"io"
 	"log"
 	"net"

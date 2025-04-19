@@ -1,8 +1,8 @@
 package Cluster
 
 import (
-	"GoferBroke/internal/Errors"
 	"context"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"math"
 	"sync"
