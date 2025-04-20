@@ -945,13 +945,13 @@ func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) 
 
 		// Using self-info here because we are collecting the delta as part of our local state ready to be distributed
 		newDelta := &Delta{
-			key:       string(key),
-			valueType: CLIENT_D,
-			version:   now,
-			value:     value,
+			Key:       string(key),
+			ValueType: CLIENT_D,
+			Version:   now,
+			Value:     value,
 		}
 
-		selfInfo := s.getSelfInfo()
+		selfInfo := s.GetSelfInfo()
 
 		//s.selfInfo.valueIndex = append(s.selfInfo.valueIndex, string(key))
 		selfInfo.keyValues[string(key)] = newDelta

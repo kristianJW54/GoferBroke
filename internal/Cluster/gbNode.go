@@ -190,7 +190,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		s.clusterMapLock.RUnlock()
 		return fmt.Errorf("no address key in map")
 	} else {
-		addr = kv.value
+		addr = kv.Value
 	}
 	s.clusterMapLock.RUnlock()
 
@@ -281,7 +281,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 //------------------------------------------
 // Handling Self Info - Thread safe and for high concurrency
 
-func (s *GBServer) getSelfInfo() *Participant {
+func (s *GBServer) GetSelfInfo() *Participant {
 	s.clusterMapLock.RLock()
 	defer s.clusterMapLock.RUnlock()
 	return s.clusterMap.participants[s.ServerName]
@@ -293,7 +293,7 @@ func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participan
 		log.Printf("internal systems gossip update is off")
 	}
 
-	self := s.getSelfInfo()
+	self := s.GetSelfInfo()
 
 	err := updateFunc(self, timeOfUpdate)
 	if err != nil {
@@ -323,7 +323,7 @@ func (s *GBServer) updateParticipant(node *Participant, timeOfUpdate int64, upda
 func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, error) {
 
 	//s.clusterMapLock.RLock()
-	self := s.getSelfInfo()
+	self := s.GetSelfInfo()
 
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo(self)
@@ -394,13 +394,13 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 		addrMap[name] = make([]string, 0)
 
 		for key, value := range n.keyValues {
-			if value.keyGroup == ADDR_DKG {
+			if value.KeyGroup == ADDR_DKG {
 				log.Printf("tcpKey = %v", key)
 
 				if sizeEstimate+len(key) > DEFAULT_MAX_DISCOVERY_SIZE {
 					return addrMap, nil
 				} else {
-					addrMap[name] = append(addrMap[name], value.key)
+					addrMap[name] = append(addrMap[name], value.Key)
 				}
 			} else {
 				continue

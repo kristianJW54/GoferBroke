@@ -111,9 +111,9 @@ func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 	for _, delta := range self.keyValues {
 		if delta != nil {
 
-			value := delta.value
+			value := delta.Value
 			// Calculate the size for this delta
-			length += DELTA_META_SIZE + len(delta.keyGroup) + len(delta.key) + len(value) // 14 bytes for metadata + value length
+			length += DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(value) // 14 bytes for metadata + value length
 		} else {
 			// Log missing delta and continue
 			fmt.Printf("Warning: Delta is nil for participant %s\n", self.name)
@@ -149,12 +149,12 @@ func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 
 		v := value
 
-		deltaBuf[offset] = uint8(len(v.keyGroup))
+		deltaBuf[offset] = uint8(len(v.KeyGroup))
 		offset++
-		copy(deltaBuf[offset:], v.keyGroup)
-		offset += len(v.keyGroup)
+		copy(deltaBuf[offset:], v.KeyGroup)
+		offset += len(v.KeyGroup)
 
-		key := value.key
+		key := value.Key
 		// Write key (which is similar to how we handle name)
 		deltaBuf[offset] = uint8(len(key))
 		offset++
@@ -162,17 +162,17 @@ func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
 		offset += len(key)
 
 		// Write version (8 bytes, uint64)
-		binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(v.version))
+		binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(v.Version))
 		offset += 8
 
 		// Write valueType (1 byte, uint8)
-		deltaBuf[offset] = v.valueType
+		deltaBuf[offset] = v.ValueType
 		offset++
 		// Write value length (4 bytes, uint32) and the value itself
-		binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.value)))
+		binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.Value)))
 		offset += 4
-		copy(deltaBuf[offset:], v.value)
-		offset += len(v.value)
+		copy(deltaBuf[offset:], v.Value)
+		offset += len(v.Value)
 
 	}
 
@@ -321,7 +321,7 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 
 			addrKey := MakeDeltaKey(ADDR_DKG, p)
 
-			value := cm.participants[name].keyValues[addrKey].value
+			value := cm.participants[name].keyValues[addrKey].Value
 			length += 5 + len(p) + len(value) // Metadata (key size, value size) + length of key + length value
 		}
 
@@ -372,10 +372,10 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 			offset += len(p)
 
 			// Addr
-			binary.BigEndian.PutUint32(discoveryBuf[offset:], uint32(len(value.value)))
+			binary.BigEndian.PutUint32(discoveryBuf[offset:], uint32(len(value.Value)))
 			offset += 4
-			copy(discoveryBuf[offset:], value.value)
-			offset += len(value.value)
+			copy(discoveryBuf[offset:], value.Value)
+			offset += len(value.Value)
 
 		}
 
@@ -532,29 +532,29 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSiz
 		for _, v := range value {
 
 			// TODO Want to add a key group e.g. [LOG], [DB], [SYSTEM], [MY_BOOK]
-			deltaBuf[offset] = uint8(len(v.keyGroup))
+			deltaBuf[offset] = uint8(len(v.KeyGroup))
 			offset++
-			copy(deltaBuf[offset:], v.keyGroup)
-			offset += len(v.keyGroup)
+			copy(deltaBuf[offset:], v.KeyGroup)
+			offset += len(v.KeyGroup)
 
-			deltaBuf[offset] = uint8(len(v.key))
+			deltaBuf[offset] = uint8(len(v.Key))
 			offset++
-			copy(deltaBuf[offset:], v.key)
-			offset += len(v.key)
+			copy(deltaBuf[offset:], v.Key)
+			offset += len(v.Key)
 
 			// Write version (8 bytes, uint64)
-			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(v.version))
+			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(v.Version))
 			offset += 8
 
 			// Write the value type (1 byte, uint8)
-			deltaBuf[offset] = uint8(v.valueType)
+			deltaBuf[offset] = uint8(v.ValueType)
 			offset++
 
 			// Write the value
-			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.value)))
+			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.Value)))
 			offset += 4
-			copy(deltaBuf[offset:], v.value)
-			offset += len(v.value)
+			copy(deltaBuf[offset:], v.Value)
+			offset += len(v.Value)
 
 		}
 
@@ -664,11 +664,11 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			value := delta[offset : offset+vLength]
 
 			d.keyValues[newKey] = &Delta{
-				keyGroup:  keyGroup,
-				key:       key,
-				version:   VersionTime.Unix(),
-				valueType: vType,
-				value:     value,
+				KeyGroup:  keyGroup,
+				Key:       key,
+				Version:   VersionTime.Unix(),
+				ValueType: vType,
+				Value:     value,
 			}
 
 			offset += vLength
@@ -765,11 +765,11 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 			value := delta[offset : offset+vLength]
 
 			d.keyValues[newKey] = &Delta{
-				keyGroup:  keyGroup,
-				key:       key,
-				version:   VersionTime.Unix(),
-				valueType: vType,
-				value:     value,
+				KeyGroup:  keyGroup,
+				Key:       key,
+				Version:   VersionTime.Unix(),
+				ValueType: vType,
+				Value:     value,
 			}
 
 			offset += vLength
@@ -998,29 +998,29 @@ func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaS
 
 		for _, v := range value {
 
-			gsaBuff[offset] = uint8(len(v.keyGroup))
+			gsaBuff[offset] = uint8(len(v.KeyGroup))
 			offset++
-			copy(gsaBuff[offset:], v.keyGroup)
-			offset += len(v.keyGroup)
+			copy(gsaBuff[offset:], v.KeyGroup)
+			offset += len(v.KeyGroup)
 
-			gsaBuff[offset] = uint8(len(v.key))
+			gsaBuff[offset] = uint8(len(v.Key))
 			offset++
-			copy(gsaBuff[offset:], v.key)
-			offset += len(v.key)
+			copy(gsaBuff[offset:], v.Key)
+			offset += len(v.Key)
 
 			// Write version (8 bytes, uint64)
-			binary.BigEndian.PutUint64(gsaBuff[offset:], uint64(v.version))
+			binary.BigEndian.PutUint64(gsaBuff[offset:], uint64(v.Version))
 			offset += 8
 
 			// Write the value type (1 byte, uint8)
-			gsaBuff[offset] = uint8(v.valueType)
+			gsaBuff[offset] = uint8(v.ValueType)
 			offset++
 
 			// Write the value
-			binary.BigEndian.PutUint32(gsaBuff[offset:], uint32(len(v.value)))
+			binary.BigEndian.PutUint32(gsaBuff[offset:], uint32(len(v.Value)))
 			offset += 4
-			copy(gsaBuff[offset:], v.value)
-			offset += len(v.value)
+			copy(gsaBuff[offset:], v.Value)
+			offset += len(v.Value)
 
 		}
 

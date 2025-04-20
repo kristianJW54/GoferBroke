@@ -716,49 +716,49 @@ func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachabilit
 	// TODO Address needs more attention with configuration, different types of addresses and address key groups
 	// Add the _ADDRESS_ delta
 	addrDelta := &Delta{
-		keyGroup:  ADDR_DKG,
-		key:       _ADDRESS_,
-		valueType: INTERNAL_D,
-		version:   t,
-		value:     []byte(addr),
+		KeyGroup:  ADDR_DKG,
+		Key:       _ADDRESS_,
+		ValueType: D_INT64_TYPE,
+		Version:   t,
+		Value:     []byte(addr),
 	}
 
-	p.keyValues[MakeDeltaKey(addrDelta.keyGroup, addrDelta.key)] = addrDelta
+	p.keyValues[MakeDeltaKey(addrDelta.KeyGroup, addrDelta.Key)] = addrDelta
 
 	// Add the _REACHABLE_ delta
 	reachDelta := &Delta{
-		keyGroup:  NETWORK_DKG,
-		key:       _REACHABLE_,
-		valueType: INTERNAL_D,
-		version:   t,
-		value:     []byte{byte(int(reach))},
+		KeyGroup:  NETWORK_DKG,
+		Key:       _REACHABLE_,
+		ValueType: D_INT_TYPE,
+		Version:   t,
+		Value:     []byte{byte(int(reach))},
 	}
 
-	p.keyValues[MakeDeltaKey(reachDelta.keyGroup, reachDelta.key)] = reachDelta
+	p.keyValues[MakeDeltaKey(reachDelta.KeyGroup, reachDelta.Key)] = reachDelta
 
 	// Add the _NODE_CONNS_ delta
 	numNodeConnBytes := make([]byte, 1)
 	numNodeConnBytes[0] = 0
 	nodeConnsDelta := &Delta{
-		keyGroup:  SYSTEM_DKG,
-		key:       _NODE_CONNS_,
-		valueType: INTERNAL_D,
-		version:   t,
-		value:     numNodeConnBytes,
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _NODE_CONNS_,
+		ValueType: D_INT_TYPE,
+		Version:   t,
+		Value:     numNodeConnBytes,
 	}
-	p.keyValues[MakeDeltaKey(nodeConnsDelta.keyGroup, nodeConnsDelta.key)] = nodeConnsDelta
+	p.keyValues[MakeDeltaKey(nodeConnsDelta.KeyGroup, nodeConnsDelta.Key)] = nodeConnsDelta
 
 	// Add the _HEARTBEAT_ delta
 	heart := make([]byte, 8)
 	binary.BigEndian.PutUint64(heart, uint64(t))
 	heartbeatDelta := &Delta{
-		keyGroup:  SYSTEM_DKG,
-		key:       _HEARTBEAT_,
-		valueType: INTERNAL_D,
-		version:   t,
-		value:     heart,
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _HEARTBEAT_,
+		ValueType: D_INT64_TYPE,
+		Version:   t,
+		Value:     heart,
 	}
-	p.keyValues[MakeDeltaKey(heartbeatDelta.keyGroup, heartbeatDelta.key)] = heartbeatDelta
+	p.keyValues[MakeDeltaKey(heartbeatDelta.KeyGroup, heartbeatDelta.Key)] = heartbeatDelta
 
 	return p
 
@@ -1030,9 +1030,9 @@ func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
 
 	key := MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)
 
-	binary.BigEndian.PutUint64(self.keyValues[key].value, uint64(timeOfUpdate))
+	binary.BigEndian.PutUint64(self.keyValues[key].Value, uint64(timeOfUpdate))
 	self.pm.Lock()
-	self.keyValues[key].version = timeOfUpdate
+	self.keyValues[key].Version = timeOfUpdate
 	self.pm.Unlock()
 
 	return nil

@@ -27,10 +27,10 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 						maxVersion: 0,
 					}
 					part.keyValues[_ADDRESS_] = &Delta{
-						key:       _ADDRESS_,
-						version:   0,
-						valueType: ADDR_V,
-						value:     []byte("127.0.0.1"),
+						Key:       _ADDRESS_,
+						Version:   0,
+						ValueType: ADDR_V,
+						Value:     []byte("127.0.0.1"),
 					}
 					cm.participants[partName] = part
 				}
@@ -52,17 +52,17 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 					}
 					if i == 2 {
 						part.keyValues[_NODE_CONNS_] = &Delta{
-							key:       _NODE_CONNS_,
-							version:   0,
-							valueType: NUM_NODE_CONN_V,
-							value:     []byte{0},
+							Key:       _NODE_CONNS_,
+							Version:   0,
+							ValueType: NUM_NODE_CONN_V,
+							Value:     []byte{0},
 						}
 					} else {
 						part.keyValues[_ADDRESS_] = &Delta{
-							key:       _ADDRESS_,
-							version:   0,
-							valueType: ADDR_V,
-							value:     []byte("127.0.0.1"),
+							Key:       _ADDRESS_,
+							Version:   0,
+							ValueType: ADDR_V,
+							Value:     []byte("127.0.0.1"),
 						}
 					}
 					cm.participants[partName] = part
@@ -84,10 +84,10 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 						maxVersion: 0,
 					}
 					part.keyValues[_NODE_CONNS_] = &Delta{
-						key:       _NODE_CONNS_,
-						version:   0,
-						valueType: NUM_NODE_CONN_V,
-						value:     []byte{0},
+						Key:       _NODE_CONNS_,
+						Version:   0,
+						ValueType: NUM_NODE_CONN_V,
+						Value:     []byte{0},
 					}
 					cm.participants[partName] = part
 				}
@@ -179,8 +179,8 @@ func TestDiscoveryResponse(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		name := gbs.clusterMap.participantArray[i]
 		knownAddr[name] = make([]string, 2)
-		knownAddr[name][0] = gbs.clusterMap.participants[name].keyValues[_ADDRESS_].key
-		knownAddr[name][1] = gbs.clusterMap.participants[name].keyValues["CLOUD"].key
+		knownAddr[name][0] = gbs.clusterMap.participants[name].keyValues[_ADDRESS_].Key
+		knownAddr[name][1] = gbs.clusterMap.participants[name].keyValues["CLOUD"].Key
 	}
 
 	log.Printf("data = %+s", knownAddr)
@@ -306,11 +306,11 @@ func TestSerialiseDigest(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
 	keyValues := map[string]*Delta{
-		"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+		"key6":  {ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+		"key8":  {ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"key10": {ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
 	}
 
 	// Mock server setup
@@ -339,8 +339,8 @@ func TestSerialiseDigest(t *testing.T) {
 
 			participant.keyValues[key] = delta
 
-			if delta.version > maxVersion {
-				maxVersion = delta.version
+			if delta.Version > maxVersion {
+				maxVersion = delta.Version
 			}
 
 		}
@@ -370,11 +370,11 @@ func TestSerialiseDigest(t *testing.T) {
 func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 
 	keyValues := map[string]*Delta{
-		"key6":  {valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  {valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-		"key8":  {valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  {valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-		"key10": {valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+		"key6":  {ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+		"key8":  {ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"key10": {ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
 	}
 
 	// Mock server setup
@@ -404,8 +404,8 @@ func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 
 			participant.keyValues[key] = delta
 
-			if delta.version > maxVersion {
-				maxVersion = delta.version
+			if delta.Version > maxVersion {
+				maxVersion = delta.Version
 			}
 
 		}
@@ -455,26 +455,26 @@ func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 
 func BenchmarkJSONSerialization(b *testing.B) {
 	keyValues := map[string]*Delta{
-		"key1":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("hello world")},
-		"key2":  &Delta{valueType: INTERNAL_D, version: 1640995200, value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
-		"key3":  &Delta{valueType: INTERNAL_D, version: 1640995201, value: []byte("short")},
-		"key4":  &Delta{valueType: INTERNAL_D, version: 1640995202, value: []byte("This is a slightly longer string to test serialization.")},
-		"key5":  &Delta{valueType: INTERNAL_D, version: 1640995203, value: []byte("1234567890")},
-		"key6":  &Delta{valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  &Delta{valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-		"key8":  &Delta{valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  &Delta{valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-		"key10": &Delta{valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
-		"key11": &Delta{valueType: INTERNAL_D, version: 1640995209, value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
-		"key12": &Delta{valueType: INTERNAL_D, version: 1640995210, value: []byte("abcdefghijklmnopqrstuvwxyz")},
-		"key13": &Delta{valueType: INTERNAL_D, version: 1640995211, value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
-		"key14": &Delta{valueType: INTERNAL_D, version: 1640995212, value: []byte("Yet another string, this one a bit longer than the previous.")},
-		"key15": &Delta{valueType: INTERNAL_D, version: 1640995213, value: []byte("Small string.")},
-		"key16": &Delta{valueType: INTERNAL_D, version: 1640995214, value: []byte("A moderately sized string for testing.")},
-		"key17": &Delta{valueType: INTERNAL_D, version: 1640995215, value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
-		"key18": &Delta{valueType: INTERNAL_D, version: 1640995216, value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
-		"key19": &Delta{valueType: INTERNAL_D, version: 1640995217, value: []byte("Medium length string for benchmarking purposes.")},
-		"key20": &Delta{valueType: INTERNAL_D, version: 1640995218, value: []byte("Final key-value pair.")},
+		"key1":  &Delta{ValueType: INTERNAL_D, Version: 1640995200, Value: []byte("hello world")},
+		"key2":  &Delta{ValueType: INTERNAL_D, Version: 1640995200, Value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
+		"key3":  &Delta{ValueType: INTERNAL_D, Version: 1640995201, Value: []byte("short")},
+		"key4":  &Delta{ValueType: INTERNAL_D, Version: 1640995202, Value: []byte("This is a slightly longer string to test serialization.")},
+		"key5":  &Delta{ValueType: INTERNAL_D, Version: 1640995203, Value: []byte("1234567890")},
+		"key6":  &Delta{ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  &Delta{ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+		"key8":  &Delta{ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  &Delta{ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"key10": &Delta{ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
+		"key11": &Delta{ValueType: INTERNAL_D, Version: 1640995209, Value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
+		"key12": &Delta{ValueType: INTERNAL_D, Version: 1640995210, Value: []byte("abcdefghijklmnopqrstuvwxyz")},
+		"key13": &Delta{ValueType: INTERNAL_D, Version: 1640995211, Value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
+		"key14": &Delta{ValueType: INTERNAL_D, Version: 1640995212, Value: []byte("Yet another string, this one a bit longer than the previous.")},
+		"key15": &Delta{ValueType: INTERNAL_D, Version: 1640995213, Value: []byte("Small string.")},
+		"key16": &Delta{ValueType: INTERNAL_D, Version: 1640995214, Value: []byte("A moderately sized string for testing.")},
+		"key17": &Delta{ValueType: INTERNAL_D, Version: 1640995215, Value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
+		"key18": &Delta{ValueType: INTERNAL_D, Version: 1640995216, Value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
+		"key19": &Delta{ValueType: INTERNAL_D, Version: 1640995217, Value: []byte("Medium length string for benchmarking purposes.")},
+		"key20": &Delta{ValueType: INTERNAL_D, Version: 1640995218, Value: []byte("Final key-value pair.")},
 	}
 
 	for i := 0; i < b.N; i++ {
@@ -503,7 +503,7 @@ func TestGSASerialisation(t *testing.T) {
 				continue
 			}
 
-			size := DELTA_META_SIZE + len(v.keyGroup) + len(v.key) + len(v.value)
+			size := DELTA_META_SIZE + len(v.KeyGroup) + len(v.Key) + len(v.Value)
 			sizeOfDelta += size
 
 			deltaList = append(deltaList, v)

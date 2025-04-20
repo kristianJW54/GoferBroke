@@ -129,6 +129,14 @@ const (
 	STRING_V
 )
 
+const (
+	D_STRING_TYPE = iota
+	D_BYTE_TYPE
+	D_INT_TYPE
+	D_INT64_TYPE
+	D_FLOAT64_TYPE
+)
+
 // Internal Delta Keys [NOT TO BE USED EXTERNALLY]
 const (
 	_ADDRESS_         = "tcp"
@@ -163,26 +171,13 @@ type Seed struct {
 //-------------------
 // Main cluster map for gossiping
 
-type DeltaStore interface {
-	Store(d Delta) error
-	Update(group, key string, d Delta) error
-	GetAll() []Delta
-}
-
-// Creating delta mapping to implement DeltaStore Interface
-
-type InMemoryDelta struct {
-	mu    *sync.Mutex
-	delta map[string]*Delta
-}
-
 type Delta struct {
 	index     int
-	keyGroup  string
-	key       string
-	version   int64
-	valueType byte   // This should be string, int, int64, float64 etc
-	value     []byte // Value should go last for easier de-serialisation
+	KeyGroup  string
+	Key       string
+	Version   int64
+	ValueType byte   // This should be string, int, int64, float64 etc
+	Value     []byte // Value should go last for easier de-serialisation
 	// Could add user defined metadata later on??
 }
 
@@ -355,10 +350,10 @@ func (dh *deltaHeap) Pop() any {
 func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 
 	if len(key) == 1 {
-		item.key = key[0]
+		item.Key = key[0]
 	}
 
-	item.version = version
+	item.Version = version
 
 	heap.Fix(dh, item.index)
 
@@ -379,50 +374,56 @@ func ParseDeltaKey(key string) (string, string) {
 
 // Store takes a delta value and stores in the participants own cluster map
 // Thread safe
-func (imd *InMemoryDelta) Store(d Delta) error {
+func (p *Participant) Store(d *Delta) error {
 
 	// We assume the delta is well-formed and correct
-	imd.mu.Lock()
-	defer imd.mu.Unlock()
 
-	compKey := MakeDeltaKey(d.keyGroup, d.key)
+	compKey := MakeDeltaKey(d.KeyGroup, d.Key)
 
-	if delta, exists := imd.delta[compKey]; exists {
+	if delta, exists := p.keyValues[compKey]; exists {
 
 		// If delta already exists we try to update
-		err := imd.Update(delta.keyGroup, delta.key, d)
+		err := p.Update(delta.KeyGroup, delta.Key, d)
 		if err != nil {
 			return err
 		}
 
+		return nil
+
 	} else {
-		imd.delta[compKey] = &d
+		p.pm.Lock()
+		p.keyValues[compKey] = d
+		p.pm.Unlock()
 		return nil
 	}
-
-	return fmt.Errorf("store delta failed")
 }
 
-func (imd *InMemoryDelta) Update(group, key string, d Delta) error {
+func (p *Participant) Update(group, key string, d *Delta) error {
 
-	imd.mu.Lock()
-	defer imd.mu.Unlock()
-
-	if delta, exists := imd.delta[MakeDeltaKey(group, key)]; exists {
+	if delta, exists := p.keyValues[MakeDeltaKey(group, key)]; exists {
 
 		// If either delta key or group is different, we need to dis-regard the update with an error
-		if d.keyGroup != delta.keyGroup || d.key != delta.key {
+		if d.KeyGroup != delta.KeyGroup || d.Key != delta.Key {
 			return fmt.Errorf("cannot update key or group - create new delta instead")
 		}
+		p.pm.Lock()
+		p.keyValues[MakeDeltaKey(group, key)] = d
+		p.pm.Unlock()
 
-		imd.delta[MakeDeltaKey(group, key)] = &d
+		return nil
 
 	} else {
 		return fmt.Errorf("delta not found - create new delta instead")
 	}
+}
 
-	return nil
+func (p *Participant) GetAll() map[string]*Delta {
+	return p.keyValues
+}
 
+func (p *Participant) Get(deltaKey string) (*Delta, error) {
+
+	return nil, nil
 }
 
 //=======================================================
@@ -471,10 +472,9 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 			for k, v := range d.keyValues {
 
 				if deltaV, exists := participant.keyValues[k]; exists {
-
-					if v.version > deltaV.version {
+					if v.Version > deltaV.Version {
 						participant.pm.Lock()
-						deltaV.version = v.version
+						deltaV.Version = v.Version
 						participant.pm.Unlock()
 					}
 
@@ -523,20 +523,20 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	// Deep copy each key-value pair
 	for k, v := range tmpP.keyValues {
 
-		valueByte := make([]byte, len(v.value))
-		copy(valueByte, v.value)
+		valueByte := make([]byte, len(v.Value))
+		copy(valueByte, v.Value)
 
-		if v.version > maxV {
-			maxV = v.version
+		if v.Version > maxV {
+			maxV = v.Version
 		}
 
 		newParticipant.keyValues[k] = &Delta{
 			index:     v.index,
-			keyGroup:  v.keyGroup,
-			key:       v.key,
-			valueType: v.valueType,
-			version:   v.version,
-			value:     valueByte, // Copy value slice
+			KeyGroup:  v.KeyGroup,
+			Key:       v.Key,
+			ValueType: v.ValueType,
+			Version:   v.Version,
+			Value:     valueByte, // Copy value slice
 		}
 	}
 
@@ -579,11 +579,11 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 
 			// If the address is not present then we add and let the value be updated along with the version during gossip
 			part.keyValues[addrKey] = &Delta{
-				key:       key,
-				keyGroup:  group,
-				valueType: ADDR_V,
-				version:   0,
-				value:     valueByte,
+				Key:       key,
+				KeyGroup:  group,
+				ValueType: ADDR_V,
+				Version:   0,
+				Value:     valueByte,
 			}
 		}
 
@@ -605,10 +605,10 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 		copy(valueByte, addrValue)
 
 		newParticipant.keyValues[addrKey] = &Delta{
-			key:       addrKey,
-			valueType: ADDR_V,
-			version:   0,
-			value:     valueByte,
+			Key:       addrKey,
+			ValueType: ADDR_V,
+			Version:   0,
+			Value:     valueByte,
 		}
 
 	}
@@ -954,14 +954,14 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			// TODO We also want to track and trace overloaded delta to see and monitor
 
-			overloaded := len(delta.value) > DEFAULT_MAX_DELTA_SIZE
+			overloaded := len(delta.Value) > DEFAULT_MAX_DELTA_SIZE
 
 			// Overloaded check and trace here (only if they are gossiped?)
 
 			heap.Push(&dh, &deltaQueue{
-				keyGroup: delta.keyGroup,
-				key:      delta.key,
-				version:  delta.version,
+				keyGroup: delta.KeyGroup,
+				key:      delta.Key,
+				version:  delta.Version,
 				overload: overloaded,
 			})
 
@@ -983,7 +983,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			delta := participant.keyValues[MakeDeltaKey(d.keyGroup, d.key)]
 			// Calc size to do a remaining check before committing to selecting
-			size := DELTA_META_SIZE + len(delta.keyGroup) + len(delta.key) + len(delta.value)
+			size := DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(delta.Value)
 
 			if size+sizeOfDelta > remaining {
 				break

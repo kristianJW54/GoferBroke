@@ -89,35 +89,35 @@ func int64ToBytes(n int64) []byte {
 }
 
 var keyValues1 = map[string]*Delta{
-	"TEST:key6":  {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-	"TEST:key7":  {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-	"TEST:key8":  {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-	"TEST:key9":  {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-	"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+	"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+	"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+	"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+	"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
 }
 
 var keyValues1LowerVersion = map[string]*Delta{
-	"TEST:key6":  {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-	"TEST:key7":  {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-	"TEST:key8":  {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995201, value: []byte("Test serialization with repeated values.")},
-	"TEST:key9":  {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995202, value: []byte("😃")},
-	"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995207, value: []byte("Another string")},
+	"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+	"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995201, Value: []byte("Test serialization with repeated values.")},
+	"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995202, Value: []byte("😃")},
+	"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("Another string")},
 }
 
 var addressTestingKVs = map[string]*Delta{
-	"address:tcp": {keyGroup: ADDR_DKG, key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
+	"address:tcp": {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: ADDR_V, Version: 1640995204, Value: []byte("127.0.0.1")},
 }
 
 var multipleAddressTestingKVs = map[string]*Delta{
-	"address:tcp":   {keyGroup: ADDR_DKG, key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
-	"address:CLOUD": {keyGroup: ADDR_DKG, key: "CLOUD", valueType: ADDR_V, version: 1640995204, value: []byte("137.184.248.0")},
-	"address:DNS":   {keyGroup: ADDR_DKG, key: "DNS", valueType: ADDR_V, version: 1640995204, value: []byte("example.com")},
+	"address:tcp":   {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: ADDR_V, Version: 1640995204, Value: []byte("127.0.0.1")},
+	"address:CLOUD": {KeyGroup: ADDR_DKG, Key: "CLOUD", ValueType: ADDR_V, Version: 1640995204, Value: []byte("137.184.248.0")},
+	"address:DNS":   {KeyGroup: ADDR_DKG, Key: "DNS", ValueType: ADDR_V, Version: 1640995204, Value: []byte("example.com")},
 }
 
 var keyValues2 = map[string]*Delta{
-	"address:tcp":        {keyGroup: ADDR_DKG, key: _ADDRESS_, valueType: ADDR_V, version: 1640995204, value: []byte("127.0.0.1")},
-	"address:NODE_CONNS": {keyGroup: ADDR_DKG, key: _NODE_CONNS_, valueType: NUM_NODE_CONN_V, version: 1640995205, value: []byte{0}},
-	"address:HEARTBEAT":  {keyGroup: ADDR_DKG, key: _HEARTBEAT_, valueType: HEARTBEAT_V, version: 1640995206, value: int64ToBytes(1640995206)},
+	"address:tcp":        {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: ADDR_V, Version: 1640995204, Value: []byte("127.0.0.1")},
+	"address:NODE_CONNS": {KeyGroup: ADDR_DKG, Key: _NODE_CONNS_, ValueType: NUM_NODE_CONN_V, Version: 1640995205, Value: []byte{0}},
+	"address:HEARTBEAT":  {KeyGroup: ADDR_DKG, Key: _HEARTBEAT_, ValueType: HEARTBEAT_V, Version: 1640995206, Value: int64ToBytes(1640995206)},
 }
 
 // TODO Make another one of these but with config
@@ -140,8 +140,8 @@ func GenerateDefaultTestServer(serverName string, kv map[string]*Delta, numParti
 	maxV := int64(0)
 
 	for _, value := range kv {
-		if value.version > maxV {
-			maxV = value.version
+		if value.Version > maxV {
+			maxV = value.Version
 		}
 	}
 
@@ -202,16 +202,16 @@ func GenerateDefaultTestServerWithDiff(serverName string, kv, diff map[string]*D
 	maxV := int64(0)
 
 	for _, value := range kv {
-		if value.version > maxV {
-			maxV = value.version
+		if value.Version > maxV {
+			maxV = value.Version
 		}
 	}
 
 	maxVDiff := int64(0)
 
 	for _, value := range diff {
-		if value.version > maxVDiff {
-			maxVDiff = value.version
+		if value.Version > maxVDiff {
+			maxVDiff = value.Version
 		}
 	}
 

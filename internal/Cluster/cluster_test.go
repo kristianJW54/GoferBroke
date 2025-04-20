@@ -1,6 +1,7 @@
 package Cluster
 
 import (
+	"bytes"
 	"container/heap"
 	"encoding/binary"
 	"fmt"
@@ -72,10 +73,10 @@ func TestBuildDelta(t *testing.T) {
 	// Build delta
 
 	var keyValues1 = map[string]*Delta{
-		"TEST:key6": {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995204, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"TEST:key7": {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-		"TEST:key8": {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"TEST:key9": {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
+		"TEST:key6": {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"TEST:key7": {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+		"TEST:key8": {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"TEST:key9": {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
 		//"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
 		//"TEST:key11": {keyGroup: "TEST", key: "key11", valueType: INTERNAL_D, version: 1640995209, value: []byte("This is test entry number eleven.")},
 		//"TEST:key12": {keyGroup: "TEST", key: "key12", valueType: INTERNAL_D, version: 1640995210, value: []byte("Entry twelve includes a longer message to check proper handling.")},
@@ -90,21 +91,21 @@ func TestBuildDelta(t *testing.T) {
 	}
 
 	var keyValues1Outdated = map[string]*Delta{
-		"TEST:key6":  {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995203, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"TEST:key7":  {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995204, value: []byte("A")},
-		"TEST:key8":  {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995205, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"TEST:key9":  {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995206, value: []byte("😃 Emoji support test.")},
-		"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995207, value: []byte("Another simple string.")},
-		"TEST:key11": {keyGroup: "TEST", key: "key11", valueType: INTERNAL_D, version: 1640995208, value: []byte("This is test entry number eleven.")},
-		"TEST:key12": {keyGroup: "TEST", key: "key12", valueType: INTERNAL_D, version: 1640995209, value: []byte("Entry twelve includes a longer message to check proper handling.")},
-		"TEST:key13": {keyGroup: "TEST", key: "key13", valueType: INTERNAL_D, version: 1640995210, value: []byte("Testing entry for key 13, which is designed to be unique.")},
-		"TEST:key14": {keyGroup: "TEST", key: "key14", valueType: INTERNAL_D, version: 1640995211, value: []byte("Another example message for the fourteenth key.")},
-		"TEST:key15": {keyGroup: "TEST", key: "key15", valueType: INTERNAL_D, version: 1640995212, value: []byte("The fifteenth key's entry demonstrates variety in test data.")},
-		"TEST:key16": {keyGroup: "TEST", key: "key16", valueType: INTERNAL_D, version: 1640995213, value: []byte("Testing with key16. Another sample text here.")},
-		"TEST:key17": {keyGroup: "TEST", key: "key17", valueType: INTERNAL_D, version: 1640995214, value: []byte("Key 17: A different message string to showcase the test entry.")},
-		"TEST:key18": {keyGroup: "TEST", key: "key18", valueType: INTERNAL_D, version: 1640995215, value: []byte("Eighteenth key value: a blend of letters and numbers: 1234567890.")},
-		"TEST:key19": {keyGroup: "TEST", key: "key19", valueType: INTERNAL_D, version: 1640995216, value: []byte("Entry number 19 uses special characters: !@#$%^&*()")},
-		"TEST:key20": {keyGroup: "TEST", key: "key20", valueType: INTERNAL_D, version: 1640995217, value: []byte("The final test key entry, providing closure for our sample.")},
+		"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995203, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("A")},
+		"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("😃 Emoji support test.")},
+		"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("Another simple string.")},
+		"TEST:key11": {KeyGroup: "TEST", Key: "key11", ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("This is test entry number eleven.")},
+		"TEST:key12": {KeyGroup: "TEST", Key: "key12", ValueType: INTERNAL_D, Version: 1640995209, Value: []byte("Entry twelve includes a longer message to check proper handling.")},
+		"TEST:key13": {KeyGroup: "TEST", Key: "key13", ValueType: INTERNAL_D, Version: 1640995210, Value: []byte("Testing entry for key 13, which is designed to be unique.")},
+		"TEST:key14": {KeyGroup: "TEST", Key: "key14", ValueType: INTERNAL_D, Version: 1640995211, Value: []byte("Another example message for the fourteenth key.")},
+		"TEST:key15": {KeyGroup: "TEST", Key: "key15", ValueType: INTERNAL_D, Version: 1640995212, Value: []byte("The fifteenth key's entry demonstrates variety in test data.")},
+		"TEST:key16": {KeyGroup: "TEST", Key: "key16", ValueType: INTERNAL_D, Version: 1640995213, Value: []byte("Testing with key16. Another sample text here.")},
+		"TEST:key17": {KeyGroup: "TEST", Key: "key17", ValueType: INTERNAL_D, Version: 1640995214, Value: []byte("Key 17: A different message string to showcase the test entry.")},
+		"TEST:key18": {KeyGroup: "TEST", Key: "key18", ValueType: INTERNAL_D, Version: 1640995215, Value: []byte("Eighteenth key value: a blend of letters and numbers: 1234567890.")},
+		"TEST:key19": {KeyGroup: "TEST", Key: "key19", ValueType: INTERNAL_D, Version: 1640995216, Value: []byte("Entry number 19 uses special characters: !@#$%^&*()")},
+		"TEST:key20": {KeyGroup: "TEST", Key: "key20", ValueType: INTERNAL_D, Version: 1640995217, Value: []byte("The final test key entry, providing closure for our sample.")},
 	}
 
 	gbs := GenerateDefaultTestServer("server-1", keyValues1, 10)
@@ -143,11 +144,11 @@ func TestDeltaHeap(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
 	var keyValues = map[string]*Delta{
-		"TEST:key6":  {keyGroup: "TEST", key: "key6", valueType: INTERNAL_D, version: 1640995203, value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"TEST:key7":  {keyGroup: "TEST", key: "key7", valueType: INTERNAL_D, version: 1640995205, value: []byte("A")},
-		"TEST:key8":  {keyGroup: "TEST", key: "key8", valueType: INTERNAL_D, version: 1640995206, value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"TEST:key9":  {keyGroup: "TEST", key: "key9", valueType: INTERNAL_D, version: 1640995207, value: []byte("😃 Emoji support test.")},
-		"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
+		"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995203, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
+		"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
 	}
 
 	dh := make(deltaHeap, 5)
@@ -156,9 +157,9 @@ func TestDeltaHeap(t *testing.T) {
 	for _, value := range keyValues {
 
 		dh[i] = &deltaQueue{
-			key:      value.key,
+			key:      value.Key,
 			overload: false,
-			version:  value.version,
+			version:  value.Version,
 			index:    i,
 		}
 		i++
@@ -200,8 +201,8 @@ func TestUpdateHeartBeat(t *testing.T) {
 	}
 
 	keyValues := map[string]*Delta{
-		"test:heartbeat": &Delta{keyGroup: TEST_DKG, valueType: INTERNAL_D, key: _HEARTBEAT_, version: 1640995200, value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
-		"test:tcp":       &Delta{keyGroup: TEST_DKG, valueType: INTERNAL_D, key: _ADDRESS_, version: 1640995200, value: []byte("127.0.0.0.1:8081")},
+		"test:heartbeat": &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
+		"test:tcp":       &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
 	}
 
 	participant := &Participant{
@@ -214,8 +215,8 @@ func TestUpdateHeartBeat(t *testing.T) {
 
 	// Now test update heartbeat function
 
-	self := mockServer.getSelfInfo()
-	heartbeatBytes := self.keyValues[_HEARTBEAT_].value
+	self := mockServer.GetSelfInfo()
+	heartbeatBytes := self.keyValues[_HEARTBEAT_].Value
 	heartbeatInt := int64(binary.BigEndian.Uint64(heartbeatBytes))
 
 	log.Printf("current heartbeat value = %v", heartbeatInt)
@@ -231,7 +232,7 @@ func TestUpdateHeartBeat(t *testing.T) {
 		return nil
 	})
 
-	heartbeatBytes = self.keyValues[_HEARTBEAT_].value
+	heartbeatBytes = self.keyValues[_HEARTBEAT_].Value
 	heartbeatInt = int64(binary.BigEndian.Uint64(heartbeatBytes))
 
 	log.Printf("update heartbeat time: %v", heartbeatInt)
@@ -263,8 +264,8 @@ func TestClusterMapLocks(t *testing.T) {
 	}
 
 	keyValues := map[string]*Delta{
-		"test:heartbeat": &Delta{keyGroup: TEST_DKG, valueType: INTERNAL_D, key: _HEARTBEAT_, version: 1640995200, value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
-		"test:tcp":       &Delta{keyGroup: TEST_DKG, valueType: INTERNAL_D, key: _ADDRESS_, version: 1640995200, value: []byte("127.0.0.0.1:8081")},
+		"test:heartbeat": &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
+		"test:tcp":       &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
 	}
 
 	participant := &Participant{
@@ -344,13 +345,13 @@ func TestGossSynAck(t *testing.T) {
 	now := time.Now().Unix()
 
 	node1KeyValues := map[string]*Delta{
-		"test:key1": &Delta{keyGroup: TEST_DKG, key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now, value: []byte("Try to gossip about me and see what happens")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
 	}
 
 	node2KeyValues := map[string]*Delta{
-		"test:key1": &Delta{keyGroup: TEST_DKG, key: "key1", valueType: STRING_V, version: now - 2, value: []byte("I am a delta blissfully")},
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now - 1, value: []byte("I Don't Like Gossipers")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now - 2, Value: []byte("I am a delta blissfully")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
 	}
 
 	node1 := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
@@ -386,7 +387,7 @@ func TestGossSynAck(t *testing.T) {
 	if newCd != nil {
 		for _, c := range newCd.delta {
 			for k, v := range c.keyValues {
-				log.Printf("key = %s value = %s", k, v.value)
+				log.Printf("key = %s value = %s", k, v.Value)
 			}
 		}
 	}
@@ -398,17 +399,17 @@ func TestGSATwoNodes(t *testing.T) {
 	now := time.Now().Unix()
 
 	node1KeyValues := map[string]*Delta{
-		"test:key1": &Delta{keyGroup: TEST_DKG, key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now, value: []byte("Try to gossip about me and see what happens")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
 	}
 
 	node2KeyValues := map[string]*Delta{
-		"test:key1": &Delta{keyGroup: TEST_DKG, key: "key1", valueType: STRING_V, version: now - 2, value: []byte("I am a delta blissfully")},
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now - 1, value: []byte("I Don't Like Gossipers")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now - 2, Value: []byte("I am a delta blissfully")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
 	}
 
 	node3KeyValues := map[string]*Delta{
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now - 4, value: []byte("One delta andy over here")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 4, Value: []byte("One delta andy over here")},
 	}
 
 	tests := []struct {
@@ -428,7 +429,7 @@ func TestGSATwoNodes(t *testing.T) {
 				gbs.clusterMap.participants["node-2"] = &Participant{
 					name:       "node-2",
 					keyValues:  node2KeyValues,
-					maxVersion: node2KeyValues["test:key2"].version,
+					maxVersion: node2KeyValues["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
@@ -442,7 +443,7 @@ func TestGSATwoNodes(t *testing.T) {
 				gbs.clusterMap.participants["node-1"] = &Participant{
 					name:       "node-1",
 					keyValues:  node1KeyValues,
-					maxVersion: node1KeyValues["test:key2"].version,
+					maxVersion: node1KeyValues["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
@@ -462,7 +463,7 @@ func TestGSATwoNodes(t *testing.T) {
 				gbs.clusterMap.participants["node-2"] = &Participant{
 					name:       "node-2",
 					keyValues:  node2KeyValues,
-					maxVersion: node2KeyValues["test:key2"].version,
+					maxVersion: node2KeyValues["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
@@ -470,7 +471,7 @@ func TestGSATwoNodes(t *testing.T) {
 				gbs.clusterMap.participants["node-3"] = &Participant{
 					name:       "node-3",
 					keyValues:  node3KeyValues,
-					maxVersion: node3KeyValues["test:key2"].version,
+					maxVersion: node3KeyValues["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-3")
@@ -485,7 +486,7 @@ func TestGSATwoNodes(t *testing.T) {
 				gbs.clusterMap.participants["node-1"] = &Participant{
 					name:       "node-1",
 					keyValues:  node1KeyValues,
-					maxVersion: node1KeyValues["test:key2"].version,
+					maxVersion: node1KeyValues["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
@@ -506,7 +507,7 @@ func TestGSATwoNodes(t *testing.T) {
 				gbs.clusterMap.participants["node-2"] = &Participant{
 					name:       "node-2",
 					keyValues:  node2KeyValues,
-					maxVersion: node2KeyValues["test:key2"].version,
+					maxVersion: node2KeyValues["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
@@ -522,7 +523,7 @@ func TestGSATwoNodes(t *testing.T) {
 				gbs.clusterMap.participants["node-1"] = &Participant{
 					name:       "node-1",
 					keyValues:  node1KeyValues,
-					maxVersion: node1KeyValues["test:key2"].version,
+					maxVersion: node1KeyValues["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
@@ -572,7 +573,7 @@ func TestGSATwoNodes(t *testing.T) {
 			if newCd != nil {
 				for _, c := range newCd.delta {
 					for k, v := range c.keyValues {
-						log.Printf("key = %s value = %s", k, v.value)
+						log.Printf("key = %s value = %s", k, v.Value)
 					}
 				}
 			}
@@ -602,21 +603,21 @@ func TestAddGSADeltaToMap(t *testing.T) {
 	now := time.Now().Unix()
 
 	node1KeyValues := map[string]*Delta{
-		"test:key1": &Delta{keyGroup: TEST_DKG, key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now, value: []byte("Try to gossip about me and see what happens")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
 	}
 
 	node2KeyValues := map[string]*Delta{
-		"test:key1": &Delta{keyGroup: TEST_DKG, key: "key1", valueType: STRING_V, version: now, value: []byte("I am a delta blissfully")},
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now, value: []byte("I Don't Like Gossipers")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("I Don't Like Gossipers")},
 	}
 
 	node3KeyValues := map[string]*Delta{
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now - 2, value: []byte("One delta andy over here - Im the newer version boi ;)")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 2, Value: []byte("One delta andy over here - Im the newer version boi ;)")},
 	}
 
 	node3KeyValuesOutdated := map[string]*Delta{
-		"test:key2": &Delta{keyGroup: TEST_DKG, key: "key2", valueType: STRING_V, version: now - 4, value: []byte("One delta andy over here")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 4, Value: []byte("One delta andy over here")},
 	}
 
 	// Node 1
@@ -626,7 +627,7 @@ func TestAddGSADeltaToMap(t *testing.T) {
 	gbs.clusterMap.participants["node-2"] = &Participant{
 		name:       "node-2",
 		keyValues:  node2KeyValues,
-		maxVersion: node2KeyValues["test:key2"].version,
+		maxVersion: node2KeyValues["test:key2"].Version,
 	}
 
 	gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
@@ -634,7 +635,7 @@ func TestAddGSADeltaToMap(t *testing.T) {
 	gbs.clusterMap.participants["node-3"] = &Participant{
 		name:       "node-3",
 		keyValues:  node3KeyValues,
-		maxVersion: node3KeyValues["test:key2"].version,
+		maxVersion: node3KeyValues["test:key2"].Version,
 	}
 
 	gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-3")
@@ -647,7 +648,7 @@ func TestAddGSADeltaToMap(t *testing.T) {
 	gbs2.clusterMap.participants["node-1"] = &Participant{
 		name:       "node-1",
 		keyValues:  node1KeyValues,
-		maxVersion: node1KeyValues["test:key2"].version,
+		maxVersion: node1KeyValues["test:key2"].Version,
 	}
 
 	gbs2.clusterMap.participantArray = append(gbs2.clusterMap.participantArray, "node-1")
@@ -655,7 +656,7 @@ func TestAddGSADeltaToMap(t *testing.T) {
 	gbs2.clusterMap.participants["node-3"] = &Participant{
 		name:       "node-3",
 		keyValues:  node3KeyValuesOutdated,
-		maxVersion: node3KeyValuesOutdated["test:key2"].version,
+		maxVersion: node3KeyValuesOutdated["test:key2"].Version,
 	}
 
 	gbs2.clusterMap.participantArray = append(gbs2.clusterMap.participantArray, "node-3")
@@ -694,7 +695,7 @@ func TestAddGSADeltaToMap(t *testing.T) {
 
 	keyCheck := gbs2.clusterMap.participants["node-3"].keyValues["test:key2"]
 
-	log.Printf("keyCheck: version %v - value %s", keyCheck.version, keyCheck.value)
+	log.Printf("keyCheck: version %v - value %s", keyCheck.Version, keyCheck.Value)
 
 }
 
@@ -766,14 +767,71 @@ func TestLiveGossip(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	if value, exists := gbs3.clusterMap.participants[gbs.ServerName].keyValues["test:TEST"]; exists {
-		log.Printf("%s - value: %s", gbs3.ServerName, string(value.value))
+		log.Printf("%s - value: %s", gbs3.ServerName, string(value.Value))
 	} else {
 		log.Printf("no value :(")
 	}
 	if value, exists := gbs3.clusterMap.participants[gbs.ServerName].keyValues["test:SECOND_TEST"]; exists {
-		log.Printf("%s - value: %s", gbs3.ServerName, string(value.value))
+		log.Printf("%s - value: %s", gbs3.ServerName, string(value.Value))
 	} else {
 		log.Printf("no value :(")
+	}
+
+}
+
+// Delta Handling Tests
+
+func TestAddAndUpdateDelta(t *testing.T) {
+
+	now := time.Now().Unix()
+
+	gbs := GenerateDefaultTestServer("test-server", keyValues1, 1)
+
+	deltaToADD := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       "test",
+		ValueType: STRING_V,
+		Value:     []byte("test string being added after"),
+		Version:   now,
+	}
+
+	self := gbs.GetSelfInfo()
+
+	// Add
+	err := self.Store(deltaToADD)
+	if err != nil {
+		t.Errorf("store delta failed: %v", err)
+	}
+
+	key := MakeDeltaKey(SYSTEM_DKG, deltaToADD.Key)
+
+	if _, exists := self.keyValues[key]; !exists {
+		t.Errorf("delta does not exist")
+	}
+
+	// Update
+
+	updatedValue := []byte("test string being added after - this has been updated")
+
+	deltaToUpdate := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       "test",
+		ValueType: STRING_V,
+		Value:     updatedValue,
+		Version:   now,
+	}
+
+	err = self.Update(SYSTEM_DKG, deltaToADD.Key, deltaToUpdate)
+	if err != nil {
+		t.Errorf("update delta failed: %v", err)
+	}
+
+	if delta, exists := self.keyValues[key]; !exists {
+		t.Errorf("delta does not exist")
+	} else {
+		if bytes.Compare(delta.Value, updatedValue) != 0 {
+			t.Errorf("delta value not updated")
+		}
 	}
 
 }
