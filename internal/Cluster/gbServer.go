@@ -723,7 +723,7 @@ func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachabilit
 		value:     []byte(addr),
 	}
 
-	p.keyValues[makeDeltaKey(addrDelta.keyGroup, addrDelta.key)] = addrDelta
+	p.keyValues[MakeDeltaKey(addrDelta.keyGroup, addrDelta.key)] = addrDelta
 
 	// Add the _REACHABLE_ delta
 	reachDelta := &Delta{
@@ -734,7 +734,7 @@ func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachabilit
 		value:     []byte{byte(int(reach))},
 	}
 
-	p.keyValues[makeDeltaKey(reachDelta.keyGroup, reachDelta.key)] = reachDelta
+	p.keyValues[MakeDeltaKey(reachDelta.keyGroup, reachDelta.key)] = reachDelta
 
 	// Add the _NODE_CONNS_ delta
 	numNodeConnBytes := make([]byte, 1)
@@ -746,7 +746,7 @@ func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachabilit
 		version:   t,
 		value:     numNodeConnBytes,
 	}
-	p.keyValues[makeDeltaKey(nodeConnsDelta.keyGroup, nodeConnsDelta.key)] = nodeConnsDelta
+	p.keyValues[MakeDeltaKey(nodeConnsDelta.keyGroup, nodeConnsDelta.key)] = nodeConnsDelta
 
 	// Add the _HEARTBEAT_ delta
 	heart := make([]byte, 8)
@@ -758,7 +758,7 @@ func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachabilit
 		version:   t,
 		value:     heart,
 	}
-	p.keyValues[makeDeltaKey(heartbeatDelta.keyGroup, heartbeatDelta.key)] = heartbeatDelta
+	p.keyValues[MakeDeltaKey(heartbeatDelta.keyGroup, heartbeatDelta.key)] = heartbeatDelta
 
 	return p
 
@@ -1028,7 +1028,7 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 
 func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
 
-	key := makeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)
+	key := MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)
 
 	binary.BigEndian.PutUint64(self.keyValues[key].value, uint64(timeOfUpdate))
 	self.pm.Lock()

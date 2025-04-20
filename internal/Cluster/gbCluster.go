@@ -163,7 +163,18 @@ type Seed struct {
 //-------------------
 // Main cluster map for gossiping
 
-// TODO Need to majorly optimise cluster map for reduced memory - fast lookup and sorted storing
+type DeltaStore interface {
+	Store(d Delta) error
+	Update(group, key string, d Delta) error
+	GetAll() []Delta
+}
+
+// Creating delta mapping to implement DeltaStore Interface
+
+type InMemoryDelta struct {
+	mu    *sync.Mutex
+	delta map[string]*Delta
+}
 
 type Delta struct {
 	index     int
@@ -196,7 +207,8 @@ type connectionMetaData struct {
 type deltaHeap []*deltaQueue
 
 type Participant struct {
-	name        string            // Possibly can remove
+	name string
+	// Will be changing to delta store interface
 	keyValues   map[string]*Delta // composite key - flattened -> group:key
 	connection  *connectionMetaData
 	paDetection *phiAccrual
@@ -353,17 +365,69 @@ func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 }
 
 //=======================================================
-// Cluster Map Handling
+// Delta Handling
 //=======================================================
 
-func makeDeltaKey(group, key string) string {
+func MakeDeltaKey(group, key string) string {
 	return fmt.Sprintf("%s:%s", group, key)
 }
 
-func parseDeltaKey(key string) (string, string) {
+func ParseDeltaKey(key string) (string, string) {
 	parts := strings.Split(key, ":")
 	return parts[0], parts[1]
 }
+
+// Store takes a delta value and stores in the participants own cluster map
+// Thread safe
+func (imd *InMemoryDelta) Store(d Delta) error {
+
+	// We assume the delta is well-formed and correct
+	imd.mu.Lock()
+	defer imd.mu.Unlock()
+
+	compKey := MakeDeltaKey(d.keyGroup, d.key)
+
+	if delta, exists := imd.delta[compKey]; exists {
+
+		// If delta already exists we try to update
+		err := imd.Update(delta.keyGroup, delta.key, d)
+		if err != nil {
+			return err
+		}
+
+	} else {
+		imd.delta[compKey] = &d
+		return nil
+	}
+
+	return fmt.Errorf("store delta failed")
+}
+
+func (imd *InMemoryDelta) Update(group, key string, d Delta) error {
+
+	imd.mu.Lock()
+	defer imd.mu.Unlock()
+
+	if delta, exists := imd.delta[MakeDeltaKey(group, key)]; exists {
+
+		// If either delta key or group is different, we need to dis-regard the update with an error
+		if d.keyGroup != delta.keyGroup || d.key != delta.key {
+			return fmt.Errorf("cannot update key or group - create new delta instead")
+		}
+
+		imd.delta[MakeDeltaKey(group, key)] = &d
+
+	} else {
+		return fmt.Errorf("delta not found - create new delta instead")
+	}
+
+	return nil
+
+}
+
+//=======================================================
+// Cluster Map Handling
+//=======================================================
 
 //---------------------
 
@@ -511,7 +575,7 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 			valueByte := make([]byte, len(addrValue))
 			copy(valueByte, addrValue)
 
-			key, group := parseDeltaKey(addrKey)
+			key, group := ParseDeltaKey(addrKey)
 
 			// If the address is not present then we add and let the value be updated along with the version during gossip
 			part.keyValues[addrKey] = &Delta{
@@ -917,7 +981,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			d := heap.Pop(&dh).(*deltaQueue)
 
-			delta := participant.keyValues[makeDeltaKey(d.keyGroup, d.key)]
+			delta := participant.keyValues[MakeDeltaKey(d.keyGroup, d.key)]
 			// Calc size to do a remaining check before committing to selecting
 			size := DELTA_META_SIZE + len(delta.keyGroup) + len(delta.key) + len(delta.value)
 

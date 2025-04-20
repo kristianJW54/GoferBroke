@@ -319,7 +319,7 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 
 		for _, p := range keys {
 
-			addrKey := makeDeltaKey(ADDR_DKG, p)
+			addrKey := MakeDeltaKey(ADDR_DKG, p)
 
 			value := cm.participants[name].keyValues[addrKey].value
 			length += 5 + len(p) + len(value) // Metadata (key size, value size) + length of key + length value
@@ -361,7 +361,7 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 
 		for _, p := range part {
 
-			addrKey := makeDeltaKey(ADDR_DKG, p)
+			addrKey := MakeDeltaKey(ADDR_DKG, p)
 
 			value := cm.participants[name].keyValues[addrKey]
 
@@ -638,7 +638,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 			end := start + keyLen
 
 			key := string(delta[start:end])
-			newKey := makeDeltaKey(keyGroup, key)
+			newKey := MakeDeltaKey(keyGroup, key)
 
 			offset += 1
 			offset += keyLen
@@ -739,7 +739,7 @@ func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 			end := start + keyLen
 
 			key := string(delta[start:end])
-			newKey := makeDeltaKey(keyGroup, key)
+			newKey := MakeDeltaKey(keyGroup, key)
 
 			offset += 1
 			offset += keyLen

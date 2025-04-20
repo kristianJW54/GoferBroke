@@ -305,7 +305,6 @@ func (s *GBServer) warmUpCheck(participant *Participant, array []int64) []int64 
 		// In warm-up phase: return a small padded window
 		warmupBucket := participant.paDetection.warmupBucket
 		sliceSize := warmupBucket + 10
-		log.Printf("slice size = %v", sliceSize)
 		if sliceSize > len(array) {
 			sliceSize = len(array)
 		}

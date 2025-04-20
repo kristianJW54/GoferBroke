@@ -182,7 +182,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	s.clusterMapLock.RLock()
 	participant := s.clusterMap.participants[node]
 
-	addrKey := makeDeltaKey(ADDR_DKG, _ADDRESS_)
+	addrKey := MakeDeltaKey(ADDR_DKG, _ADDRESS_)
 
 	var addr []byte
 

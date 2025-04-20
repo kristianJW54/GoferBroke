@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/kristianJW54/GoferBroke/pkg/gossip"
 	"time"
 )
@@ -78,7 +79,7 @@ func main() {
 	// nodes in the cluster are available
 
 	// Create node-2 config which would be in a new application instance
-	node1Config2 := &gossip.NodeConfig{
+	node2Config := &gossip.NodeConfig{
 		Name:        "node",
 		ID:          2,
 		Host:        "localhost",
@@ -87,13 +88,13 @@ func main() {
 		ClientPort:  "8083",
 	}
 
-	err = node1Config2.InitConfig()
+	err = node2Config.InitConfig()
 	if err != nil {
 		panic(err)
 	}
 
-	// Now we create our node-1
-	node2, err := gossip.NewNodeFromConfig(clusterConfig, node1Config2)
+	// Now we create our node-2
+	node2, err := gossip.NewNodeFromConfig(clusterConfig, node2Config)
 	if err != nil {
 		panic(err)
 	}
@@ -104,5 +105,9 @@ func main() {
 	node2.Stop()
 	time.Sleep(1 * time.Second)
 	node1.Stop()
+
+	time.Sleep(1 * time.Second)
+
+	fmt.Println("end of example")
 
 }
