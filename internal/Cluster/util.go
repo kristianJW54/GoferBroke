@@ -88,6 +88,10 @@ func int64ToBytes(n int64) []byte {
 	return buf
 }
 
+var heartBeatKV = map[string]*Delta{
+	MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_): {KeyGroup: SYSTEM_DKG, Key: _HEARTBEAT_, ValueType: D_INT64_TYPE, Version: 1640995204, Value: int64ToBytes(1640995204)},
+}
+
 var keyValues1 = map[string]*Delta{
 	"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
 	"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
@@ -135,6 +139,15 @@ func GenerateDefaultTestServer(serverName string, kv map[string]*Delta, numParti
 			participantArray: make([]string, numParticipants),
 		},
 		ServerName: serverName,
+		gbClusterConfig: &GbClusterConfig{
+			SeedServers: []Seeds{
+				{},
+			},
+			Cluster: &ClusterOptions{},
+		},
+		gbNodeConfig: &GbNodeConfig{
+			Internal: &InternalOptions{},
+		},
 	}
 
 	maxV := int64(0)

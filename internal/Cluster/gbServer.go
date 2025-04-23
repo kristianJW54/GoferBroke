@@ -190,6 +190,9 @@ type GBServer struct {
 	canBeRendezvous bool // TODO Change to reachable state machine
 	discoveryPhase  bool
 
+	//Events
+	event *EventDispatcher
+
 	flags serverFlags
 
 	listener           net.Listener
@@ -289,6 +292,10 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 	srvName := serverID.String()
 
 	// Creation steps
+
+	// Build EventDispatcher
+	ed := NewEventDispatcher()
+
 	// Gather server metrics
 
 	// Config setup //TODO
@@ -312,6 +319,8 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 		boundTCPAddr:  nodeTCPAddr,
 		clientTCPAddr: clientAddr,
 		reachability:  1,
+
+		event: ed,
 
 		listenConfig:        lc,
 		serverContext:       ctx,
@@ -1030,10 +1039,17 @@ func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
 
 	key := MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)
 
-	binary.BigEndian.PutUint64(self.keyValues[key].Value, uint64(timeOfUpdate))
-	self.pm.Lock()
-	self.keyValues[key].Version = timeOfUpdate
-	self.pm.Unlock()
+	if addr, exists := self.keyValues[key]; exists {
+
+		binary.BigEndian.PutUint64(addr.Value, uint64(timeOfUpdate))
+
+		self.pm.Lock()
+		self.keyValues[key].Version = timeOfUpdate
+		self.pm.Unlock()
+
+	} else {
+		return fmt.Errorf("no heartbeat delta")
+	}
 
 	return nil
 

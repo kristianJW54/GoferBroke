@@ -239,6 +239,7 @@ func TestUpdateHeartBeat(t *testing.T) {
 
 }
 
+// Good test - keep
 func TestClusterMapLocks(t *testing.T) {
 
 	// To test cluster map locks under high concurrency by having worker routines reading cluster map,
@@ -248,33 +249,7 @@ func TestClusterMapLocks(t *testing.T) {
 	// Tasks should be: Add participant, read cluster map, update cluster map, update self info
 
 	// Initialize config with the seed server address
-	config := &GbClusterConfig{
-		SeedServers: []Seeds{
-			{},
-		},
-		Cluster: &ClusterOptions{},
-	}
-
-	mockServer := &GBServer{
-		ServerName: "mock-server-1",
-		clusterMap: ClusterMap{
-			participants: make(map[string]*Participant, 1),
-		},
-		gbClusterConfig: config,
-	}
-
-	keyValues := map[string]*Delta{
-		"test:heartbeat": &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
-		"test:tcp":       &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
-	}
-
-	participant := &Participant{
-		name:       mockServer.ServerName,
-		keyValues:  keyValues,
-		maxVersion: 1640995200,
-	}
-
-	mockServer.clusterMap.participants[mockServer.ServerName] = participant
+	mockServer := GenerateDefaultTestServer("mock-server", heartBeatKV, 1)
 
 	// Concurrency settings
 	numWorkers := 10
@@ -293,7 +268,6 @@ func TestClusterMapLocks(t *testing.T) {
 	readClusterMap := func() {
 		mockServer.clusterMapLock.RLock()
 		defer mockServer.clusterMapLock.RUnlock()
-		log.Printf("[Task] Reading cluster map")
 	}
 
 	updateSelfInfo := func() {
@@ -308,7 +282,7 @@ func TestClusterMapLocks(t *testing.T) {
 
 	addParticipant := func() {
 		tmp := &tmpParticipant{
-			keyValues: keyValues,
+			keyValues: keyValues1,
 		}
 		err := mockServer.addParticipantFromTmp("participant", tmp)
 		if err != nil {
@@ -339,61 +313,7 @@ func TestClusterMapLocks(t *testing.T) {
 
 }
 
-// Use for output testing not actual testing
-func TestGossSynAck(t *testing.T) {
-
-	now := time.Now().Unix()
-
-	node1KeyValues := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
-	}
-
-	node2KeyValues := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now - 2, Value: []byte("I am a delta blissfully")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
-	}
-
-	node1 := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
-	node2 := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
-
-	// Generate a digest from the lower version node
-	d, _, err := node2.generateDigest()
-	if err != nil {
-		t.Errorf("generate digest failed: %v", err)
-	}
-
-	name, fd, err := deSerialiseDigest(d)
-	if err != nil {
-		t.Errorf("deSerialise digest failed: %v", err)
-	}
-
-	// Prepare GSA
-	gsa, err := node1.prepareGossSynAck(name, fd)
-	if err != nil {
-		t.Errorf("prepareGossSynAck failed: %v", err)
-	}
-
-	newName, newFd, newCd, err := deserialiseGSA(gsa)
-	if err != nil {
-		t.Errorf("deserialise GSA failed: %v", err)
-	}
-
-	log.Printf("name = %s", newName)
-	for _, f := range *newFd {
-		log.Printf("digest check = %+v", f)
-	}
-
-	if newCd != nil {
-		for _, c := range newCd.delta {
-			for k, v := range c.keyValues {
-				log.Printf("key = %s value = %s", k, v.Value)
-			}
-		}
-	}
-
-}
-
+// Deep copy helper
 func cloneKeyValues(src map[string]*Delta) map[string]*Delta {
 	dst := make(map[string]*Delta, len(src))
 	for k, v := range src {
@@ -404,6 +324,7 @@ func cloneKeyValues(src map[string]*Delta) map[string]*Delta {
 	return dst
 }
 
+// Good test - keep
 func TestGSATwoNodes(t *testing.T) {
 
 	now := time.Now().Unix()
@@ -560,24 +481,15 @@ func TestGSATwoNodes(t *testing.T) {
 				t.Errorf("deSerialise digest failed: %v", err)
 			}
 
-			for _, dv := range *fd {
-				log.Printf("node 2 ---> digest sent = %+v", dv)
-			}
-
 			// Prepare GSA
 			gsa, err := tt.node1.prepareGossSynAck(name, fd)
 			if err != nil {
 				t.Errorf("prepareGossSynAck failed: %v", err)
 			}
 
-			sender, newFd, newCd, err := deserialiseGSA(gsa)
+			_, newFd, newCd, err := deserialiseGSA(gsa)
 			if err != nil {
 				t.Errorf("deserialise GSA failed: %v", err)
-			}
-
-			log.Printf("%s received ------> name = %s", tt.node1.name, sender)
-			for _, fdValue := range *newFd {
-				log.Printf("digest check = %+v", fdValue)
 			}
 
 			if newCd != nil {
@@ -588,10 +500,17 @@ func TestGSATwoNodes(t *testing.T) {
 				}
 
 				// Delta assertions
-				for _, parts := range tt.node2.clusterMap.participants {
-					for _, v := range parts.keyValues {
-						log.Printf("value for %s - %s", parts.name, v.Value)
+				for name, parts := range tt.node2.clusterMap.participants {
+					if name != tt.node1.clusterMap.participants[name].name {
+						t.Errorf("participant name does not match - got %s - want %s", name, tt.node1.clusterMap.participants[name].name)
 					}
+
+					for k, v := range parts.keyValues {
+						if !bytes.Equal(v.Value, tt.node1.clusterMap.participants[name].keyValues[k].Value) {
+							t.Errorf("value does not match - got %s - want %s", v.Value, tt.node1.clusterMap.participants[name].keyValues[k].Value)
+						}
+					}
+
 				}
 
 			}

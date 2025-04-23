@@ -475,10 +475,22 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 			// Use the locking strategy to lock participant in order to update
 			for k, v := range d.keyValues {
 
+				de := &DeltaUpdateEvent{
+					DeltaKey: k,
+				}
+
 				// We get our own participants view of the participant in our map and update it
 				err := participant.Update(v.KeyGroup, v.Key, v, func(toBeUpdated, by *Delta) {
 					if by.Version > toBeUpdated.Version {
-						*toBeUpdated = *by
+
+						de.PreviousVersion = toBeUpdated.Version
+						de.PreviousValue = bytes.Clone(toBeUpdated.Value)
+
+						*toBeUpdated = *by // Shallow copy - Ok as by won't be used elsewhere - it is what was received on the wire
+
+						de.CurrentVersion = toBeUpdated.Version
+						de.CurrentValue = bytes.Clone(toBeUpdated.Value)
+
 					}
 				})
 
@@ -512,6 +524,12 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 				}
 
 				// Event call for delta updated
+				s.DispatchEvent(Event{
+					DeltaUpdated,
+					time.Now().Unix(),
+					de,
+					"Delta updated",
+				})
 
 			}
 		} else {
@@ -595,7 +613,7 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 		part := s.clusterMap.participants[name]
 
 		for addrKey, addrValue := range disc.addr {
-			log.Printf("address key == %v", addrKey)
+
 			if _, exist := part.keyValues[addrKey]; exist {
 
 				//Clear reference to discovery for faster GC collection
@@ -1024,7 +1042,6 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			sizeOfDelta += size
 
 			deltaList = append(deltaList, delta)
-			log.Printf("adding delta %s - with value %s - version %v", delta.Key, delta.Value, delta.Version)
 
 		}
 
