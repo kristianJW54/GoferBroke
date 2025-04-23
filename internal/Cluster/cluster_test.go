@@ -394,21 +394,31 @@ func TestGossSynAck(t *testing.T) {
 
 }
 
+func cloneKeyValues(src map[string]*Delta) map[string]*Delta {
+	dst := make(map[string]*Delta, len(src))
+	for k, v := range src {
+		copys := *v
+		copys.Value = append([]byte(nil), v.Value...) // clone []byte
+		dst[k] = &copys
+	}
+	return dst
+}
+
 func TestGSATwoNodes(t *testing.T) {
 
 	now := time.Now().Unix()
 
-	node1KeyValues := map[string]*Delta{
+	newer := map[string]*Delta{
 		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
 		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
 	}
 
-	node2KeyValues := map[string]*Delta{
+	outdated := map[string]*Delta{
 		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now - 2, Value: []byte("I am a delta blissfully")},
 		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
 	}
 
-	node3KeyValues := map[string]*Delta{
+	brandNew := map[string]*Delta{
 		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 4, Value: []byte("One delta andy over here")},
 	}
 
@@ -421,15 +431,15 @@ func TestGSATwoNodes(t *testing.T) {
 		digestCount      int
 	}{
 		{
-			name: "baseline test - two nodes with both in map",
+			name: "baseline test - two nodes with node-2 having outdated values of node-1 = node-1 should gossip newer",
 			node1: func() *GBServer {
 
-				gbs := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+				gbs := GenerateDefaultTestServer("node-1", newer, 1)
 
 				gbs.clusterMap.participants["node-2"] = &Participant{
 					name:       "node-2",
-					keyValues:  node2KeyValues,
-					maxVersion: node2KeyValues["test:key2"].Version,
+					keyValues:  outdated,
+					maxVersion: outdated["test:key2"].Version - 2,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
@@ -438,12 +448,12 @@ func TestGSATwoNodes(t *testing.T) {
 			}(),
 			node2: func() *GBServer {
 
-				gbs := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
+				gbs := GenerateDefaultTestServer("node-2", outdated, 1)
 
 				gbs.clusterMap.participants["node-1"] = &Participant{
 					name:       "node-1",
-					keyValues:  node1KeyValues,
-					maxVersion: node1KeyValues["test:key2"].Version,
+					keyValues:  cloneKeyValues(outdated), // ✅ deep copy avoids shared pointer problem
+					maxVersion: outdated["test:key2"].Version - 2,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
@@ -452,26 +462,26 @@ func TestGSATwoNodes(t *testing.T) {
 
 			}(),
 			shouldHaveDelta:  false,
-			participantCount: 0,
+			participantCount: 2,
 			digestCount:      2,
 		},
 		{
 			name: "node-1 has an extra participant that node-2 doesn't know about",
 			node1: func() *GBServer {
 
-				gbs := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+				gbs := GenerateDefaultTestServer("node-1", newer, 1)
 				gbs.clusterMap.participants["node-2"] = &Participant{
 					name:       "node-2",
-					keyValues:  node2KeyValues,
-					maxVersion: node2KeyValues["test:key2"].Version,
+					keyValues:  outdated,
+					maxVersion: outdated["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
 
 				gbs.clusterMap.participants["node-3"] = &Participant{
 					name:       "node-3",
-					keyValues:  node3KeyValues,
-					maxVersion: node3KeyValues["test:key2"].Version,
+					keyValues:  brandNew,
+					maxVersion: brandNew["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-3")
@@ -481,12 +491,12 @@ func TestGSATwoNodes(t *testing.T) {
 			}(),
 			node2: func() *GBServer {
 
-				gbs := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
+				gbs := GenerateDefaultTestServer("node-2", outdated, 1)
 
 				gbs.clusterMap.participants["node-1"] = &Participant{
 					name:       "node-1",
-					keyValues:  node1KeyValues,
-					maxVersion: node1KeyValues["test:key2"].Version,
+					keyValues:  cloneKeyValues(outdated),
+					maxVersion: outdated["test:key2"].Version - 2,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
@@ -495,19 +505,19 @@ func TestGSATwoNodes(t *testing.T) {
 
 			}(),
 			shouldHaveDelta:  true,
-			participantCount: 1,
+			participantCount: 3,
 			digestCount:      3,
 		},
 		{
 			name: "node-2 will have a lesser max version to node-1",
 			node1: func() *GBServer {
 
-				gbs := GenerateDefaultTestServer("node-1", node1KeyValues, 0)
+				gbs := GenerateDefaultTestServer("node-1", newer, 1)
 
 				gbs.clusterMap.participants["node-2"] = &Participant{
 					name:       "node-2",
-					keyValues:  node2KeyValues,
-					maxVersion: node2KeyValues["test:key2"].Version,
+					keyValues:  outdated,
+					maxVersion: outdated["test:key2"].Version,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-2")
@@ -517,13 +527,13 @@ func TestGSATwoNodes(t *testing.T) {
 			}(),
 			node2: func() *GBServer {
 
-				gbs := GenerateDefaultTestServer("node-2", node2KeyValues, 0)
+				gbs := GenerateDefaultTestServer("node-2", outdated, 1)
 				gbs.clusterMap.participants[gbs.ServerName].maxVersion = now - 2
 
 				gbs.clusterMap.participants["node-1"] = &Participant{
 					name:       "node-1",
-					keyValues:  node1KeyValues,
-					maxVersion: node1KeyValues["test:key2"].Version,
+					keyValues:  newer,
+					maxVersion: newer["test:key2"].Version - 2,
 				}
 
 				gbs.clusterMap.participantArray = append(gbs.clusterMap.participantArray, "node-1")
@@ -532,7 +542,7 @@ func TestGSATwoNodes(t *testing.T) {
 
 			}(),
 			shouldHaveDelta:  false,
-			participantCount: 0,
+			participantCount: 2,
 			digestCount:      2,
 		},
 	}
@@ -571,11 +581,19 @@ func TestGSATwoNodes(t *testing.T) {
 			}
 
 			if newCd != nil {
-				for _, c := range newCd.delta {
-					for k, v := range c.keyValues {
-						log.Printf("key = %s value = %s", k, v.Value)
+
+				err = tt.node2.addGSADeltaToMap(newCd)
+				if err != nil {
+					t.Errorf("addGSADeltaToMap failed: %v", err)
+				}
+
+				// Delta assertions
+				for _, parts := range tt.node2.clusterMap.participants {
+					for _, v := range parts.keyValues {
+						log.Printf("value for %s - %s", parts.name, v.Value)
 					}
 				}
+
 			}
 
 			// Test assertions
@@ -589,8 +607,8 @@ func TestGSATwoNodes(t *testing.T) {
 			}
 
 			if newCd != nil {
-				if len(newCd.delta) != tt.participantCount {
-					t.Errorf("should have %d participants, got %d", tt.participantCount, len(newCd.delta))
+				if len(tt.node2.clusterMap.participantArray) != tt.participantCount {
+					t.Errorf("should have %d participants, got %d", tt.participantCount, len(tt.node2.clusterMap.participantArray))
 				}
 			}
 
@@ -598,6 +616,7 @@ func TestGSATwoNodes(t *testing.T) {
 	}
 }
 
+// Test is good to keep
 func TestAddGSADeltaToMap(t *testing.T) {
 
 	now := time.Now().Unix()
@@ -672,10 +691,6 @@ func TestAddGSADeltaToMap(t *testing.T) {
 		t.Errorf("deSerialise digest failed: %v", err)
 	}
 
-	for _, dv := range *fd {
-		log.Printf("digest sent = %+v", dv)
-	}
-
 	// Prepare GSA
 	gsa, err := gbs.prepareGossSynAck(name, fd)
 	if err != nil {
@@ -695,9 +710,15 @@ func TestAddGSADeltaToMap(t *testing.T) {
 
 	keyCheck := gbs2.clusterMap.participants["node-3"].keyValues["test:key2"]
 
-	log.Printf("keyCheck: version %v - value %s", keyCheck.Version, keyCheck.Value)
+	if !bytes.Equal(keyCheck.Value, node3KeyValues["test:key2"].Value) {
+		t.Errorf("gbs2 did not recieve the updated delta values from gbs - got %v, expected %v", keyCheck.Value, node3KeyValues["test:key2"].Value)
+	}
+
+	//log.Printf("keyCheck: version %v - value %s", keyCheck.Version, keyCheck.Value)
 
 }
+
+// Test Add GSA To Map error handling
 
 func TestLiveGossip(t *testing.T) {
 
@@ -821,10 +842,14 @@ func TestAddAndUpdateDelta(t *testing.T) {
 		Version:   now,
 	}
 
-	err = self.Update(SYSTEM_DKG, deltaToADD.Key, deltaToUpdate)
+	err = self.Update(SYSTEM_DKG, deltaToADD.Key, deltaToUpdate, func(toBeUpdated, by *Delta) {
+		*toBeUpdated = *by
+	})
 	if err != nil {
 		t.Errorf("update delta failed: %v", err)
 	}
+
+	log.Printf("delta = %s", self.keyValues[key].Value)
 
 	if delta, exists := self.keyValues[key]; !exists {
 		t.Errorf("delta does not exist")

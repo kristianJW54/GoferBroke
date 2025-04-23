@@ -335,6 +335,9 @@ const (
 	GOSS_ACK_CODE               = 62
 	NODE_NOT_FOUND_CODE         = 63
 	CLUSTER_CONFIG_CODE         = 64
+	DELTA_UPDATE_NO_DELTA_CODE  = 65
+	DELTA_UPDATE_KEY_CODE       = 66
+	ADD_GSA_DELTA_CODE          = 67
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -364,6 +367,9 @@ var KnownInternalErrors = map[int]*GBError{
 	GOSS_ACK_CODE:               &GBError{Code: GOSS_ACK_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "goss ack error"},
 	NODE_NOT_FOUND_CODE:         &GBError{Code: NODE_NOT_FOUND_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "node not found in cluster map"},
 	CLUSTER_CONFIG_CODE:         &GBError{Code: CLUSTER_CONFIG_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "seed config error"},
+	DELTA_UPDATE_NO_DELTA_CODE:  &GBError{Code: DELTA_UPDATE_NO_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - no delta found"},
+	DELTA_UPDATE_KEY_CODE:       &GBError{Code: DELTA_UPDATE_KEY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - keyGroup or Key cannot be changed"},
+	ADD_GSA_DELTA_CODE:          &GBError{Code: ADD_GSA_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error adding GSA delta to map"},
 }
 
 var (
@@ -375,6 +381,9 @@ var (
 	GossAckErr              = KnownInternalErrors[GOSS_ACK_CODE]
 	NodeNotFoundErr         = KnownInternalErrors[NODE_NOT_FOUND_CODE]
 	ClusterConfigErr        = KnownInternalErrors[CLUSTER_CONFIG_CODE]
+	DeltaUpdateNoDeltaErr   = KnownInternalErrors[DELTA_UPDATE_NO_DELTA_CODE]
+	DeltaUpdateKeyErr       = KnownInternalErrors[DELTA_UPDATE_KEY_CODE]
+	AddGSAErr               = KnownInternalErrors[ADD_GSA_DELTA_CODE]
 )
 
 var (

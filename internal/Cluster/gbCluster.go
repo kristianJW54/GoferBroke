@@ -383,7 +383,9 @@ func (p *Participant) Store(d *Delta) error {
 	if delta, exists := p.keyValues[compKey]; exists {
 
 		// If delta already exists we try to update
-		err := p.Update(delta.KeyGroup, delta.Key, d)
+		err := p.Update(delta.KeyGroup, delta.Key, d, func(toBeUpdated, by *Delta) {
+			*toBeUpdated = *by
+		})
 		if err != nil {
 			return err
 		}
@@ -398,22 +400,22 @@ func (p *Participant) Store(d *Delta) error {
 	}
 }
 
-func (p *Participant) Update(group, key string, d *Delta) error {
+func (p *Participant) Update(group, key string, d *Delta, update func(toBeUpdated, by *Delta)) error {
 
 	if delta, exists := p.keyValues[MakeDeltaKey(group, key)]; exists {
 
 		// If either delta key or group is different, we need to dis-regard the update with an error
 		if d.KeyGroup != delta.KeyGroup || d.Key != delta.Key {
-			return fmt.Errorf("cannot update key or group - create new delta instead")
+			return Errors.DeltaUpdateKeyErr
 		}
 		p.pm.Lock()
-		p.keyValues[MakeDeltaKey(group, key)] = d
+		update(delta, d)
 		p.pm.Unlock()
 
 		return nil
 
 	} else {
-		return fmt.Errorf("delta not found - create new delta instead")
+		return Errors.DeltaUpdateNoDeltaErr
 	}
 }
 
@@ -466,23 +468,51 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 		if name == s.ServerName {
 			continue
 		}
+
 		if participant, exists := cm[name]; exists {
+
 			// Here we have a participant with values we need to update for our map
 			// Use the locking strategy to lock participant in order to update
 			for k, v := range d.keyValues {
 
-				if deltaV, exists := participant.keyValues[k]; exists {
-					if v.Version > deltaV.Version {
+				// We get our own participants view of the participant in our map and update it
+				err := participant.Update(v.KeyGroup, v.Key, v, func(toBeUpdated, by *Delta) {
+					if by.Version > toBeUpdated.Version {
+						*toBeUpdated = *by
+					}
+				})
+
+				// We need to handle the error from the update delta method
+				// If we receive no delta found GBError then we know to add as new delta
+				// Any other error we know to return
+				if err != nil {
+					handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
+
+						if gbError[0] != nil {
+							return gbError[0]
+						} else {
+							return err
+						}
+
+					})
+
+					// If the error is no delta found then it is a new delta we must add
+					if errors.Is(handledErr, Errors.DeltaUpdateNoDeltaErr) {
 						participant.pm.Lock()
-						deltaV.Version = v.Version
+						log.Printf("error = %v - storing new delta", handledErr)
+						participant.keyValues[k] = v
 						participant.pm.Unlock()
+
+						// Event call for new delta added
+
+					} else {
+						return Errors.WrapGBError(Errors.AddGSAErr, err)
 					}
 
-				} else {
-					participant.pm.Lock()
-					participant.keyValues[k] = v
-					participant.pm.Unlock()
 				}
+
+				// Event call for delta updated
+
 			}
 		} else {
 
@@ -491,6 +521,8 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 			if err != nil {
 				return err
 			}
+
+			// Event call for new participant added
 
 		}
 	}
@@ -992,6 +1024,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			sizeOfDelta += size
 
 			deltaList = append(deltaList, delta)
+			log.Printf("adding delta %s - with value %s - version %v", delta.Key, delta.Value, delta.Version)
 
 		}
 

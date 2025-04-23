@@ -90,7 +90,7 @@ func (s *GBServer) increaseWarmupBucket(participant *Participant) {
 		participant.paDetection.warmupBucket++
 	}
 
-	log.Printf("warmupBucket for %s = %d/%d", participant.name, participant.paDetection.warmupBucket, s.phi.warmUpBucket)
+	//log.Printf("warmupBucket for %s = %d/%d", participant.name, participant.paDetection.warmupBucket, s.phi.windowSize)
 
 }
 
@@ -191,7 +191,6 @@ func (s *GBServer) startPhiProcess() bool {
 				return false
 			}
 		case <-ticker.C:
-			log.Printf("running phi check")
 
 			// TODO We are only calculating once so far - need to fix
 
@@ -369,10 +368,10 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 
 			phi := phi(float64(delta), phiWindow)
 
-			log.Printf("%s - window = %v", s.ServerName, phiWindow)
+			//log.Printf("%s - window = %v", s.ServerName, phiWindow)
 
-			log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s",
-				s.ServerName, phi, delta, s.ServerName, participant.name)
+			//log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s",
+			//	s.ServerName, phi, delta, s.ServerName, participant.name)
 			participant.pm.Lock()
 			participant.paDetection.score = phi
 			threshold := s.phi.threshold

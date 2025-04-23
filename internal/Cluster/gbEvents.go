@@ -32,7 +32,7 @@ const (
 type Event struct {
 	EventType EventEnum
 	Time      int64
-	Payload   []byte // Event payload interpreted and decoded by handler based on event type
+	Payload   any    // Event payload interpreted and decoded by handler based on event type
 	Message   string // Human readable event reasoning
 }
 
@@ -48,6 +48,10 @@ type EventDispatcher struct {
 	mu       *sync.Mutex
 	handlers map[EventEnum][]*handlerEvent
 }
+
+//=======================================================
+// Event Structs & Types
+//=======================================================
 
 // Handler Register
 
