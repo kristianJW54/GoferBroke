@@ -1132,7 +1132,7 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	//log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
 
-	ctx, cancel := context.WithTimeout(c.srv.serverContext, 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 5*time.Second)
 
 	resp := c.qProtoWithResponse(respID, pay, false)
 
@@ -1340,7 +1340,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 	for {
 		s.gossip.gossMu.Lock()
 
-		if s.serverContext.Err() != nil {
+		if s.ServerContext.Err() != nil {
 			log.Printf("%s - gossip process exiting due to context cancellation", s.ServerName)
 			//s.endGossip()
 			s.gossip.gossMu.Unlock()
@@ -1348,14 +1348,14 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		}
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
-		if !s.gossip.gossipOK || !s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+		if !s.gossip.gossipOK || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 
 			log.Printf("waiting for node to join...")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
 
 		}
 
-		if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+		if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 			log.Printf("WE ARE SHUTTING DOWN")
 			s.gossip.gossMu.Unlock()
 			return
@@ -1379,7 +1379,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 
 func (s *GBServer) tryStartGossip() bool {
 	// Check if shutting down or context is canceled before attempting gossip
-	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+	if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 		log.Printf("%s - Cannot start gossip: shutting down or context canceled", s.ServerName)
 		return false
 	}
@@ -1410,7 +1410,7 @@ func (s *GBServer) startGossipProcess() bool {
 	defer ticker.Stop()
 
 	// Exit immediately if the server context is already canceled
-	if s.serverContext.Err() != nil {
+	if s.ServerContext.Err() != nil {
 		log.Printf("%s - Server context already canceled, exiting gossip process", s.ServerName)
 		return false
 	}
@@ -1418,7 +1418,7 @@ func (s *GBServer) startGossipProcess() bool {
 	log.Printf("Gossip process started")
 	for {
 		select {
-		case <-s.serverContext.Done():
+		case <-s.ServerContext.Done():
 			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.ServerName)
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
 			s.endGossip()          // Ensure state is reset
@@ -1426,7 +1426,7 @@ func (s *GBServer) startGossipProcess() bool {
 		case <-ticker.C:
 
 			// Check if context cancellation occurred
-			if s.serverContext.Err() != nil || s.flags.isSet(SHUTTING_DOWN) {
+			if s.ServerContext.Err() != nil || s.flags.isSet(SHUTTING_DOWN) {
 				log.Printf("%s - Server shutting down during ticker event", s.ServerName)
 				s.gossip.gossWg.Wait()
 				s.endGossip()
@@ -1447,7 +1447,7 @@ func (s *GBServer) startGossipProcess() bool {
 			}
 
 			// Create a context for the gossip round
-			ctx, cancel := context.WithTimeout(s.serverContext, 4*time.Second)
+			ctx, cancel := context.WithTimeout(s.ServerContext, 4*time.Second)
 
 			// go s.runPhiCheck()
 
@@ -1512,7 +1512,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 		seed, ok := conn.(*gbClient)
 		if ok {
-			err := s.conductDiscovery(s.serverContext, seed)
+			err := s.conductDiscovery(s.ServerContext, seed)
 			if err != nil {
 				handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
 

@@ -51,3 +51,9 @@ func (n *Node) Add(d *Cluster.Delta) error {
 	self := n.server.GetSelfInfo()
 	return self.Store(d)
 }
+
+// Events
+
+func (n *Node) OnEvent(eventType Cluster.EventEnum, handler func(event Cluster.Event)) string {
+	return n.server.AddHandler(n.server.ServerContext, eventType, false, handler)
+}

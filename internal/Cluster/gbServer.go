@@ -201,7 +201,7 @@ type GBServer struct {
 	nodeListenerConfig net.ListenConfig
 
 	//Context
-	serverContext       context.Context
+	ServerContext       context.Context
 	serverContextCancel context.CancelFunc
 
 	// Configurations and extensibility should be handled in Options which will be embedded here
@@ -323,7 +323,7 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 		event: ed,
 
 		listenConfig:        lc,
-		serverContext:       ctx,
+		ServerContext:       ctx,
 		serverContextCancel: cancel,
 
 		gbClusterConfig: gbConfig,
@@ -392,7 +392,9 @@ func (s *GBServer) StartServer() {
 
 	}
 
+	//-----------------------------------------------
 	//Checks and other start up here
+
 	//Resolve config seed addr
 	err := s.resolveConfigSeedAddr()
 	if err != nil {
@@ -411,8 +413,6 @@ func (s *GBServer) StartServer() {
 
 	// Setting go routine tracking flag to true - mainly used in testing
 	s.grTracking.trackingFlag.Store(true)
-
-	//s.serverLock.Unlock()
 
 	//---------------- Node Accept Loop ----------------//
 
@@ -450,7 +450,7 @@ func (s *GBServer) StartServer() {
 	s.startGoRoutine(s.ServerName, "phi-process", func() {
 
 		// Phi cleanup needed?
-		s.phiProcess(s.serverContext)
+		s.phiProcess(s.ServerContext)
 
 	})
 
@@ -459,7 +459,7 @@ func (s *GBServer) StartServer() {
 		s.startGoRoutine(s.ServerName, "gossip-process",
 			func() {
 				defer s.gossipCleanup()
-				s.gossipProcess(s.serverContext)
+				s.gossipProcess(s.ServerContext)
 			})
 	}
 
@@ -561,7 +561,7 @@ func (s *GBServer) resetContext() {
 
 	// Create a new context and cancel function
 	ctx, cancel := context.WithCancel(context.Background())
-	s.serverContext = ctx
+	s.ServerContext = ctx
 	s.serverContextCancel = cancel
 }
 
@@ -633,6 +633,45 @@ func (s *GBServer) tryReconnectToSeed(connIndex int) (net.Conn, error) {
 
 }
 
+func (s *GBServer) ComputeAdvertiseAddr(conn net.Conn) error {
+
+	s.serverLock.RLock()
+	advertise := s.advertiseAddress
+	bound := s.boundTCPAddr
+	s.serverLock.RUnlock()
+
+	// If we have explicitly set and, it is NOT unspecified, use it
+	if advertise != nil && !advertise.IP.IsUnspecified() {
+		return nil
+	}
+
+	// If we bound to a specific IP and, it's not loopback, use that
+	if bound != nil && !bound.IP.IsUnspecified() && !bound.IP.IsLoopback() {
+		s.serverLock.Lock()
+		s.advertiseAddress = &net.TCPAddr{IP: bound.IP, Port: bound.Port}
+		s.addr = s.advertiseAddress.String()
+		s.serverLock.Unlock()
+		return nil
+	}
+
+	// If we have a connection to discover local from then try
+	if conn != nil {
+		local := conn.LocalAddr().(*net.TCPAddr)
+		if local.IP != nil && local.IP.IsUnspecified() && local.IP.To4() != nil && bound != nil {
+
+			s.serverLock.Lock()
+			s.advertiseAddress = &net.TCPAddr{IP: local.IP, Port: bound.Port}
+			s.addr = s.advertiseAddress.String()
+			s.serverLock.Unlock()
+			return nil
+		}
+	}
+
+	// Fallback
+	return Errors.UnableAdvertiseErr
+
+}
+
 func (s *GBServer) dialSeed() (net.Conn, error) {
 	s.serverLock.RLock()
 	seeds := s.seedAddr
@@ -648,25 +687,16 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 			}
 		}
 
-		//TODO Only look into local addr if the bound IP is 0.0.0.0 or nil and we want to find out what IP the OS used as an outbound IP
-		// NOT FOR PORT!
-
-		// Connection succeeded, update local advertise address
-		localAddr := conn.LocalAddr().(*net.TCPAddr)
-
-		s.serverLock.Lock()
-		if s.advertiseAddress == nil || s.advertiseAddress.String() != localAddr.String() {
-			log.Printf("Updating advertise address: %s → %s", s.advertiseAddress, localAddr.String())
-			s.advertiseAddress = localAddr
-		} else {
-			log.Printf("Local address confirmed: %s", localAddr.String())
+		// Connection succeeded, check if we need to update local advertise address
+		err = s.ComputeAdvertiseAddr(conn)
+		if err != nil {
+			return conn, Errors.WrapGBError(Errors.DialSeedErr, err)
 		}
-		s.serverLock.Unlock()
 
 		return conn, nil
 	}
 
-	return nil, fmt.Errorf("failed to dial any seed")
+	return nil, Errors.DialSeedErr
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
@@ -782,14 +812,14 @@ func (s *GBServer) AcceptLoop(name string) {
 
 	s.serverLock.Lock()
 
-	ctx, cancel := context.WithCancel(s.serverContext)
+	ctx, cancel := context.WithCancel(s.ServerContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/client disconnect
 
 	//log.Printf("Starting client accept loop -- %s\n", name)
 
 	//log.Printf("Creating client listener on %s\n", s.clientTCPAddr.String())
 
-	l, err := s.listenConfig.Listen(s.serverContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
+	l, err := s.listenConfig.Listen(s.ServerContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
 		log.Printf("Error creating listener: %s\n", err)
 	}
@@ -823,14 +853,14 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	s.serverLock.Lock()
 
-	ctx, cancel := context.WithCancel(s.serverContext)
+	ctx, cancel := context.WithCancel(s.ServerContext)
 	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/node disconnect
 
 	//log.Printf("Starting node accept loop -- %s\n", name)
 
 	//log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
 
-	nl, err := s.listenConfig.Listen(s.serverContext, s.boundTCPAddr.Network(), s.boundTCPAddr.String())
+	nl, err := s.listenConfig.Listen(s.ServerContext, s.boundTCPAddr.Network(), s.boundTCPAddr.String())
 	if err != nil {
 		log.Printf("Error creating listener: %s\n", err)
 	}
@@ -924,6 +954,10 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 	//log.Println("accept loop exited")
 
 }
+
+//=======================================================
+// Internal Event Handler Registers
+//=======================================================
 
 //=======================================================
 // Sync Pool for Server-Server Request cycles

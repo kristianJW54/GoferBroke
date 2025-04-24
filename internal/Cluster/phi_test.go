@@ -87,26 +87,35 @@ func TestPhiLive(t *testing.T) {
 				SeedPort: port,
 			},
 		},
-		Cluster: &ClusterOptions{},
+		Cluster: &ClusterOptions{
+			ClusterNetworkType: C_LOCAL,
+		},
 	}
 
-	nodeConfig := &GbNodeConfig{}
+	nodeConfig := &GbNodeConfig{
+		Internal: &InternalOptions{},
+	}
 
-	gbs, _ := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs, err := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gbs2, err := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	gbs2.StartServer()
 
-	time.Sleep(7 * time.Second)
-	gbs2.serverContext.Done()
+	time.Sleep(5 * time.Second)
 	gbs2.Shutdown()
 
 	// Shutting down here will cause the phi score of test server 2 to rise for test server 1
 
 	time.Sleep(10 * time.Second)
-	gbs.serverContext.Done()
+	gbs.ServerContext.Done()
 	gbs.Shutdown()
 
 	time.Sleep(1 * time.Second)

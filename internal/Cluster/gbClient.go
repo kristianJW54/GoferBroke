@@ -635,7 +635,7 @@ func (c *gbClient) writeLoop() {
 
 	waitOk := true
 
-	stopCondition := context.AfterFunc(c.srv.serverContext, func() {
+	stopCondition := context.AfterFunc(c.srv.ServerContext, func() {
 
 		c.outbound.flushSignal.L.Lock()
 		defer c.outbound.flushSignal.L.Unlock()
@@ -651,7 +651,7 @@ func (c *gbClient) writeLoop() {
 		if waitOk {
 			//// Can I add a broadcast here instead
 			c.outbound.flushSignal.Wait()
-			if c.srv.serverContext.Err() != nil {
+			if c.srv.ServerContext.Err() != nil {
 				//log.Printf("exiting write loop")
 				return
 			}

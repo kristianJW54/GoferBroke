@@ -93,6 +93,8 @@ const (
 	MaxNodeConnectionsReached
 	MaxClientConnectionsReached
 
+	AdvertiseAddressUpdatedFromDial
+
 	// Will need error events to provide the option to handle in-flight errors
 	// Also register system(internal) error handlers to handle
 
@@ -152,6 +154,8 @@ func ParseEventEnumToString(EventType EventEnum) string {
 		return "Max Connections Reached"
 	case MaxClientConnectionsReached:
 		return "Max Connections Reached"
+	case AdvertiseAddressUpdatedFromDial:
+		return "Advertise Address Updated From Dial"
 	default:
 		return ""
 	}
@@ -206,6 +210,12 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 	return ""
 }
 
+// Internal handler for registering internal events within the system NOT exposed to public API
+func (s *GBServer) addInternalHandler(ctx context.Context, eventType EventEnum, handler func(Event)) string {
+	return s.AddHandler(ctx, eventType, true, handler)
+}
+
+// DispatchEvent will loop through the registered handlers and send the incoming event out - fan out
 func (s *GBServer) DispatchEvent(event Event) {
 
 	s.event.mu.Lock()

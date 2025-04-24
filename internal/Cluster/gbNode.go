@@ -87,7 +87,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // will return that error and trigger logic to either retry or exit the process
 func (s *GBServer) connectToSeed() error {
 
-	ctx, cancel := context.WithTimeout(s.serverContext, 1*time.Second) // TODO will be configurable
+	ctx, cancel := context.WithTimeout(s.ServerContext, 1*time.Second) // TODO will be configurable
 	defer cancel()
 
 	// Replace with method
@@ -438,7 +438,7 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+	ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 	//defer cancel()
 
 	resp := c.qProtoWithResponse(respID, self, false)

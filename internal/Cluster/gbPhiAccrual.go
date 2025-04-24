@@ -108,7 +108,7 @@ func (s *GBServer) initPhiAccrual() *phiAccrual {
 
 // TODO Need to use this to ensure we are not stuck or spinning, leaking etc
 func (s *GBServer) tryStartPhiProcess() bool {
-	if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+	if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 		log.Printf("%s - Cannot start phi: shutting down or context canceled", s.ServerName)
 		return false
 	}
@@ -145,7 +145,7 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 
 		s.gossip.gossMu.Lock()
 
-		if s.serverContext.Err() != nil {
+		if s.ServerContext.Err() != nil {
 			log.Printf("%s - gossip process exiting due to context cancellation", s.ServerName)
 			//s.endGossip()
 			s.gossip.gossMu.Unlock()
@@ -153,14 +153,14 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 		}
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
-		if !s.phi.phiOK || !s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+		if !s.phi.phiOK || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 
 			log.Printf("waiting for gossip signal...")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
 
 		}
 
-		if s.flags.isSet(SHUTTING_DOWN) || s.serverContext.Err() != nil {
+		if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 			log.Printf("PHI - SHUTTING DOWN")
 			s.gossip.gossMu.Unlock()
 			return
@@ -182,7 +182,7 @@ func (s *GBServer) startPhiProcess() bool {
 
 	for {
 		select {
-		case <-s.serverContext.Done():
+		case <-s.ServerContext.Done():
 			log.Printf("phi process exiting due to context cancellation")
 			return false
 		case ctrl := <-s.phi.phiControl:
@@ -194,7 +194,7 @@ func (s *GBServer) startPhiProcess() bool {
 
 			// TODO We are only calculating once so far - need to fix
 
-			ctx, cancel := context.WithTimeout(s.serverContext, 2*time.Second)
+			ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 
 			s.startGoRoutine(s.ServerName, "main-phi-process-check", func() {
 
@@ -370,16 +370,21 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 
 			//log.Printf("%s - window = %v", s.ServerName, phiWindow)
 
-			//log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s",
-			//	s.ServerName, phi, delta, s.ServerName, participant.name)
 			participant.pm.Lock()
 			participant.paDetection.score = phi
 			threshold := s.phi.threshold
 			if participant.paDetection.warmupBucket <= 10 {
-				threshold = 20 // TODO make config - warmUp Threshold -- Maybe want this high because this is warming up and may have skewed numbers
+				threshold = 10 // TODO make config - warmUp Threshold -- Maybe want this high because this is warming up and may have skewed numbers
 			}
+
+			log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s | th = %d",
+				s.ServerName, phi, delta, s.ServerName, participant.name, threshold)
+
 			if phi > float64(threshold) {
 				participant.paDetection.dead = true
+
+				// Participant marked dead event here
+
 			}
 			participant.pm.Unlock()
 

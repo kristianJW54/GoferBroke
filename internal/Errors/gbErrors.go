@@ -321,23 +321,25 @@ const (
 // Internal Error codes
 
 const (
-	PACKET_CEREAL_CODE          = 51
-	KNOWN_ADDR_CODE             = 52
-	INVALID_ERROR_FORMAT        = 53
-	INVALID_ERROR_CODE          = 54
-	NO_REQUEST_ID_CODE          = 55
-	DISCOVERY_REQUEST_CODE      = 56
-	RESPONSE_CODE               = 57
-	ADDR_MAP_CODE               = 58
-	EMPTY_ADDR_MAP_CODE         = 59
-	ADD_DICSOVERY_CODE          = 60
-	EMPTY_PARTICIPANT_HEAP_CODE = 61
-	GOSS_ACK_CODE               = 62
-	NODE_NOT_FOUND_CODE         = 63
-	CLUSTER_CONFIG_CODE         = 64
-	DELTA_UPDATE_NO_DELTA_CODE  = 65
-	DELTA_UPDATE_KEY_CODE       = 66
-	ADD_GSA_DELTA_CODE          = 67
+	PACKET_CEREAL_CODE                = 51
+	KNOWN_ADDR_CODE                   = 52
+	INVALID_ERROR_FORMAT              = 53
+	INVALID_ERROR_CODE                = 54
+	NO_REQUEST_ID_CODE                = 55
+	DISCOVERY_REQUEST_CODE            = 56
+	RESPONSE_CODE                     = 57
+	ADDR_MAP_CODE                     = 58
+	EMPTY_ADDR_MAP_CODE               = 59
+	ADD_DICSOVERY_CODE                = 60
+	EMPTY_PARTICIPANT_HEAP_CODE       = 61
+	GOSS_ACK_CODE                     = 62
+	NODE_NOT_FOUND_CODE               = 63
+	CLUSTER_CONFIG_CODE               = 64
+	DELTA_UPDATE_NO_DELTA_CODE        = 65
+	DELTA_UPDATE_KEY_CODE             = 66
+	ADD_GSA_DELTA_CODE                = 67
+	UNABLE_TO_DISCOVER_ADVERTISE_CODE = 68
+	DIAL_SEED_CODE                    = 69
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -353,23 +355,25 @@ var KnownNetworkErrors = map[int]*GBError{
 }
 
 var KnownInternalErrors = map[int]*GBError{
-	PACKET_CEREAL_CODE:          &GBError{Code: PACKET_CEREAL_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "packet serialisation error"},
-	KNOWN_ADDR_CODE:             &GBError{Code: KNOWN_ADDR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no known addresses in internal cluster map"},
-	INVALID_ERROR_FORMAT:        &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid format"},
-	INVALID_ERROR_CODE:          &GBError{Code: INVALID_ERROR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid error code"},
-	NO_REQUEST_ID_CODE:          &GBError{Code: NO_REQUEST_ID_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no request id found"},
-	DISCOVERY_REQUEST_CODE:      &GBError{Code: DISCOVERY_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "discovery request error"},
-	RESPONSE_CODE:               &GBError{Code: RESPONSE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "response channel error"},
-	ADDR_MAP_CODE:               &GBError{Code: ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map build error"},
-	EMPTY_ADDR_MAP_CODE:         &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map is empty"},
-	ADD_DICSOVERY_CODE:          &GBError{Code: ADD_DICSOVERY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "add discovery failed"},
-	EMPTY_PARTICIPANT_HEAP_CODE: &GBError{Code: EMPTY_PARTICIPANT_HEAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "empty participant heap"},
-	GOSS_ACK_CODE:               &GBError{Code: GOSS_ACK_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "goss ack error"},
-	NODE_NOT_FOUND_CODE:         &GBError{Code: NODE_NOT_FOUND_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "node not found in cluster map"},
-	CLUSTER_CONFIG_CODE:         &GBError{Code: CLUSTER_CONFIG_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "seed config error"},
-	DELTA_UPDATE_NO_DELTA_CODE:  &GBError{Code: DELTA_UPDATE_NO_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - no delta found"},
-	DELTA_UPDATE_KEY_CODE:       &GBError{Code: DELTA_UPDATE_KEY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - keyGroup or Key cannot be changed"},
-	ADD_GSA_DELTA_CODE:          &GBError{Code: ADD_GSA_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error adding GSA delta to map"},
+	PACKET_CEREAL_CODE:                &GBError{Code: PACKET_CEREAL_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "packet serialisation error"},
+	KNOWN_ADDR_CODE:                   &GBError{Code: KNOWN_ADDR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no known addresses in internal cluster map"},
+	INVALID_ERROR_FORMAT:              &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid format"},
+	INVALID_ERROR_CODE:                &GBError{Code: INVALID_ERROR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "invalid error code"},
+	NO_REQUEST_ID_CODE:                &GBError{Code: NO_REQUEST_ID_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no request id found"},
+	DISCOVERY_REQUEST_CODE:            &GBError{Code: DISCOVERY_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "discovery request error"},
+	RESPONSE_CODE:                     &GBError{Code: RESPONSE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "response channel error"},
+	ADDR_MAP_CODE:                     &GBError{Code: ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map build error"},
+	EMPTY_ADDR_MAP_CODE:               &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "address map is empty"},
+	ADD_DICSOVERY_CODE:                &GBError{Code: ADD_DICSOVERY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "add discovery failed"},
+	EMPTY_PARTICIPANT_HEAP_CODE:       &GBError{Code: EMPTY_PARTICIPANT_HEAP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "empty participant heap"},
+	GOSS_ACK_CODE:                     &GBError{Code: GOSS_ACK_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "goss ack error"},
+	NODE_NOT_FOUND_CODE:               &GBError{Code: NODE_NOT_FOUND_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "node not found in cluster map"},
+	CLUSTER_CONFIG_CODE:               &GBError{Code: CLUSTER_CONFIG_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "seed config error"},
+	DELTA_UPDATE_NO_DELTA_CODE:        &GBError{Code: DELTA_UPDATE_NO_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - no delta found"},
+	DELTA_UPDATE_KEY_CODE:             &GBError{Code: DELTA_UPDATE_KEY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - keyGroup or Key cannot be changed"},
+	ADD_GSA_DELTA_CODE:                &GBError{Code: ADD_GSA_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error adding GSA delta to map"},
+	UNABLE_TO_DISCOVER_ADVERTISE_CODE: &GBError{Code: UNABLE_TO_DISCOVER_ADVERTISE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "unable to determine advertise address"},
+	DIAL_SEED_CODE:                    &GBError{Code: DIAL_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "dial seed failed"},
 }
 
 var (
@@ -384,6 +388,8 @@ var (
 	DeltaUpdateNoDeltaErr   = KnownInternalErrors[DELTA_UPDATE_NO_DELTA_CODE]
 	DeltaUpdateKeyErr       = KnownInternalErrors[DELTA_UPDATE_KEY_CODE]
 	AddGSAErr               = KnownInternalErrors[ADD_GSA_DELTA_CODE]
+	UnableAdvertiseErr      = KnownInternalErrors[UNABLE_TO_DISCOVER_ADVERTISE_CODE]
+	DialSeedErr             = KnownInternalErrors[DIAL_SEED_CODE]
 )
 
 var (

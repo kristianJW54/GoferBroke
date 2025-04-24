@@ -1,10 +1,10 @@
 package main
 
 import (
-	"GoferBroke/internal/Cluster"
 	"context"
 	"flag"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Cluster"
 	"log"
 	"os"
 )
