@@ -78,7 +78,7 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 	}
 
 	// Create and start the server
-	gbs, err := NewServer(name, uuid, config, nodeConfig, nodeIp, nodePort, "8080", lc)
+	gbs, err := NewServer(name, uuid, config, nodeConfig, nodeIp, nodePort, "5000", lc)
 	if err != nil {
 		return err
 	}
@@ -276,11 +276,10 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 		return nil, err
 	}
 
-	log.Println("================== Node type:", nodeType)
-
 	// TODO for client addresses do we use same host? and specify a port range?
 	cAddr := net.JoinHostPort("0.0.0.0", clientPort)
 
+	// TODO Need to determine client network type as well
 	clientAddr, err := net.ResolveTCPAddr("tcp", cAddr)
 	if err != nil {
 		log.Fatal(err)
@@ -296,16 +295,12 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 	// Build EventDispatcher
 	ed := NewEventDispatcher()
 
-	// Gather server metrics
-
 	// Config setup //TODO
 
-	// TODO May want to look at net.Lookup host and ip and any other lookups or resolvers from either config or flags to ensure server address is correct
-
 	// Init gossip
-	goss := initGossipSettings(1*time.Second, 1) // TODO Node selection changing for tests
+	goss := initGossipSettings(1*time.Second, 1) // TODO Node selection should be taken from config or default to 1
 
-	seq := newSeqReqPool(10)
+	seq := newSeqReqPool(10) // TODO Pool size should be taken from config or default to 10
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -357,10 +352,6 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 // StartServer should be run in a go-routine. Upon start, the server will check it's state and launch both internal and gossip processes once accept connection routines
 // have successfully launched
 func (s *GBServer) StartServer() {
-
-	// TODO Check if server context is nil
-	//TODO Check if the initialisation time of the server is different to when StartServer has been called - if so
-	// re-initClusterMap
 
 	// Reset the context to handle reconnect scenarios
 	s.serverLock.Lock()
@@ -428,8 +419,7 @@ func (s *GBServer) StartServer() {
 	// CPU Metrics using an aggregate or significant change metric - how to signal?
 	// can have a ticker monitoring which will signal a waiting loop for updating internal state
 
-	// Will need to start a monitoring internal state method which will spawn waiting go routines to monitor changes
-	// internally and when signalled, update the changes by grabbing the server locks and unlocking after done
+	//---------------- Internal Event Registers ----------------//
 
 	//-- Start a background process to delete dead nodes
 	//-- Start a background process to delete tombstone deltas
@@ -565,10 +555,6 @@ func (s *GBServer) resetContext() {
 	s.serverContextCancel = cancel
 }
 
-// TODO Resolver URL's also - to IPs and addr that can be stored as TCPAddr
-// TODO Revisit when config parsing is complete
-// TODO Think about different environments and addresses
-
 func (s *GBServer) resolveConfigSeedAddr() error {
 
 	//TODO Need to review this - do we want the nodes address being used as seed if we don't know the advertise or definite reachability
@@ -645,8 +631,8 @@ func (s *GBServer) ComputeAdvertiseAddr(conn net.Conn) error {
 		return nil
 	}
 
-	// If we bound to a specific IP and, it's not loopback, use that
-	if bound != nil && !bound.IP.IsUnspecified() && !bound.IP.IsLoopback() {
+	// If we bound to a specific IP and, it's not loopback, use that - if we in a local cluster network it is fine also
+	if bound != nil && !bound.IP.IsUnspecified() && (s.gbClusterConfig.Cluster.ClusterNetworkType == C_LOCAL || !bound.IP.IsLoopback()) {
 		s.serverLock.Lock()
 		s.advertiseAddress = &net.TCPAddr{IP: bound.IP, Port: bound.Port}
 		s.addr = s.advertiseAddress.String()
@@ -655,16 +641,17 @@ func (s *GBServer) ComputeAdvertiseAddr(conn net.Conn) error {
 	}
 
 	// If we have a connection to discover local from then try
-	if conn != nil {
+	if conn != nil && bound != nil {
 		local := conn.LocalAddr().(*net.TCPAddr)
-		if local.IP != nil && local.IP.IsUnspecified() && local.IP.To4() != nil && bound != nil {
 
-			s.serverLock.Lock()
-			s.advertiseAddress = &net.TCPAddr{IP: local.IP, Port: bound.Port}
-			s.addr = s.advertiseAddress.String()
-			s.serverLock.Unlock()
-			return nil
+		s.serverLock.Lock()
+		s.advertiseAddress = &net.TCPAddr{
+			IP:   local.IP,   // whatever IP the OS used
+			Port: bound.Port, // your actual listening port
 		}
+		s.addr = s.advertiseAddress.String()
+		s.serverLock.Unlock()
+		return nil
 	}
 
 	// Fallback
@@ -897,7 +884,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
 		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {
-			s.connectToSeed()
+			err := s.connectToSeed()
 			if err != nil {
 				log.Printf("Error connecting to seed: %v", err)
 				return

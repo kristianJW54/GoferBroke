@@ -243,7 +243,6 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	// Now we add the delta to our cluster map
 	for name, part := range delta.delta {
 		if _, exists := s.clusterMap.participants[name]; !exists {
-			log.Printf("adding %s", name)
 			err := s.addParticipantFromTmp(name, part)
 			if err != nil {
 				return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
@@ -349,7 +348,7 @@ func (s *GBServer) getKnownAddressNodes() ([]string, error) {
 
 	for _, p := range cm.participants {
 
-		addrKey := fmt.Sprintf("%s:%s", ADDR_DKG, _ADDRESS_)
+		addrKey := MakeDeltaKey(ADDR_DKG, _ADDRESS_)
 
 		if _, exists := p.keyValues[addrKey]; exists {
 			known = append(known, p.name)
@@ -421,8 +420,6 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 
 //---------
 //Receiving Node Join
-
-// TODO Later we should combine this with sending a full discovery map as an onboard bootstrap
 
 func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
@@ -576,11 +573,6 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 		log.Printf("deserialise Delta failed: %v", err)
 		// Send err response
 	}
-
-	// TODO - node should check if message is of correct info - add to it's own cluster map and then respond
-	// Allow for an error response or retry if this is not correct
-
-	//=========================================
 
 	// TODO Do we need to do a seed check on ourselves first?
 	err = c.seedSendSelf(tmpC)

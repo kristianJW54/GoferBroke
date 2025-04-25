@@ -2,6 +2,8 @@ package Cluster
 
 import (
 	"context"
+	"errors"
+	"log"
 	"testing"
 	"time"
 )
@@ -87,5 +89,100 @@ func TestEventBasic(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 	ctx.Done()
+
+}
+
+func TestAsyncErrorEvent(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	wait := make(chan struct{})
+	eventReceived := false
+	processStopped := false
+	expectedCaller := "TestAsyncErrorEvent"
+
+	gbs := &GBServer{
+		event:               NewEventDispatcher(),
+		ServerContext:       ctx,
+		serverContextCancel: cancel,
+	}
+
+	time.Sleep(1 * time.Second)
+
+	gbs.addInternalHandler(gbs.ServerContext, InternalError, func(event Event) {
+
+		defer close(wait)
+
+		errEvent, ok := event.Payload.(*ErrorEvent)
+		if !ok {
+			t.Errorf("Expected *ErrorEvent, got %T", event.Payload)
+			return
+		}
+
+		if errEvent.Caller != expectedCaller {
+			t.Errorf("Expected caller %q, got %q", expectedCaller, errEvent.Caller)
+			return
+		}
+
+		if errEvent.Error == nil || errEvent.Error.Error() == "" {
+			t.Errorf("Expected non-nil error in ErrorEvent")
+			return
+		}
+
+		eventReceived = true
+
+	})
+
+	normalProcess := func() {
+
+		time.Sleep(1 * time.Second)
+
+		go func() {
+
+			err := errors.New("I am an error :) handle me carefully please")
+			errorEvent := Event{
+				InternalError,
+				time.Now().Unix(),
+				&ErrorEvent{
+					TestError,
+					CollectAndAct,
+					err,
+					expectedCaller,
+				},
+				"This is an error",
+			}
+
+			gbs.DispatchEvent(errorEvent)
+
+		}()
+
+		go func() {
+
+			time.Sleep(1 * time.Second)
+
+			for {
+				select {
+				case <-wait:
+					log.Printf("error received - stopping")
+					processStopped = true
+					return
+				}
+			}
+
+		}()
+
+	}
+
+	normalProcess()
+
+	time.Sleep(1 * time.Second)
+
+	if !eventReceived {
+		t.Errorf("Event not received")
+	}
+
+	if processStopped {
+		t.Errorf("Process not stopped")
+	}
 
 }

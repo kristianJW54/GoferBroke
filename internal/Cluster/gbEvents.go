@@ -95,6 +95,8 @@ const (
 
 	AdvertiseAddressUpdatedFromDial
 
+	InternalError
+
 	// Will need error events to provide the option to handle in-flight errors
 	// Also register system(internal) error handlers to handle
 
@@ -156,6 +158,8 @@ func ParseEventEnumToString(EventType EventEnum) string {
 		return "Max Connections Reached"
 	case AdvertiseAddressUpdatedFromDial:
 		return "Advertise Address Updated From Dial"
+	case InternalError:
+		return "Internal Event"
 	default:
 		return ""
 	}
@@ -238,6 +242,37 @@ func (s *GBServer) DispatchEvent(event Event) {
 
 	}
 
+}
+
+//=======================================================
+// Internal Events
+//=======================================================
+
+type EventErrorType int
+
+const (
+	TestError EventErrorType = iota + 1
+	NewJoinError
+	SendSelfError
+)
+
+type EventErrorSeverity int
+
+const (
+	CollectAndAct EventErrorSeverity = iota + 1
+	Warn
+	Recoverable
+	Critical
+)
+
+//---------------------------
+// Error events
+
+type ErrorEvent struct {
+	ErrorType EventErrorType
+	Severity  EventErrorSeverity
+	Error     error
+	Caller    string
 }
 
 //=======================================================
