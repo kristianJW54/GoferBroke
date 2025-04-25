@@ -1,7 +1,7 @@
 package gossip
 
 import (
-	"github.com/kristianJW54/GoferBroke/internal/Cluster"
+	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"time"
 )
 
@@ -21,24 +21,24 @@ const (
 	FLOAT64
 )
 
-func CreateNewDelta(keyGroup, key string, valueType ValueType, value []byte) *Cluster.Delta {
+func CreateNewDelta(keyGroup, key string, valueType ValueType, value []byte) *cluster.Delta {
 
 	var vt int
 
 	switch valueType {
 	case STRING:
-		vt = Cluster.D_STRING_TYPE
+		vt = cluster.D_STRING_TYPE
 	case BYTE:
-		vt = Cluster.D_BYTE_TYPE
+		vt = cluster.D_BYTE_TYPE
 	case INT:
-		vt = Cluster.D_INT_TYPE
+		vt = cluster.D_INT_TYPE
 	case INT64:
-		vt = Cluster.D_INT64_TYPE
+		vt = cluster.D_INT64_TYPE
 	case FLOAT64:
-		vt = Cluster.D_FLOAT64_TYPE
+		vt = cluster.D_FLOAT64_TYPE
 	}
 
-	return &Cluster.Delta{
+	return &cluster.Delta{
 		KeyGroup:  keyGroup,
 		Key:       key,
 		Version:   time.Now().Unix(),
@@ -47,13 +47,13 @@ func CreateNewDelta(keyGroup, key string, valueType ValueType, value []byte) *Cl
 	}
 }
 
-func (n *Node) Add(d *Cluster.Delta) error {
+func (n *Node) Add(d *cluster.Delta) error {
 	self := n.server.GetSelfInfo()
 	return self.Store(d)
 }
 
 // Events
 
-func (n *Node) OnEvent(eventType Cluster.EventEnum, handler func(event Cluster.Event)) string {
+func (n *Node) OnEvent(eventType cluster.EventEnum, handler func(event cluster.Event)) string {
 	return n.server.AddHandler(n.server.ServerContext, eventType, false, handler)
 }

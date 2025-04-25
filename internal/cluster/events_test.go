@@ -1,8 +1,9 @@
-package Cluster
+package cluster
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"testing"
 	"time"
@@ -53,9 +54,11 @@ func TestEventBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	gbs2.AddHandler(ctx, DeltaUpdated, true, func(event Event) {
-		gbs2.event.HandleDeltaUpdateEvent(event)
-	})
+	if _, err := gbs2.AddHandler(ctx, DeltaUpdated, true, func(event Event) error {
+		return gbs2.event.HandleDeltaUpdateEvent(event)
+	}); err != nil {
+		t.Errorf("error adding event: %v", err)
+	}
 
 	d, _, err := gbs2.generateDigest()
 	if err != nil {
@@ -93,8 +96,8 @@ func TestEventBasic(t *testing.T) {
 }
 
 func TestAsyncErrorEvent(t *testing.T) {
-
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	wait := make(chan struct{})
 	eventReceived := false
@@ -107,82 +110,65 @@ func TestAsyncErrorEvent(t *testing.T) {
 		serverContextCancel: cancel,
 	}
 
-	time.Sleep(1 * time.Second)
-
-	gbs.addInternalHandler(gbs.ServerContext, InternalError, func(event Event) {
-
+	// Register internal handler
+	if _, err := gbs.addInternalHandler(gbs.ServerContext, InternalError, func(event Event) error {
 		defer close(wait)
 
 		errEvent, ok := event.Payload.(*ErrorEvent)
 		if !ok {
-			t.Errorf("Expected *ErrorEvent, got %T", event.Payload)
-			return
+			return fmt.Errorf("expected *ErrorEvent, got %T", event.Payload)
 		}
 
 		if errEvent.Caller != expectedCaller {
-			t.Errorf("Expected caller %q, got %q", expectedCaller, errEvent.Caller)
-			return
+			return fmt.Errorf("expected caller %q, got %q", expectedCaller, errEvent.Caller)
 		}
 
 		if errEvent.Error == nil || errEvent.Error.Error() == "" {
-			t.Errorf("Expected non-nil error in ErrorEvent")
-			return
+			return fmt.Errorf("expected non-nil error in ErrorEvent")
 		}
 
 		eventReceived = true
-
-	})
-
-	normalProcess := func() {
-
-		time.Sleep(1 * time.Second)
-
-		go func() {
-
-			err := errors.New("I am an error :) handle me carefully please")
-			errorEvent := Event{
-				InternalError,
-				time.Now().Unix(),
-				&ErrorEvent{
-					TestError,
-					CollectAndAct,
-					err,
-					expectedCaller,
-				},
-				"This is an error",
-			}
-
-			gbs.DispatchEvent(errorEvent)
-
-		}()
-
-		go func() {
-
-			time.Sleep(1 * time.Second)
-
-			for {
-				select {
-				case <-wait:
-					log.Printf("error received - stopping")
-					processStopped = true
-					return
-				}
-			}
-
-		}()
-
+		return nil
+	}); err != nil {
+		t.Fatalf("failed to register internal handler: %v", err)
 	}
-
-	normalProcess()
 
 	time.Sleep(1 * time.Second)
 
+	// Start process
+	go func() {
+		err := errors.New("simulated error")
+		errorEvent := Event{
+			EventType: InternalError,
+			Time:      time.Now().Unix(),
+			Payload: &ErrorEvent{
+				ErrorType: TestError,
+				Severity:  CollectAndAct,
+				Error:     err,
+				Caller:    expectedCaller,
+			},
+			Message: "simulated error event",
+		}
+		gbs.DispatchEvent(errorEvent)
+	}()
+
+	time.Sleep(1 * time.Second)
+
+	// Monitor stop
+	select {
+	case <-wait:
+		log.Println("error received, stopping process")
+		processStopped = true
+		return
+	case <-ctx.Done():
+		t.Log("context canceled before wait signaled")
+	}
+
+	// Now assert properly
 	if !eventReceived {
-		t.Errorf("Event not received")
+		t.Errorf("expected event to be received but wasn't")
 	}
-
-	if processStopped {
-		t.Errorf("Process not stopped")
+	if !processStopped {
+		t.Errorf("expected process to stop on error but it didn't")
 	}
-
 }

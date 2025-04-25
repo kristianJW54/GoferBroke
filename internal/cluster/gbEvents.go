@@ -1,7 +1,8 @@
-package Cluster
+package cluster
 
 import (
 	"context"
+	"fmt"
 	"github.com/google/uuid"
 	"log"
 	"sync"
@@ -112,7 +113,7 @@ type Event struct {
 type handlerEvent struct {
 	id         string
 	eventCh    chan Event
-	handler    func(Event)
+	handler    func(Event) error
 	isInternal bool
 }
 
@@ -180,7 +181,7 @@ func NewEventDispatcher() *EventDispatcher {
 
 // AddHandler registers a new handler with the EventDispatcher and returns an id which can be used to access the event in the handler
 // to de-register if needed
-func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isInternal bool, handler func(Event)) string {
+func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isInternal bool, handler func(Event) error) (string, error) {
 
 	id := uuid.New().String()
 	ch := make(chan Event, 128)
@@ -202,7 +203,12 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 		for {
 			select {
 			case event := <-ch:
-				handler(event)
+				if err := handler(event); err != nil {
+
+					// Error event here
+					log.Printf("Error handling event %d: %e", eventType, err)
+					return
+				}
 			case <-ctx.Done():
 				log.Printf("context called ending event handler - %s", ParseEventEnumToString(eventType))
 				return
@@ -211,11 +217,11 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 
 	}()
 
-	return ""
+	return "", nil
 }
 
 // Internal handler for registering internal events within the system NOT exposed to public API
-func (s *GBServer) addInternalHandler(ctx context.Context, eventType EventEnum, handler func(Event)) string {
+func (s *GBServer) addInternalHandler(ctx context.Context, eventType EventEnum, handler func(Event) error) (string, error) {
 	return s.AddHandler(ctx, eventType, true, handler)
 }
 
@@ -287,15 +293,16 @@ type DeltaUpdateEvent struct {
 	CurrentValue    []byte
 }
 
-func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) {
+func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 
 	payload, ok := e.Payload.(*DeltaUpdateEvent)
 	if !ok {
-		log.Printf("invalid payload for DeltaUpdateEvent")
-		return
+		return fmt.Errorf("invalid payload for DeltaUpdateEvent")
 	}
 
 	log.Printf("Delta %s updated: \nPrevious value: %s\nNew value: %s\n", payload.DeltaKey, payload.PreviousValue, payload.CurrentValue)
+
+	return nil
 
 }
 

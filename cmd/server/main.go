@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/kristianJW54/GoferBroke/internal/Cluster"
+	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"log"
 	"os"
 )
@@ -32,7 +32,7 @@ func main() {
 	ctx := context.Background()
 
 	// Call run and check for any errors
-	if err := Cluster.Run(ctx, os.Stdout, *nameFlag, *idFlag, *clusterIP, *clusterPort, *clusterNetwork, *ipFlag, *portFlag); err != nil {
+	if err := cluster.Run(ctx, os.Stdout, *nameFlag, *idFlag, *clusterIP, *clusterPort, *clusterNetwork, *ipFlag, *portFlag); err != nil {
 		log.Fatalf("Error running server: %v\n", err)
 	}
 

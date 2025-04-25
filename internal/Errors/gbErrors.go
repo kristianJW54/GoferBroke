@@ -340,6 +340,7 @@ const (
 	ADD_GSA_DELTA_CODE                = 67
 	UNABLE_TO_DISCOVER_ADVERTISE_CODE = 68
 	DIAL_SEED_CODE                    = 69
+	INTERNAL_ERROR_HANDLER_CODE       = 70
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -374,6 +375,7 @@ var KnownInternalErrors = map[int]*GBError{
 	ADD_GSA_DELTA_CODE:                &GBError{Code: ADD_GSA_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error adding GSA delta to map"},
 	UNABLE_TO_DISCOVER_ADVERTISE_CODE: &GBError{Code: UNABLE_TO_DISCOVER_ADVERTISE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "unable to determine advertise address"},
 	DIAL_SEED_CODE:                    &GBError{Code: DIAL_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "dial seed failed"},
+	INTERNAL_ERROR_HANDLER_CODE:       &GBError{Code: INTERNAL_ERROR_HANDLER_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "internal error handler error"},
 }
 
 var (
@@ -390,6 +392,7 @@ var (
 	AddGSAErr               = KnownInternalErrors[ADD_GSA_DELTA_CODE]
 	UnableAdvertiseErr      = KnownInternalErrors[UNABLE_TO_DISCOVER_ADVERTISE_CODE]
 	DialSeedErr             = KnownInternalErrors[DIAL_SEED_CODE]
+	InternalErrorHandlerErr = KnownInternalErrors[INTERNAL_ERROR_HANDLER_CODE]
 )
 
 var (

@@ -1,4 +1,4 @@
-package Cluster
+package cluster
 
 import (
 	"context"
@@ -943,8 +943,46 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 }
 
 //=======================================================
-// Internal Event Handler Registers
+// Internal Event Handlers + Event Registers
 //=======================================================
+
+func handleInternalError(e Event) error {
+
+	event, ok := e.Payload.(*ErrorEvent)
+	if !ok {
+		return Errors.InternalErrorHandlerErr
+	}
+
+	switch event.Severity {
+
+	case CollectAndAct:
+
+	}
+
+	return nil
+
+}
+
+func (s *GBServer) registerAndStartInternalHandlers() error {
+
+	// Starting Internal Error handling event process
+	if _, err := s.addInternalHandler(s.ServerContext, InternalError, func(event Event) error {
+		err := handleInternalError(event)
+		if err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Next handler process here
+
+	//--
+
+	return nil
+
+}
 
 //=======================================================
 // Sync Pool for Server-Server Request cycles

@@ -3,15 +3,15 @@ package gossip
 import (
 	"errors"
 	"fmt"
-	"github.com/kristianJW54/GoferBroke/internal/Cluster"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
+	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"net"
 )
 
 type Node struct {
-	server        *Cluster.GBServer
-	nodeConfig    *Cluster.GbNodeConfig
-	clusterConfig *Cluster.GbClusterConfig
+	server        *cluster.GBServer
+	nodeConfig    *cluster.GbNodeConfig
+	clusterConfig *cluster.GbClusterConfig
 
 	handlers map[string][]string // For now - will change once we have a delta handler type
 
@@ -28,24 +28,24 @@ type NodeConfig struct {
 	Port        string
 	NetworkType string
 	ClientPort  string
-	config      *Cluster.GbNodeConfig
+	config      *cluster.GbNodeConfig
 }
 
 func (nc *NodeConfig) InitConfig() error {
 
-	netType, err := Cluster.ParseNodeNetworkType(nc.NetworkType)
+	netType, err := cluster.ParseNodeNetworkType(nc.NetworkType)
 	if err != nil {
 		return err
 	}
 
-	gbConfig := &Cluster.GbNodeConfig{
+	gbConfig := &cluster.GbNodeConfig{
 		Name:        nc.Name,
 		ID:          nc.ID,
 		Host:        nc.Host,
 		Port:        nc.Port,
 		NetworkType: netType,
 		ClientPort:  nc.ClientPort,
-		Internal:    &Cluster.InternalOptions{},
+		Internal:    &cluster.InternalOptions{},
 	}
 
 	nc.config = gbConfig
@@ -81,7 +81,7 @@ type ClusterConfig struct {
 	Name        string
 	SeedServers []Seeds
 	NetworkType string
-	config      *Cluster.GbClusterConfig
+	config      *cluster.GbClusterConfig
 }
 
 type Seeds struct {
@@ -91,7 +91,7 @@ type Seeds struct {
 
 func (cc *ClusterConfig) InitConfig() error {
 
-	cNet, err := Cluster.ParseClusterNetworkType(cc.NetworkType)
+	cNet, err := cluster.ParseClusterNetworkType(cc.NetworkType)
 	if err != nil {
 		return err
 	}
@@ -99,16 +99,16 @@ func (cc *ClusterConfig) InitConfig() error {
 	if len(cc.SeedServers) == 0 {
 		return errors.New("no seed servers")
 	}
-	ss := make([]Cluster.Seeds, len(cc.SeedServers))
+	ss := make([]cluster.Seeds, len(cc.SeedServers))
 	for i, server := range cc.SeedServers {
 		ss[i].SeedPort = server.SeedPort
 		ss[i].SeedHost = server.SeedHost
 	}
 
-	config := &Cluster.GbClusterConfig{
+	config := &cluster.GbClusterConfig{
 		Name:        cc.Name,
 		SeedServers: ss,
-		Cluster: &Cluster.ClusterOptions{
+		Cluster: &cluster.ClusterOptions{
 			ClusterNetworkType: cNet,
 		},
 	}
@@ -133,7 +133,7 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("%w - seed host or port is missing", Errors.ClusterConfigErr)
 	}
 
-	gbs, err := Cluster.NewServer(
+	gbs, err := cluster.NewServer(
 		node.Name,
 		int(node.ID),
 		config.config,
