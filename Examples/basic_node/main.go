@@ -64,6 +64,9 @@ func main() {
 
 	node1.Start()
 
+	// We give some time between node starts so that the two nodes have different time stamps and can defer correctly
+	time.Sleep(1 * time.Second)
+
 	// We now need to distribute the database and expand the cluster. To do so we create a new application instance with the same
 	// Cluster config, but this time we dynamically create a new node config which will specify a new node
 

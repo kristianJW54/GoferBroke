@@ -1,0 +1,131 @@
+package gossip
+
+import "github.com/kristianJW54/GoferBroke/internal/cluster"
+
+type EventEnum int
+
+const (
+	NewDeltaAdded EventEnum = iota + 1
+	DeltaUpdated
+	NewParticipantAdded
+	ParticipantUpdated
+	ParticipantMarkedDead
+	ReceivedNewDialFromNode
+	WatchedDeltaUpdated
+	WatchedDeltaGroupUpdated
+	WatchedDeltaGroupDeltaAdded
+
+	ClientConnected
+	ClientDisconnected
+
+	GossipLoadReached
+	MaxNodeConnectionsReached
+	MaxClientConnectionsReached
+
+	AdvertiseAddressUpdatedFromDial
+)
+
+type Event interface {
+	Type() EventEnum
+	Time() int64
+	Payload() any
+	Message() string
+}
+
+type internalEventMapping struct {
+	eventType EventEnum
+	time      int64
+	payload   any
+	message   string
+}
+
+func (i *internalEventMapping) Type() EventEnum {
+	return i.eventType
+}
+
+func (i *internalEventMapping) Time() int64 {
+	return i.time
+}
+
+func (i *internalEventMapping) Payload() any {
+	return i.payload
+}
+
+func (i *internalEventMapping) Message() string {
+	return i.message
+}
+
+func mapInternalEventTypeToPublic(internalType cluster.EventEnum) EventEnum {
+	switch internalType {
+	case cluster.NewDeltaAdded:
+		return NewDeltaAdded
+	case cluster.DeltaUpdated:
+		return DeltaUpdated
+	case cluster.NewParticipantAdded:
+		return NewParticipantAdded
+	// TODO Add all safe mappings
+	default:
+		return 0 // <-- Define UnknownEvent EventEnum
+	}
+}
+
+func mapToPublicEvent(e cluster.Event) Event {
+	return &internalEventMapping{
+		eventType: mapInternalEventTypeToPublic(e.EventType),
+		time:      e.Time,
+		payload:   mapInternalPayloadToPublic(e.EventType, e.Payload),
+		message:   e.Message,
+	}
+}
+
+func mapInternalPayloadToPublic(eventType cluster.EventEnum, payload any) any {
+	switch eventType {
+	case cluster.NewDeltaAdded:
+		if internal, ok := payload.(*cluster.DeltaAddedEvent); ok {
+			return &DeltaAddedEvent{ // <-- public SDK struct
+				DeltaKey:   internal.DeltaKey,
+				DeltaValue: internal.DeltaValue,
+			}
+		}
+	case cluster.DeltaUpdated:
+		if internal, ok := payload.(*cluster.DeltaUpdateEvent); ok {
+			return &DeltaUpdateEvent{
+				DeltaKey:        internal.DeltaKey,
+				PreviousVersion: internal.PreviousVersion,
+				PreviousValue:   internal.PreviousValue,
+				CurrentVersion:  internal.CurrentVersion,
+				CurrentValue:    internal.CurrentValue,
+			}
+		}
+		// Handle other types...
+	}
+	return payload // fallback if unknown
+}
+
+func (n *Node) OnEvent(eventType EventEnum, handler func(Event) error) (string, error) {
+
+	internalHandler := func(e cluster.Event) error {
+		sdkEvent := mapToPublicEvent(e)
+		return handler(sdkEvent)
+	}
+
+	return n.server.AddHandler(n.server.ServerContext, cluster.EventEnum(eventType), false, internalHandler)
+
+}
+
+//=======================================================
+// Event Structs & Types
+//=======================================================
+
+type DeltaUpdateEvent struct {
+	DeltaKey        string
+	PreviousVersion int64
+	PreviousValue   []byte
+	CurrentVersion  int64
+	CurrentValue    []byte
+}
+
+type DeltaAddedEvent struct {
+	DeltaKey   string
+	DeltaValue []byte
+}

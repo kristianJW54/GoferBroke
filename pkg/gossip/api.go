@@ -53,7 +53,3 @@ func (n *Node) Add(d *cluster.Delta) error {
 }
 
 // Events
-
-func (n *Node) OnEvent(eventType cluster.EventEnum, handler func(event cluster.Event) error) (string, error) {
-	return n.server.AddHandler(n.server.ServerContext, eventType, false, handler)
-}

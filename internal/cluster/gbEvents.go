@@ -73,7 +73,7 @@ It’s designed to stay out of the core gossip logic while offering enough flexi
 // if no handler then move on
 
 // EventEnum will tell the event handler what event type is being handled and will allow the handler to then handle that event
-// the Event struct will have extra information which the handler can use depending on the event type
+// the internalEvent struct will have extra information which the handler can use depending on the event type
 type EventEnum int
 
 const (
@@ -237,7 +237,6 @@ func (s *GBServer) DispatchEvent(event Event) {
 
 			select {
 			case handler.eventCh <- event:
-				log.Printf("event dispatched - %s", event.Message)
 				return
 			default:
 				log.Printf("event dropped")
@@ -306,4 +305,9 @@ func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 
 	return nil
 
+}
+
+type DeltaAddedEvent struct {
+	DeltaKey   string
+	DeltaValue []byte
 }

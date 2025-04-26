@@ -516,6 +516,15 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 						participant.pm.Unlock()
 
 						// Event call for new delta added
+						s.DispatchEvent(Event{
+							EventType: NewDeltaAdded,
+							Time:      time.Now().Unix(),
+							Payload: &DeltaAddedEvent{
+								DeltaKey:   k,
+								DeltaValue: bytes.Clone(v.Value),
+							},
+							Message: "New delta added",
+						})
 
 					} else {
 						return Errors.WrapGBError(Errors.AddGSAErr, err)
