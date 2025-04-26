@@ -114,6 +114,13 @@ func TestAsyncErrorEvent(t *testing.T) {
 	if _, err := gbs.addInternalHandler(gbs.ServerContext, InternalError, func(event Event) error {
 		defer close(wait)
 
+		// Testing internal handler function with type and severity routing
+		err := handleInternalError(event)
+		if err != nil {
+			return err
+		}
+
+		// Normal test assertions for event
 		errEvent, ok := event.Payload.(*ErrorEvent)
 		if !ok {
 			return fmt.Errorf("expected *ErrorEvent, got %T", event.Payload)

@@ -160,7 +160,7 @@ func ParseEventEnumToString(EventType EventEnum) string {
 	case AdvertiseAddressUpdatedFromDial:
 		return "Advertise Address Updated From Dial"
 	case InternalError:
-		return "Internal Event"
+		return "Internal Error"
 	default:
 		return ""
 	}
@@ -293,6 +293,8 @@ type DeltaUpdateEvent struct {
 	CurrentValue    []byte
 }
 
+// TODO HandleUpdateEvent needs to be specified elsewhere and be a specific handler
+
 func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 
 	payload, ok := e.Payload.(*DeltaUpdateEvent)
@@ -305,8 +307,3 @@ func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 	return nil
 
 }
-
-// Handler Register
-
-//TODO We should have internal registered handlers IF there are endpoints registered such as monitoring or logging URLS
-// Also should have lightweight handlers which can signal critical errors which we may want to react to

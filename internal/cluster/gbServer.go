@@ -943,25 +943,8 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 }
 
 //=======================================================
-// Internal Event Handlers + Event Registers
+// Internal Event Handler Registers
 //=======================================================
-
-func handleInternalError(e Event) error {
-
-	event, ok := e.Payload.(*ErrorEvent)
-	if !ok {
-		return Errors.InternalErrorHandlerErr
-	}
-
-	switch event.Severity {
-
-	case CollectAndAct:
-
-	}
-
-	return nil
-
-}
 
 func (s *GBServer) registerAndStartInternalHandlers() error {
 
@@ -989,7 +972,7 @@ func (s *GBServer) registerAndStartInternalHandlers() error {
 //=======================================================
 
 // seqReqPool is a configurable number of request pools to create ID's for request-response cycles. When a node queues a message with an expected response, it will
-// draw an ID from the pool and create a response handler to recieve the response on a channel. The responding node will echo back the ID which will be matched to a
+// draw an ID from the pool and create a response handler to receive the response on a channel. The responding node will echo back the ID which will be matched to a
 // handler and used to complete the request-response.
 type seqReqPool struct {
 	reqPool *sync.Pool
