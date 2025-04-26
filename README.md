@@ -89,8 +89,13 @@ Start a second node in another terminal
 
 To run two non-local nodes
 
-(note: clusterNetwork must be set to the network type of the IP being used e.g. local->local=LOCAL, private->private=PRIVATE, public->public=PUBLIC, public & private=DYNAMIC
-- refer to Network_Strategy.md for further info)
+note: clusterNetwork must be set to the network type of the IP being used e.g.
+- all local node = LOCAL
+- all private nodes = PRIVATE
+- all public nodes = PUBLIC,
+- a mixture of public and private nodes = DYNAMIC
+
+refer to Network_Strategy.md for further info)
 
 ```bash
 go run ./cmd/server -name=test1 -ID=1 -clusterIP="192.168.1.xxx" -clusterPort=8081 -clusterNetwork=PRIVATE -nodeIP="192.168.1.xxx" -nodePort=8081
