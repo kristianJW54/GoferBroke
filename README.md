@@ -60,6 +60,13 @@ Built for developers and system architects, GoferBroke simplifies the complexiti
 - Flow Control For High Load Gossip
 
 
+## Examples
+
+You can find working examples in the [Examples Folder](https://github.com/kristianJW54/GoferBroke/tree/main/Examples/basic_node).
+
+For example, try running a basic node to quickly start a local cluster.
+
+
 ## Run Locally
 
 Clone the project
@@ -80,7 +87,9 @@ Start a second node in another terminal
   go run ./cmd/server -name=test -ID=2 -clusterNetwork=LOCAL -nodeIP=localhost -nodePort=8082
 ```
 
-To run on another machine (note: clusterNetwork must be set to the network type of the IP being used e.g. local->local=LOCAL, private->private=PRIVATE, public->public=PUBLIC, public & private=DYNAMIC
+To run two non-local nodes
+
+(note: clusterNetwork must be set to the network type of the IP being used e.g. local->local=LOCAL, private->private=PRIVATE, public->public=PUBLIC, public & private=DYNAMIC
 - refer to Network_Strategy.md for further info)
 
 ```bash

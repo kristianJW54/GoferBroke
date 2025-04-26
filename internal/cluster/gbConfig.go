@@ -78,6 +78,9 @@ type ClusterOptions struct {
 	LoggingURL                    string
 	MetricsURL                    string
 	ErrorsURL                     string
+
+	NodeMTLSRequired   bool
+	ClientMTLSRequired bool
 }
 
 type NodeNetworkType int
@@ -108,6 +111,11 @@ type InternalOptions struct {
 	DebugMode                             bool
 	DisableInternalGossipSystemUpdate     bool
 	DisableUpdateServerTimeStampOnStartup bool
+
+	// TLS
+	CACertFilePath string
+	CertFilePath   string
+	KeyFilePath    string
 
 	// Need logging config also
 }
