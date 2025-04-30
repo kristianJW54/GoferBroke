@@ -206,7 +206,7 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 				if err := handler(event); err != nil {
 
 					// Error event here
-					log.Printf("Error handling event %d: %e", eventType, err)
+					log.Printf("Error handling event %d: %s", eventType, err.Error())
 					return
 				}
 			case <-ctx.Done():
@@ -249,29 +249,8 @@ func (s *GBServer) DispatchEvent(event Event) {
 
 }
 
-//=======================================================
-// Internal Events
-//=======================================================
-
-type EventErrorType int
-
-const (
-	TestError EventErrorType = iota + 1
-	NewJoinError
-	SendSelfError
-)
-
-type EventErrorSeverity int
-
-const (
-	CollectAndAct EventErrorSeverity = iota + 1
-	Warn
-	Recoverable
-	Critical
-)
-
 //---------------------------
-// Error events
+// Error events - INTERNAL
 
 type ErrorEvent struct {
 	ErrorType EventErrorType
@@ -292,7 +271,8 @@ type DeltaUpdateEvent struct {
 	CurrentValue    []byte
 }
 
-// TODO HandleUpdateEvent needs to be specified elsewhere and be a specific handler
+//TODO HandleUpdateEvent needs to be specified elsewhere and be a specific handler - if we are making an internal handler for this for update rate and gossip interval timings
+// we would need to pass in a rate tracker/window to take the update time and previous time etc
 
 func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 

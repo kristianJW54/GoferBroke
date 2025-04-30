@@ -161,7 +161,6 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 		}
 
 		if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
-			log.Printf("PHI - SHUTTING DOWN")
 			s.gossip.gossMu.Unlock()
 			return
 		}

@@ -516,6 +516,7 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 						participant.pm.Unlock()
 
 						// Event call for new delta added
+						// TODO We could use this to build an update rate and inform gossip interval times?
 						s.DispatchEvent(Event{
 							EventType: NewDeltaAdded,
 							Time:      time.Now().Unix(),
@@ -1365,7 +1366,6 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		}
 
 		if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
-			log.Printf("WE ARE SHUTTING DOWN")
 			s.gossip.gossMu.Unlock()
 			return
 		}

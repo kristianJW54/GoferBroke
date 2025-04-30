@@ -341,6 +341,7 @@ const (
 	UNABLE_TO_DISCOVER_ADVERTISE_CODE = 68
 	DIAL_SEED_CODE                    = 69
 	INTERNAL_ERROR_HANDLER_CODE       = 70
+	CONNECT_TO_SEED_CODE              = 71
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -376,6 +377,7 @@ var KnownInternalErrors = map[int]*GBError{
 	UNABLE_TO_DISCOVER_ADVERTISE_CODE: &GBError{Code: UNABLE_TO_DISCOVER_ADVERTISE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "unable to determine advertise address"},
 	DIAL_SEED_CODE:                    &GBError{Code: DIAL_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "dial seed failed"},
 	INTERNAL_ERROR_HANDLER_CODE:       &GBError{Code: INTERNAL_ERROR_HANDLER_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "internal error handler error"},
+	CONNECT_TO_SEED_CODE:              &GBError{Code: CONNECT_TO_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "connecting to seed error"},
 }
 
 var (
@@ -393,6 +395,7 @@ var (
 	UnableAdvertiseErr      = KnownInternalErrors[UNABLE_TO_DISCOVER_ADVERTISE_CODE]
 	DialSeedErr             = KnownInternalErrors[DIAL_SEED_CODE]
 	InternalErrorHandlerErr = KnownInternalErrors[INTERNAL_ERROR_HANDLER_CODE]
+	ConnectSeedErr          = KnownInternalErrors[CONNECT_TO_SEED_CODE]
 )
 
 var (

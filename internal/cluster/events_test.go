@@ -114,8 +114,14 @@ func TestAsyncErrorEvent(t *testing.T) {
 	if _, err := gbs.addInternalHandler(gbs.ServerContext, InternalError, func(event Event) error {
 		defer close(wait)
 
+		errContext := &errorContext{
+			gbs.ServerContext,
+			&errorController{s: gbs},
+			gbs.DispatchEvent,
+		}
+
 		// Testing internal handler function with type and severity routing
-		err := handleInternalError(event)
+		err := handleInternalError(errContext, event)
 		if err != nil {
 			return err
 		}

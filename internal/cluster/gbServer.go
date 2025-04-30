@@ -405,6 +405,14 @@ func (s *GBServer) StartServer() {
 	// Setting go routine tracking flag to true - mainly used in testing
 	s.grTracking.trackingFlag.Store(true)
 
+	//---------------- Event Handler Registers ----------------//
+
+	// We need to spin up event handlers here to catch any error during start up processes
+	err = s.registerAndStartInternalHandlers()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	//---------------- Node Accept Loop ----------------//
 
 	// Here we attempt to dial and connect to seed
@@ -610,6 +618,7 @@ func (s *GBServer) tryReconnectToSeed(connIndex int) (net.Conn, error) {
 		s.serverLock.Unlock()
 	}
 
+	log.Printf("dialling again")
 	conn, err := net.Dial("tcp", addrResolve.String())
 	if err != nil {
 		return nil, err
@@ -728,7 +737,7 @@ func initConnectionMetaData(reachableClaim int, givenAddr *net.TCPAddr, inbound 
 
 }
 
-// And environment + users use case
+// And environment + users use case + config map parsing of initialised delta map
 func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachability) *Participant {
 
 	t := time.Now().Unix()
@@ -872,8 +881,6 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 			})
 	})
 
-	//time.Sleep(1 * time.Second)
-
 	//---------------- Seed Dial ----------------//
 	// This is essentially a solicit. If we are not a seed server then we must be the one to initiate a connection with the seed in order to join the cluster
 	// A connectToSeed routine will be launched and blocks on a response. Once a response is given by the seed, we can move to connected state.
@@ -887,6 +894,20 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 			err := s.connectToSeed()
 			if err != nil {
 				log.Printf("Error connecting to seed: %v", err)
+
+				// Dispatch event here - we don't need an event here as we can just call Shutdown() but the added context and ability to handle helps
+				s.DispatchEvent(Event{
+					InternalError,
+					time.Now().Unix(),
+					&ErrorEvent{
+						ConnectToSeed,
+						Critical,
+						Errors.ConnectSeedErr,
+						"Accept Node Loop",
+					},
+					"Error in accept node loop when connecting to seed - shutting down - ensure seed server addresses are correct and live",
+				})
+
 				return
 			}
 		})
@@ -948,9 +969,15 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 
 func (s *GBServer) registerAndStartInternalHandlers() error {
 
+	errCtx := &errorContext{
+		s.ServerContext,
+		&errorController{s: s},
+		s.DispatchEvent,
+	}
+
 	// Starting Internal Error handling event process
 	if _, err := s.addInternalHandler(s.ServerContext, InternalError, func(event Event) error {
-		err := handleInternalError(event)
+		err := handleInternalError(errCtx, event)
 		if err != nil {
 			return err
 		}
