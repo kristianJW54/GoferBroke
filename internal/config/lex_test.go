@@ -19,3 +19,15 @@ func TestNextMethod(t *testing.T) {
 	}
 
 }
+
+func TestKetEmit(t *testing.T) {
+
+	input := "key:"
+
+	lex := lex(input)
+
+	token := lex.nextToken()
+
+	fmt.Println(token)
+
+}

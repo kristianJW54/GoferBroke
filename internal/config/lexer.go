@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"unicode"
 	"unicode/utf8"
 )
@@ -30,6 +31,15 @@ const (
 	tokenMapEnd
 	tokenCommentStart
 )
+
+func parseTokenType(t tokenType) string {
+
+	switch t {
+
+	}
+
+	return ""
+}
 
 const (
 	eof           = 0
@@ -86,7 +96,7 @@ type token struct {
 	value  string
 	length int
 	line   int
-	pos    int
+	pos    int // current: column where token started
 }
 
 func lex(input string) *lexer {
@@ -95,7 +105,8 @@ func lex(input string) *lexer {
 		input:       input,
 		tokens:      make(chan token, 10),
 		stack:       make([]stateFunc, 0, 10),
-		state:       nil, // Will be lexTop function
+		state:       sfTop, // Will be lexTop function
+		line:        1,
 		stringParts: []string{},
 	}
 
@@ -179,7 +190,7 @@ func (l *lexer) pop() stateFunc {
 func (l *lexer) emit(typ tokenType) {
 
 	value := l.input[l.start:l.pos]
-
+	log.Printf("position = %v", l.pos)
 	pos := l.pos - l.itemLineStart - len(value)
 	l.tokens <- token{typ: typ, value: value, line: l.line, pos: pos}
 	l.start = l.pos
@@ -232,17 +243,49 @@ func sfTop(l *lexer) stateFunc {
 		return nil
 	default:
 		fmt.Println("processing token")
+		l.backup()
+		return sfKeyStart
 	}
-
-	l.backup()
-	// Push a state function?
-	return sfKeyStart
 
 }
 
 func sfKeyStart(l *lexer) stateFunc {
 
+	r := l.peek()
+
+	switch r {
+	case stringStart:
+		// If r is wrapped in string or other markers we can ignore to get the actual key
+	}
+
+	log.Println("HERE")
+	return sfKey
+}
+
+func sfKey(l *lexer) stateFunc {
+
+	// We return ourselves to keep going until we reach an end to emit a token
+
+	r := l.peek()
+
+	if r == keyValueSep || r == eof {
+		log.Println("HERE NOW")
+		l.emit(tokenKey)
+		return sfKeyEnd
+	}
+
+	l.next()
+	return sfKey
+
+}
+
+func sfKeyEnd(l *lexer) stateFunc {
+
+	//r := l.peek()
+
+	// TODO Finish
 	return nil
+
 }
 
 func sfSkip(l *lexer, nextFn stateFunc) stateFunc {
