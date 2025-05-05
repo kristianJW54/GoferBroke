@@ -11,7 +11,7 @@ func TestNextMethod(t *testing.T) {
 
 	lex := lex(input)
 
-	lTop(lex)
+	sfTop(lex)
 
 	for i := 0; i <= len(input); i++ {
 		fmt.Println(string(lex.next()))

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -61,15 +62,19 @@ sfTop - Start from top switch on token type to return next stateFunc
 
 */
 
+// Lexer processes a continues stream of bytes (string input (runes)) - we must therefore mark and track the position of
+// line starts and ends, positions and columns
+
 type lexer struct {
-	input     string
-	start     int
-	pos       int
-	width     int
-	line      int
-	lineStart int // Marks the start position of current line for multi line items
-	state     stateFunc
-	tokens    chan token
+	input         string
+	start         int
+	pos           int
+	width         int
+	line          int
+	lineStart     int // Marks the start position of current line
+	itemLineStart int // Marks the start position of current relative to the current token
+	state         stateFunc
+	tokens        chan token
 
 	stack []stateFunc
 
@@ -135,6 +140,11 @@ func (l *lexer) next() (r rune) {
 	return r
 }
 
+func (l *lexer) ignore() {
+	l.start = l.pos
+	l.itemLineStart = l.start
+}
+
 func (l *lexer) backup() {
 	l.pos -= l.width
 	if l.width == 1 && l.input[l.pos] == '\n' {
@@ -148,6 +158,48 @@ func (l *lexer) peek() rune {
 	return r
 }
 
+func (l *lexer) push() {
+	l.stack = append(l.stack, l.state)
+}
+
+func (l *lexer) pop() stateFunc {
+
+	if len(l.stack) == 0 {
+		return l.emitError("stack is empty")
+	}
+
+	// LIFO - Popping last item in the stack
+	index := len(l.stack) - 1
+	lastItem := l.stack[index] // Get last item
+	l.stack = l.stack[0:index] // Re-assign stack to the re-sized slice (removing last item)
+	return lastItem
+
+}
+
+func (l *lexer) emit(typ tokenType) {
+
+	value := l.input[l.start:l.pos]
+
+	pos := l.pos - l.itemLineStart - len(value)
+	l.tokens <- token{typ: typ, value: value, line: l.line, pos: pos}
+	l.start = l.pos
+	l.itemLineStart = l.start
+
+}
+
+func (l *lexer) emitError(format string, args ...any) stateFunc {
+
+	pos := l.pos - l.lineStart
+
+	l.tokens <- token{
+		typ:   tokenError,
+		value: fmt.Sprintf(format, args...),
+		line:  l.line,
+		pos:   pos,
+	}
+	return nil
+}
+
 //====================================================================
 // Lex State Functions
 //====================================================================
@@ -156,24 +208,54 @@ func (l *lexer) peek() rune {
 // state functions which are nested such as comments, arrays, maps etc. will push their caller/parent state function or the state function to return to once it has finished
 // Doing this, state functions can keep nesting and simply traverse back up the call stack to return to the original caller i.e. lTop by popping from the stack (LIFO)
 
-func lTop(l *lexer) {
+func sfTop(l *lexer) stateFunc {
 
 	r := l.next()
-	l.backup()
+
+	if unicode.IsSpace(r) {
+		// Call sfSkip, which returns a state function.
+		// That returned function will be run in the next lexer loop iteration.
+		// It will call ignore(), then transition to sfTop.
+		return sfSkip(l, sfTop)
+	}
 
 	if r == eof {
-		return
+		return nil
 	}
 
 	switch r {
 	case sectionStart:
 		fmt.Println("processing section")
-		return
+		return nil
 	case commentSep:
 		fmt.Println("processing comment")
-		return
+		return nil
 	default:
 		fmt.Println("processing token")
 	}
 
+	l.backup()
+	// Push a state function?
+	return sfKeyStart
+
+}
+
+func sfKeyStart(l *lexer) stateFunc {
+
+	return nil
+}
+
+func sfSkip(l *lexer, nextFn stateFunc) stateFunc {
+	// We return a function here, so it runs as its own state in the next lexer loop.
+	// That function will call `ignore()` and then return the next state.
+	// This keeps us inside the state machine model, instead of executing immediately.
+	// We use a return func here to craft a state function on the fly and be able to return different state functions as needed
+	// Not just a single pre-defined state function every time
+
+	// We could achieve the same by pushing before calling skip and having skip return a l.stack.pop but this is simpler as skip is
+	// not a complex function
+	return func(*lexer) stateFunc {
+		l.ignore()
+		return nextFn
+	}
 }
