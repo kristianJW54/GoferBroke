@@ -10,6 +10,55 @@ import (
 // Lexer inspired by https://github.com/nats-io/nats-server/blob/main/conf/lex.go
 // Check out the NATS implementation for an example of what a real lexer should look like
 
+// Bit mask inspired by Logos' lexer using stacked lookup tables in Rust https://maciej.codes/2020-04-19-stacking-luts-in-logos.html
+
+//--------------------------------------------------------------------------------------------------------------------
+
+// Bit mask low-level byte classification -->
+// Each ASCII byte sits within an [int8, 256] lookup table. Each entry represents one ASCII character,
+// and is made up of 8 bits. Using bit flags, we can assign up to 8 different classifications per byte.
+//
+// Example:
+// 'a' = 97 --> Index 97 in the table
+// IDENTIFIER = 00000001
+// This means the character 'a' is classified as an IDENTIFIER.
+//
+// Bitmasks allow for fast and compact classification of bytes during lexing,
+// enabling checks like:
+//
+//     if classTable[b] & IDENTIFIER != 0 { ... }
+//
+// Instead of chains of conditions or match statements, this approach turns
+// complex logic into a single table lookup and bitwise test.
+//
+// Multiple flags can be combined to create high-level pattern masks like:
+//
+//     const identContinue = IDENTIFIER | DIGIT | CONNECTOR
+//
+// This allows the lexer to scan sequences efficiently and accurately,
+// with each byte lookup costing O(1) and no branching.
+
+// Bit flag constants
+const (
+	identifier    = 1 << iota // a-z A-Z _
+	digit                     // 0-9
+	identContinue             // -, ., _,,, ', ",
+	whitespace                // space, tab, \n
+	path                      // ., /, \, :, a-z
+	section                   // @, [a-z A-Z]
+	address                   // 0-9, [a-z], ., :,
+	keyEnd                    //
+)
+
+const ()
+
+// From the classification we can then lex token types more easily and transition between states.
+//   We can:
+// - Quickly decide what type of token is starting (e.g., string, number, key, section)
+// - Efficiently scan through valid sequences using reusable bitmask patterns
+// - Maintain cleaner state transitions between lexing functions (e.g., from `lexTop` to `lexKey`, `lexString`, etc.)
+// - Easily extend or refine rules (just update the bit flags)
+
 type tokenType int
 
 const (
@@ -190,7 +239,6 @@ func (l *lexer) pop() stateFunc {
 func (l *lexer) emit(typ tokenType) {
 
 	value := l.input[l.start:l.pos]
-	log.Printf("position = %v", l.pos)
 	pos := l.pos - l.itemLineStart - len(value)
 	l.tokens <- token{typ: typ, value: value, line: l.line, pos: pos}
 	l.start = l.pos
