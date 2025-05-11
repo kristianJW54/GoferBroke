@@ -4,10 +4,17 @@ import (
 	"fmt"
 	"log"
 	"math/bits"
+	"strings"
 	"testing"
 )
 
 func TestBitMaskClassifications(t *testing.T) {
+
+	for ascii := 0; ascii <= 255; ascii++ {
+
+		log.Printf("%c", ascii)
+
+	}
 
 	pattern1 := int8(identifier | digit)
 	wantIndex := []int{7, 6}
@@ -49,6 +56,49 @@ func TestBitMaskClassifications(t *testing.T) {
 	}
 
 	log.Printf("got %08b, want %08b", testLookupTable[testChar], pattern1)
+
+}
+
+func BitMaskToString(mask int8) string {
+
+	var flags []string
+
+	if mask&identifier != 0 {
+		flags = append(flags, "IDENTIFIER")
+	}
+	if mask&digit != 0 {
+		flags = append(flags, "DIGIT")
+	}
+	if mask&connector != 0 {
+		flags = append(flags, "CONNECTOR")
+	}
+	if mask&whitespace != 0 {
+		flags = append(flags, "WHITESPACE")
+	}
+	if mask&quote != 0 {
+		flags = append(flags, "QUOTE")
+	}
+	if mask&sectionMark != 0 {
+		flags = append(flags, "SECTION_MARK")
+	}
+	if mask&objectMark != 0 {
+		flags = append(flags, "OBJECT_MARK")
+	}
+
+	return strings.Join(flags, " | ")
+}
+
+func TestBuildTable(t *testing.T) {
+
+	table := buildLookupTable()
+
+	testWord := "@hello 007 look_me_up"
+
+	for _, char := range testWord {
+
+		log.Printf("%c - %08b - %s", char, table[char], BitMaskToString(table[char]))
+
+	}
 
 }
 

@@ -40,17 +40,66 @@ import (
 
 // Bit flag constants
 const (
-	identifier    = 1 << iota // a-z A-Z _
-	digit                     // 0-9
-	identContinue             // -, ., _,,, ', ",
-	whitespace                // space, tab, \n
-	path                      // ., /, \, :, a-z
-	section                   // @, [a-z A-Z]
-	address                   // 0-9, [a-z], ., :,
-	keyEnd                    //
+	identifier  = 1 << iota // a-z A-Z _
+	digit                   // 0-9
+	connector               // -, ., _,,,
+	whitespace              // space, tab, \n
+	quote                   // ",'
+	sectionMark             // @
+	objectMark              // [, ], {, }, (, )
 )
 
-const ()
+// Masks
+
+const (
+	identStart    = identifier | sectionMark
+	identContinue = identifier | digit | connector
+)
+
+func buildLookupTable() [256]int8 {
+
+	table := [256]int8{}
+
+	// Put in identifiers
+	for r := byte('a'); r <= byte('z'); r++ {
+		table[r] |= identifier
+	}
+	for r := byte('A'); r <= byte('Z'); r++ {
+		table[r] |= identifier
+	}
+
+	// Digits
+	for r := byte('0'); r <= byte('9'); r++ {
+		table[r] |= digit
+	}
+
+	// Connectors
+	for _, b := range []byte{'-', '_', '.'} {
+		table[b] |= connector
+	}
+
+	// Whitespace
+	for _, b := range []byte{' ', '\n', '\t', '\r'} {
+		table[b] |= whitespace
+	}
+
+	// Quote
+	table['"'] |= quote
+
+	// Section mark
+	table['@'] |= sectionMark
+
+	// Object markers
+	for _, b := range []byte{'[', ']', '{', '}', '(', ')'} {
+		table[b] |= objectMark
+	}
+
+	// Adding extra flags
+	table['_'] |= identifier
+
+	return table
+
+}
 
 // From the classification we can then lex token types more easily and transition between states.
 //   We can:
