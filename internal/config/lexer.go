@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"log"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -44,9 +43,9 @@ const (
 	digit                   // 0-9
 	connector               // -, ., _,,,
 	whitespace              // space, tab, \n
-	quote                   // ",'
+	comment                 // #, //
 	sectionMark             // @
-	objectMark              // [, ], {, }, (, )
+	quote                   // ' or "
 )
 
 // Masks
@@ -54,6 +53,8 @@ const (
 const (
 	identStart    = identifier | sectionMark
 	identContinue = identifier | digit | connector
+	check         = identifier | digit | connector | whitespace | comment | sectionMark | quote
+	junk          = ^check
 )
 
 func buildLookupTable() [256]int8 {
@@ -83,15 +84,17 @@ func buildLookupTable() [256]int8 {
 		table[b] |= whitespace
 	}
 
-	// Quote
-	table['"'] |= quote
+	// Comment
+	for _, b := range []byte{'#', '/'} {
+		table[b] |= comment
+	}
 
 	// Section mark
 	table['@'] |= sectionMark
 
-	// Object markers
-	for _, b := range []byte{'[', ']', '{', '}', '(', ')'} {
-		table[b] |= objectMark
+	// quote or string markers
+	for _, b := range []byte{'"', '\'', '\\'} {
+		table[b] |= quote
 	}
 
 	// Adding extra flags
@@ -187,6 +190,8 @@ type lexer struct {
 	stack []stateFunc
 
 	stringParts []string
+
+	lookup [256]int8
 }
 
 type token struct {
@@ -206,6 +211,7 @@ func lex(input string) *lexer {
 		state:       sfTop, // Will be lexTop function
 		line:        1,
 		stringParts: []string{},
+		lookup:      buildLookupTable(),
 	}
 
 }
@@ -320,43 +326,79 @@ func sfTop(l *lexer) stateFunc {
 
 	r := l.next()
 
-	if unicode.IsSpace(r) {
+	if r < 0 || r > 255 {
+		return l.emitError("unexpected non-ASCII input")
+	}
+
+	if r == eof {
+		l.emitError("unexpected EOF")
+		return nil
+	}
+
+	if l.lookup[r]&check == 0 {
+		log.Printf("skipping junk = %s", string(r))
+		return sfSkip(l, sfTop)
+	}
+
+	if l.lookup[r]&whitespace != 0 {
 		// Call sfSkip, which returns a state function.
 		// That returned function will be run in the next lexer loop iteration.
 		// It will call ignore(), then transition to sfTop.
 		return sfSkip(l, sfTop)
 	}
 
-	if r == eof {
+	if l.lookup[r]&quote != 0 {
+		if l.lookup[l.peek()]&identifier != 0 {
+			log.Printf("processing quoted identifier")
+			l.ignore() // We ignore the current quote to enter the key state with the start of the identifier
+			return sfQuotedKey
+		}
+
+		return sfSkip(l, sfTop)
+	}
+
+	if l.lookup[r]&sectionMark != 0 {
+		fmt.Println("processing section")
 		return nil
 	}
 
-	switch r {
-	case sectionStart:
-		fmt.Println("processing section")
-		return nil
-	case commentSep:
+	if l.lookup[r]&comment != 0 {
 		fmt.Println("processing comment")
+		l.emitError("i have not implemented this yet lol")
 		return nil
-	default:
-		fmt.Println("processing token")
-		l.backup()
-		return sfKeyStart
 	}
+
+	if l.lookup[r]&identifier != 0 {
+		fmt.Println("processing identifier")
+		// We must back up when we hit an identifier signalling the start of a key so that we can process the key
+		l.backup()
+		return sfKey
+	}
+
+	// Will have to emit error before returning nil
+	return nil
 
 }
 
-func sfKeyStart(l *lexer) stateFunc {
+func sfQuotedKey(l *lexer) stateFunc {
 
 	r := l.peek()
 
-	switch r {
-	case stringStart:
-		// If r is wrapped in string or other markers we can ignore to get the actual key
+	log.Printf("quoted key: %s", string(r))
+
+	if r == eof {
+		l.emitError("unexpected EOF")
+		return nil
 	}
 
-	log.Println("HERE")
-	return sfKey
+	if l.lookup[r]&quote != 0 {
+		l.emit(tokenKey)
+		return sfKeyEnd
+	}
+
+	l.next()
+	return sfQuotedKey
+
 }
 
 func sfKey(l *lexer) stateFunc {
@@ -365,11 +407,22 @@ func sfKey(l *lexer) stateFunc {
 
 	r := l.peek()
 
+	if l.lookup[r]&identContinue == 0 {
+		log.Printf("warning: found wrong char in key %s", string(r))
+		// Make decision on what to do here
+	}
+
 	if r == keyValueSep || r == eof {
 		log.Println("HERE NOW")
+
+		// We are at : here but because we are peeking at the r and haven't moved the lexer forward we go into lex key end
+		// Still on the last char of the key, and therefore we can lookup the next char in keyEnd
+
 		l.emit(tokenKey)
 		return sfKeyEnd
 	}
+
+	log.Printf("r = %s", string(r))
 
 	l.next()
 	return sfKey
@@ -378,9 +431,40 @@ func sfKey(l *lexer) stateFunc {
 
 func sfKeyEnd(l *lexer) stateFunc {
 
-	//r := l.peek()
+	// We use key end to reach the beginning of a value and transition state to lex a value
+	// We are not emitting the key separator, it will be ignored along with white space and quotes
 
-	// TODO Finish
+	r := l.next()
+
+	log.Printf("r at the end = %s", string(r))
+
+	if l.lookup[r]&whitespace != 0 {
+		return sfSkip(l, sfKeyEnd)
+	}
+
+	if r == keyValueSep {
+		return sfSkip(l, sfKeyEnd)
+	}
+
+	if r == eof {
+		l.emit(tokenEOF)
+		return nil
+	}
+
+	l.backup()
+	return nil
+
+}
+
+func sfValue(l *lexer) stateFunc {
+
+	r := l.peek()
+
+	// Here we must identify the : or whitespace denoting the start of a value and ignore all junk before this after reaching key end
+
+	log.Printf("r at the value = %s", string(r))
+
+	l.emitError("I am at a value which i need to finish")
 	return nil
 
 }

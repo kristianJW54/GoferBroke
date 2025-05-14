@@ -75,14 +75,14 @@ func BitMaskToString(mask int8) string {
 	if mask&whitespace != 0 {
 		flags = append(flags, "WHITESPACE")
 	}
-	if mask&quote != 0 {
-		flags = append(flags, "QUOTE")
+	if mask&comment != 0 {
+		flags = append(flags, "COMMENT")
 	}
 	if mask&sectionMark != 0 {
 		flags = append(flags, "SECTION_MARK")
 	}
-	if mask&objectMark != 0 {
-		flags = append(flags, "OBJECT_MARK")
+	if mask&quote != 0 {
+		flags = append(flags, "STRING")
 	}
 
 	return strings.Join(flags, " | ")
@@ -119,7 +119,8 @@ func TestNextMethod(t *testing.T) {
 
 func TestKetEmit(t *testing.T) {
 
-	input := "key:"
+	//input := "[  \"\"key\"\": value"
+	input := `"some-key": value`
 
 	lex := lex(input)
 
