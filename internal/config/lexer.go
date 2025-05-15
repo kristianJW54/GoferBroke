@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -153,8 +154,11 @@ const (
 	mapEnd        = '}'
 	arrayValSep   = ','
 	mapValSep     = ','
-	stringStart   = '"'
-	stringEnd     = '"'
+	dStringStart  = '"'
+	dStringEnd    = '"'
+	sStringStart  = '\''
+	sStringEnd    = '\''
+	escaped       = '\\'
 	optValEnd     = ';'
 	commentSep    = '#'
 
@@ -190,6 +194,7 @@ type lexer struct {
 	stack []stateFunc
 
 	stringParts []string
+	stringState stateFunc
 
 	lookup [256]int8
 }
@@ -314,6 +319,32 @@ func (l *lexer) emitError(format string, args ...any) stateFunc {
 	return nil
 }
 
+func (l *lexer) emitString() {
+
+	var str string
+	if len(l.stringParts) > 0 {
+		str = strings.Join(l.stringParts, "") + l.input[l.start:l.pos]
+		l.stringParts = []string{}
+	} else {
+		pos := l.pos - l.itemLineStart - len(str)
+		l.tokens <- token{typ: tokenString, value: str, line: l.line, pos: pos}
+		l.start = l.pos
+		l.itemLineStart = l.start
+	}
+
+}
+
+func (l *lexer) addToStringParts(offset int) {
+	l.stringParts = append(l.stringParts, l.input[l.start:l.pos-offset])
+	l.start = l.pos
+}
+
+func (l *lexer) addStringPart(s string) stateFunc {
+	l.stringParts = append(l.stringParts, s)
+	l.start = l.pos
+	return l.stringState
+}
+
 //====================================================================
 // Lex State Functions
 //====================================================================
@@ -392,8 +423,9 @@ func sfQuotedKey(l *lexer) stateFunc {
 	}
 
 	if l.lookup[r]&quote != 0 {
+		log.Printf("found end quote")
 		l.emit(tokenKey)
-		return sfKeyEnd
+		return sfSkip(l, sfKeyEnd)
 	}
 
 	l.next()
@@ -436,14 +468,15 @@ func sfKeyEnd(l *lexer) stateFunc {
 
 	r := l.next()
 
-	log.Printf("r at the end = %s", string(r))
-
-	if l.lookup[r]&whitespace != 0 {
+	if l.lookup[r]&check != 0 {
+		log.Printf("skipping junk = %s", string(r))
 		return sfSkip(l, sfKeyEnd)
 	}
 
 	if r == keyValueSep {
-		return sfSkip(l, sfKeyEnd)
+		log.Printf("found key separator = %s", string(r))
+		l.ignore()
+		return sfValue
 	}
 
 	if r == eof {
@@ -452,20 +485,100 @@ func sfKeyEnd(l *lexer) stateFunc {
 	}
 
 	l.backup()
-	return nil
+	return sfValue
 
 }
 
 func sfValue(l *lexer) stateFunc {
 
-	r := l.peek()
+	r := l.next()
 
-	// Here we must identify the : or whitespace denoting the start of a value and ignore all junk before this after reaching key end
+	// Here we must identify the start of a value and ignore all junk before this after reaching key end
+	// If there is whitespace we ignore it
+	// Now anything that isn't something we expect from a value we error on and switch on all value cases
 
-	log.Printf("r at the value = %s", string(r))
+	if l.lookup[r]&whitespace != 0 {
+		return sfSkip(l, sfValue)
+	}
+
+	if l.lookup[r]&quote != 0 {
+		if r == dStringStart {
+			l.ignore()
+			return dQuotedString
+		}
+		if r == sStringStart {
+			l.ignore()
+			return sQuotedString
+		}
+
+		// Else we have an escaped string
+		l.backup()
+		l.stringState = sfStringValue // We set our string state function to where we want to return back to after processing sub string elements
+		return sfStringValue
+	}
 
 	l.emitError("I am at a value which i need to finish")
 	return nil
+
+}
+
+func dQuotedString(l *lexer) stateFunc {
+
+	log.Printf("we found a double quote :)")
+
+	l.emitError("uh-oh")
+	return nil
+}
+
+func sQuotedString(l *lexer) stateFunc {
+
+	log.Printf("we found a single quote :)")
+
+	l.emitError("uh-oh")
+	return nil
+
+}
+
+func sfStringValue(l *lexer) stateFunc {
+
+	r := l.next()
+
+	log.Printf("string value = %s", string(r))
+
+	if r == '\\' {
+		log.Printf("found escaped string")
+		l.addToStringParts(1)
+		return sfEscapedString
+	}
+
+	l.emitError("Not done")
+	return nil
+
+}
+
+func sfEscapedString(l *lexer) stateFunc {
+
+	// If we are here, we need to determine what type of escaped string we are dealing with
+	// \t \n \r \" \\
+
+	// We add the string part to the stringParts and return the stringStateFunc which we have stored
+
+	r := l.next()
+
+	switch r {
+	case 't':
+		return l.addStringPart("\t")
+	case 'n':
+		return l.addStringPart("\n")
+	case 'r':
+		return l.addStringPart("\r")
+	case '"':
+		return l.addStringPart("\"")
+	case '\\':
+		return l.addStringPart("\\")
+	}
+
+	return l.emitError("Invalid escape sequence '%v' - escapes allowed [\\t, \\n, \\r, \\\", \\\\]", r)
 
 }
 
@@ -482,4 +595,10 @@ func sfSkip(l *lexer, nextFn stateFunc) stateFunc {
 		l.ignore()
 		return nextFn
 	}
+}
+
+func (l *lexer) printCurrentToken() {
+
+	log.Printf("current token = %s", l.input[l.start:l.pos])
+
 }

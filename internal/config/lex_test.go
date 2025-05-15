@@ -119,13 +119,21 @@ func TestNextMethod(t *testing.T) {
 
 func TestKetEmit(t *testing.T) {
 
-	//input := "[  \"\"key\"\": value"
-	input := `"some-key": value`
+	//input := "[  \"\"key\"\" :\\\"value\\\""
+	input := `"some-key": \\\"value\\\" is nice`
 
 	lex := lex(input)
 
 	token := lex.nextToken()
 
 	fmt.Println(token)
+
+	token2 := lex.nextToken()
+
+	fmt.Println(token2)
+
+	//token3 := lex.nextToken()
+	//
+	//fmt.Println(token3)
 
 }
