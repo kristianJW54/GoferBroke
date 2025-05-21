@@ -40,21 +40,21 @@ import (
 
 // Bit flag constants
 const (
-	identifier  = 1 << iota // a-z A-Z _
-	digit                   // 0-9
-	connector               // -, ., _,,,
-	whitespace              // space, tab, \n
-	comment                 // #, //
-	sectionMark             // @
-	quote                   // ' or "
+	identifier int8 = 1 << iota // a-z A-Z _
+	digit                       // 0-9
+	connector                   // -, ., _,,,
+	whitespace                  // space, tab, \n
+	comment                     // #, //
+	quote                       // ' or "
+	object                      // [, {, (, ), }, ]
 )
 
 // Masks
 
 const (
-	identStart    = identifier | sectionMark
+	identStart    = identifier
 	identContinue = identifier | digit | connector
-	check         = identifier | digit | connector | whitespace | comment | sectionMark | quote
+	check         = identifier | digit | connector | whitespace | comment | quote | object
 	junk          = ^check
 )
 
@@ -64,42 +64,43 @@ func buildLookupTable() [256]int8 {
 
 	// Put in identifiers
 	for r := byte('a'); r <= byte('z'); r++ {
-		table[r] |= identifier
+		table[r] |= int8(identifier)
 	}
 	for r := byte('A'); r <= byte('Z'); r++ {
-		table[r] |= identifier
+		table[r] |= int8(identifier)
 	}
 
 	// Digits
 	for r := byte('0'); r <= byte('9'); r++ {
-		table[r] |= digit
+		table[r] |= int8(digit)
 	}
 
 	// Connectors
 	for _, b := range []byte{'-', '_', '.'} {
-		table[b] |= connector
+		table[b] |= int8(connector)
 	}
 
 	// Whitespace
 	for _, b := range []byte{' ', '\n', '\t', '\r'} {
-		table[b] |= whitespace
+		table[b] |= int8(whitespace)
 	}
 
 	// Comment
 	for _, b := range []byte{'#', '/'} {
-		table[b] |= comment
+		table[b] |= int8(comment)
 	}
-
-	// Section mark
-	table['@'] |= sectionMark
 
 	// quote or string markers
 	for _, b := range []byte{'"', '\'', '\\'} {
-		table[b] |= quote
+		table[b] |= int8(quote)
 	}
 
 	// Adding extra flags
-	table['_'] |= identifier
+	table['_'] |= int8(identifier)
+
+	for _, b := range []byte{'(', ')', '{', '}', '[', ']'} {
+		table[b] |= int8(object)
+	}
 
 	return table
 
@@ -167,7 +168,7 @@ const (
 )
 
 // stateFunc is a function that takes the lexer and returns the next state function to run
-type stateFunc func(*lexer) stateFunc
+type stateFunc func(lx *lexer) stateFunc
 
 /*
 
@@ -278,8 +279,8 @@ func (l *lexer) peek() rune {
 	return r
 }
 
-func (l *lexer) push() {
-	l.stack = append(l.stack, l.state)
+func (l *lexer) push(state stateFunc) {
+	l.stack = append(l.stack, state)
 }
 
 func (l *lexer) pop() stateFunc {
@@ -298,7 +299,8 @@ func (l *lexer) pop() stateFunc {
 
 func (l *lexer) emit(typ tokenType) {
 
-	value := l.input[l.start:l.pos]
+	value := strings.Join(l.stringParts, "") + l.input[l.start:l.pos]
+
 	pos := l.pos - l.itemLineStart - len(value)
 	l.tokens <- token{typ: typ, value: value, line: l.line, pos: pos}
 	l.start = l.pos
@@ -326,11 +328,13 @@ func (l *lexer) emitString() {
 		str = strings.Join(l.stringParts, "") + l.input[l.start:l.pos]
 		l.stringParts = []string{}
 	} else {
-		pos := l.pos - l.itemLineStart - len(str)
-		l.tokens <- token{typ: tokenString, value: str, line: l.line, pos: pos}
-		l.start = l.pos
-		l.itemLineStart = l.start
+		str = l.input[l.start:l.pos]
 	}
+
+	pos := l.pos - l.itemLineStart - len(str)
+	l.tokens <- token{typ: tokenString, value: str, line: l.line, pos: pos}
+	l.start = l.pos
+	l.itemLineStart = l.start
 
 }
 
@@ -357,6 +361,8 @@ func sfTop(l *lexer) stateFunc {
 
 	r := l.next()
 
+	l.printPosition()
+
 	if r < 0 || r > 255 {
 		return l.emitError("unexpected non-ASCII input")
 	}
@@ -378,17 +384,7 @@ func sfTop(l *lexer) stateFunc {
 		return sfSkip(l, sfTop)
 	}
 
-	if l.lookup[r]&quote != 0 {
-		if l.lookup[l.peek()]&identifier != 0 {
-			log.Printf("processing quoted identifier")
-			l.ignore() // We ignore the current quote to enter the key state with the start of the identifier
-			return sfQuotedKey
-		}
-
-		return sfSkip(l, sfTop)
-	}
-
-	if l.lookup[r]&sectionMark != 0 {
+	if r == '@' {
 		fmt.Println("processing section")
 		return nil
 	}
@@ -399,21 +395,75 @@ func sfTop(l *lexer) stateFunc {
 		return nil
 	}
 
-	if l.lookup[r]&identifier != 0 {
-		fmt.Println("processing identifier")
-		// We must back up when we hit an identifier signalling the start of a key so that we can process the key
-		l.backup()
-		return sfKey
-	}
-
 	// Will have to emit error before returning nil
-	return nil
+	l.backup()
+	l.push(sfTopValueEnd)
+	return sfKeyStart
 
 }
 
-func sfQuotedKey(l *lexer) stateFunc {
+func sfTopValueEnd(l *lexer) stateFunc {
+
+	r := l.next()
+
+	if l.lookup[r]&comment != 0 {
+		// l.push(sfTop)
+		// return commentStart
+		l.emitError("i have not implemented this yet lol")
+		return nil
+	}
+
+	if l.lookup[r]&whitespace != 0 {
+		return sfTopValueEnd
+	}
+
+	if r == eof {
+		l.ignore()
+		return sfTop
+	}
+
+	return l.emitError("expected value to have an end but got %s instead", string(r))
+
+}
+
+func sfKeyStart(l *lexer) stateFunc {
 
 	r := l.peek()
+
+	if l.lookup[r]&whitespace != 0 {
+		l.next()
+		return sfSkip(l, sfKeyStart)
+	}
+
+	if l.lookup[r]&quote != 0 {
+
+		l.next()
+
+		switch {
+		case r == dStringStart:
+			return sfSkip(l, sfDQuotedKey)
+		case r == sStringStart:
+			return sfSkip(l, sfSQuotedKey)
+		}
+	}
+
+	if r == sectionStart {
+		l.next()
+		l.emit(tokenSection)
+		return sfSkip(l, sfKeyStart)
+	}
+
+	l.ignore()
+	l.next()
+	return sfKey
+
+}
+
+func sfDQuotedKey(l *lexer) stateFunc {
+
+	r := l.peek()
+
+	l.printPosition()
 
 	log.Printf("quoted key: %s", string(r))
 
@@ -422,14 +472,21 @@ func sfQuotedKey(l *lexer) stateFunc {
 		return nil
 	}
 
-	if l.lookup[r]&quote != 0 {
-		log.Printf("found end quote")
+	if r == dStringEnd {
 		l.emit(tokenKey)
+		l.next()
 		return sfSkip(l, sfKeyEnd)
 	}
 
 	l.next()
-	return sfQuotedKey
+	return sfDQuotedKey
+
+}
+
+func sfSQuotedKey(l *lexer) stateFunc {
+
+	l.emitError("not implemented")
+	return nil
 
 }
 
@@ -438,6 +495,8 @@ func sfKey(l *lexer) stateFunc {
 	// We return ourselves to keep going until we reach an end to emit a token
 
 	r := l.peek()
+
+	l.printPosition()
 
 	if l.lookup[r]&identContinue == 0 {
 		log.Printf("warning: found wrong char in key %s", string(r))
@@ -468,6 +527,8 @@ func sfKeyEnd(l *lexer) stateFunc {
 
 	r := l.next()
 
+	l.printPosition()
+
 	if l.lookup[r]&check != 0 {
 		log.Printf("skipping junk = %s", string(r))
 		return sfSkip(l, sfKeyEnd)
@@ -475,8 +536,7 @@ func sfKeyEnd(l *lexer) stateFunc {
 
 	if r == keyValueSep {
 		log.Printf("found key separator = %s", string(r))
-		l.ignore()
-		return sfValue
+		return sfSkip(l, sfValue)
 	}
 
 	if r == eof {
@@ -484,8 +544,13 @@ func sfKeyEnd(l *lexer) stateFunc {
 		return nil
 	}
 
-	l.backup()
-	return sfValue
+	if l.lookup[r]&identifier != 0 {
+		l.backup()
+		return sfValue
+	}
+
+	l.emitError("expected a value but got %s", string(r))
+	return nil
 
 }
 
@@ -493,17 +558,44 @@ func sfValue(l *lexer) stateFunc {
 
 	r := l.next()
 
+	l.printPosition()
+	log.Printf("r = %s", string(r))
+
 	// Here we must identify the start of a value and ignore all junk before this after reaching key end
 	// If there is whitespace we ignore it
 	// Now anything that isn't something we expect from a value we error on and switch on all value cases
 
-	if l.lookup[r]&whitespace != 0 {
+	if l.lookup[r]&check == 0 {
+		return l.emitError("unexpected character - %s", string(r))
+	}
+
+	if l.lookup[r]&whitespace != 0 || l.lookup[r]&comment != 0 {
 		return sfSkip(l, sfValue)
+	}
+
+	if l.lookup[r]&object != 0 {
+
+		log.Printf("object = %s", string(r))
+		// Switch on what object
+		switch {
+		case r == arrayStart:
+			log.Printf("found array start")
+			log.Printf("object after ignore = %s", string(l.input[l.start:l.pos]))
+			l.emit(tokenArrayStart)
+			l.ignore()
+			l.printPosition()
+			log.Printf("next token will be --> %s", string(l.peek()))
+			return nil
+		}
+
+		// TODO finish array tokenizing - should we backup before changing state?
+
 	}
 
 	if l.lookup[r]&quote != 0 {
 		if r == dStringStart {
 			l.ignore()
+			l.stringState = dQuotedString
 			return dQuotedString
 		}
 		if r == sStringStart {
@@ -517,31 +609,71 @@ func sfValue(l *lexer) stateFunc {
 		return sfStringValue
 	}
 
-	l.emitError("I am at a value which i need to finish")
-	return nil
+	l.backup()
+	l.stringState = sfStringValue
+	return sfStringValue
 
 }
 
 func dQuotedString(l *lexer) stateFunc {
 
-	log.Printf("we found a double quote :)")
+	r := l.next()
 
-	l.emitError("uh-oh")
-	return nil
+	l.printPosition()
+
+	switch {
+
+	case r == '\\':
+		l.addToStringParts(1)
+		return sfEscapedString
+
+	case r == dStringEnd:
+		l.backup() // We back up so we don't emit the end quote char
+		l.emitString()
+		l.next()       // We move back to the quote
+		l.ignore()     // And then ignore to move past and reset the position and start
+		return l.pop() // Pop then brings us back up the stack in state functions
+
+	case r == eof:
+		if l.pos > l.start {
+			return l.emitError("Unexpected EOF")
+		}
+		l.emit(tokenEOF)
+		return nil
+	}
+
+	return dQuotedString
 }
 
 func sQuotedString(l *lexer) stateFunc {
 
-	log.Printf("we found a single quote :)")
+	r := l.next()
 
-	l.emitError("uh-oh")
-	return nil
+	l.printPosition()
+
+	switch {
+	case r == sStringEnd:
+		l.backup()
+		l.emit(tokenString)
+		l.next()
+		return l.pop()
+	case r == eof:
+		if l.pos > l.start {
+			return l.emitError("Unexpected EOF")
+		}
+		l.emit(tokenEOF)
+		return nil
+	}
+
+	return sQuotedString
 
 }
 
 func sfStringValue(l *lexer) stateFunc {
 
 	r := l.next()
+
+	l.printPosition()
 
 	log.Printf("string value = %s", string(r))
 
@@ -551,8 +683,31 @@ func sfStringValue(l *lexer) stateFunc {
 		return sfEscapedString
 	}
 
-	l.emitError("Not done")
-	return nil
+	if r == eof || l.lookup[r]&whitespace != 0 || r == arrayEnd || r == mapEnd {
+
+		l.backup()
+		if l.stringState != nil {
+			l.emitString()
+
+			// Add other checks such as variable/bool etc
+
+		} else {
+			l.emitString()
+		}
+
+		return l.pop()
+	}
+
+	if r == sStringEnd {
+		log.Printf("found end string")
+		l.backup()
+		l.emitString()
+		l.next()
+		l.ignore()
+		return l.pop()
+	}
+
+	return sfStringValue
 
 }
 
@@ -578,7 +733,7 @@ func sfEscapedString(l *lexer) stateFunc {
 		return l.addStringPart("\\")
 	}
 
-	return l.emitError("Invalid escape sequence '%v' - escapes allowed [\\t, \\n, \\r, \\\", \\\\]", r)
+	return l.emitError("Invalid escape sequence '%s' - escapes allowed [\\t, \\n, \\r, \\\", \\\\]", string(r))
 
 }
 
@@ -600,5 +755,31 @@ func sfSkip(l *lexer, nextFn stateFunc) stateFunc {
 func (l *lexer) printCurrentToken() {
 
 	log.Printf("current token = %s", l.input[l.start:l.pos])
+
+}
+
+func (l *lexer) printPosition() {
+	log.Printf("start = %d | position = %d", l.start, l.pos)
+}
+
+func (l *lexer) isBool() bool {
+
+	str := strings.ToLower(l.input[l.start:l.pos])
+	return str == "true" || str == "false" || str == "on" || str == "off" || str == "yes" || str == "no"
+
+}
+
+func (l *lexer) isVariable() bool {
+
+	if l.start >= len(l.input) {
+		return false
+	}
+
+	if l.input[l.start] == '$' {
+		l.start += 1
+		return true
+	}
+
+	return false
 
 }

@@ -16,7 +16,7 @@ func TestBitMaskClassifications(t *testing.T) {
 
 	}
 
-	pattern1 := int8(identifier | digit)
+	pattern1 := identifier | digit
 	wantIndex := []int{7, 6}
 
 	log.Printf("ident = %08b", pattern1)
@@ -40,7 +40,7 @@ func TestBitMaskClassifications(t *testing.T) {
 		t.Errorf("got wrong positions - wanted %d-%d, got %d-%d", wantIndex[0], wantIndex[1], posIndex[0], posIndex[1])
 	}
 
-	testChar := rune('a')
+	testChar := 'a'
 
 	testLookupTable := [256]int8{}
 
@@ -78,11 +78,11 @@ func BitMaskToString(mask int8) string {
 	if mask&comment != 0 {
 		flags = append(flags, "COMMENT")
 	}
-	if mask&sectionMark != 0 {
-		flags = append(flags, "SECTION_MARK")
-	}
 	if mask&quote != 0 {
 		flags = append(flags, "STRING")
+	}
+	if mask&object != 0 {
+		flags = append(flags, "OBJECT")
 	}
 
 	return strings.Join(flags, " | ")
@@ -92,7 +92,7 @@ func TestBuildTable(t *testing.T) {
 
 	table := buildLookupTable()
 
-	testWord := "@hello 007 look_me_up"
+	testWord := "@hello 007 look_me_up []"
 
 	for _, char := range testWord {
 
@@ -117,10 +117,30 @@ func TestNextMethod(t *testing.T) {
 
 }
 
-func TestKetEmit(t *testing.T) {
-
+func TestKeyStringValueEmit(t *testing.T) {
+	//
 	//input := "[  \"\"key\"\" :\\\"value\\\""
-	input := `"some-key": \\\"value\\\" is nice`
+	input := `"some-key": "value \"is\" this"`
+
+	lex := lex(input)
+
+	token := lex.nextToken()
+
+	fmt.Println(token)
+
+	token2 := lex.nextToken()
+
+	fmt.Println(token2)
+
+	//token3 := lex.nextToken()
+	//
+	//fmt.Println(token3)
+
+}
+
+func TestKeyArrayValueEmit(t *testing.T) {
+
+	input := `"some-key": #[value1, value2]`
 
 	lex := lex(input)
 
