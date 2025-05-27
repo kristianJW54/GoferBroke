@@ -42,12 +42,19 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	ip := "localhost" // Use the full IP address
 	port := "8081"
 
+	ip2 := "localhost"
+	port2 := "8082"
+
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
 		SeedServers: []Seeds{
 			{
 				SeedHost: ip,
 				SeedPort: port,
+			},
+			{
+				SeedHost: ip2,
+				SeedPort: port2,
 			},
 		},
 		Cluster: &ClusterOptions{

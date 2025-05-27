@@ -1,11 +1,13 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/bits"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBitMaskClassifications(t *testing.T) {
@@ -132,28 +134,72 @@ func TestKeyStringValueEmit(t *testing.T) {
 
 	fmt.Println(token2)
 
-	//token3 := lex.nextToken()
-	//
-	//fmt.Println(token3)
-
 }
 
-func TestKeyArrayValueEmit(t *testing.T) {
+func TestArrayEmit(t *testing.T) {
 
-	input := `"some-key": #[value1, value2]`
+	input := `"some-key": [value1, value2]`
 
 	lex := lex(input)
 
-	token := lex.nextToken()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
-	fmt.Println(token)
+	tokenCount := 0
+	tokens := make([]string, 0)
 
-	token2 := lex.nextToken()
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("lexer timeout")
+		default:
+			token := lex.nextToken()
+			log.Println(token)
 
-	fmt.Println(token2)
+			tokenCount++
+			tokens = append(tokens, token.value)
 
-	//token3 := lex.nextToken()
-	//
-	//fmt.Println(token3)
+			if token.typ == tokenEOF {
+				log.Printf("total tokens = %v || tokens --> %+s", tokenCount, tokens)
+				return
+			}
+		}
+	}
+
+}
+
+func TestMapEmit(t *testing.T) {
+
+	input := `"some-key": {
+  "some_map" = {
+    key1: "value1"
+  }
+}`
+
+	lex := lex(input)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	tokenCount := 0
+	tokens := make([]string, 0)
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("lexer timeout")
+		default:
+			token := lex.nextToken()
+			log.Println(token)
+
+			tokenCount++
+			tokens = append(tokens, token.value)
+
+			if token.typ == tokenEOF {
+				log.Printf("total tokens = %v || tokens --> %+s", tokenCount, tokens)
+				return
+			}
+		}
+	}
 
 }

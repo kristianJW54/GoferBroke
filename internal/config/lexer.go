@@ -52,8 +52,8 @@ const (
 // Masks
 
 const (
-	identStart    = identifier
 	identContinue = identifier | digit | connector
+	identStart    = identifier | digit | quote
 	check         = identifier | digit | connector | whitespace | comment | quote | object
 	junk          = ^check
 )
@@ -149,6 +149,7 @@ const (
 	sectionStart  = '@'
 	subSectionSep = '.'
 	keyValueSep   = ':'
+	keyValueEqSep = '='
 	arrayStart    = '['
 	arrayEnd      = ']'
 	mapStart      = '{'
@@ -368,7 +369,10 @@ func sfTop(l *lexer) stateFunc {
 	}
 
 	if r == eof {
-		l.emitError("unexpected EOF")
+		if l.pos > l.start {
+			return l.emitError("Unexpected EOF")
+		}
+		l.emit(tokenEOF)
 		return nil
 	}
 
@@ -432,12 +436,14 @@ func sfKeyStart(l *lexer) stateFunc {
 
 	if l.lookup[r]&whitespace != 0 {
 		l.next()
+		l.ignore()
 		return sfSkip(l, sfKeyStart)
 	}
 
 	if l.lookup[r]&quote != 0 {
 
 		l.next()
+		l.ignore()
 
 		switch {
 		case r == dStringStart:
@@ -535,7 +541,9 @@ func sfKeyEnd(l *lexer) stateFunc {
 	}
 
 	if r == keyValueSep {
-		log.Printf("found key separator = %s", string(r))
+		log.Printf("found key separator (%s)", string(r))
+		l.printCurrentToken()
+		log.Printf("next char = %s", string(l.peek()))
 		return sfSkip(l, sfValue)
 	}
 
@@ -565,34 +573,45 @@ func sfValue(l *lexer) stateFunc {
 	// If there is whitespace we ignore it
 	// Now anything that isn't something we expect from a value we error on and switch on all value cases
 
-	if l.lookup[r]&check == 0 {
+	switch {
+
+	case l.lookup[r]&check == 0:
 		return l.emitError("unexpected character - %s", string(r))
-	}
 
-	if l.lookup[r]&whitespace != 0 || l.lookup[r]&comment != 0 {
+	case l.lookup[r]&whitespace != 0 || l.lookup[r]&comment != 0:
 		return sfSkip(l, sfValue)
-	}
 
-	if l.lookup[r]&object != 0 {
+	case r == sectionStart:
+		l.ignore()
+		l.emit(tokenSection)
+		return sfSkip(l, sfSectionStart)
+
+	case l.lookup[r]&object != 0:
 
 		log.Printf("object = %s", string(r))
 		// Switch on what object
-		switch {
-		case r == arrayStart:
+
+		if r == arrayStart {
 			log.Printf("found array start")
-			log.Printf("object after ignore = %s", string(l.input[l.start:l.pos]))
-			l.emit(tokenArrayStart)
+			log.Printf("object = %s", string(l.input[l.start:l.pos]))
 			l.ignore()
+			l.emit(tokenArrayStart)
 			l.printPosition()
 			log.Printf("next token will be --> %s", string(l.peek()))
-			return nil
+			return sfArrayValue
+		}
+		if r == mapStart {
+			log.Printf("found map start")
+			l.ignore()
+			l.emit(tokenMapStart)
+			l.printPosition()
+			log.Printf("next token will be --> %s", string(l.peek()))
+			return sfMapKeyStart
 		}
 
 		// TODO finish array tokenizing - should we backup before changing state?
 
-	}
-
-	if l.lookup[r]&quote != 0 {
+	case l.lookup[r]&quote != 0:
 		if r == dStringStart {
 			l.ignore()
 			l.stringState = dQuotedString
@@ -607,12 +626,207 @@ func sfValue(l *lexer) stateFunc {
 		l.backup()
 		l.stringState = sfStringValue // We set our string state function to where we want to return back to after processing sub string elements
 		return sfStringValue
+
 	}
 
 	l.backup()
 	l.stringState = sfStringValue
 	return sfStringValue
 
+}
+
+func sfSectionStart(l *lexer) stateFunc {
+
+	r := l.peek()
+
+	// checks for valid section start - should be identifier only - no quotes
+
+	if r == eof {
+		return l.emitError("unexpected EOF - valid identifier [a-z|A-Z] must follow section tag - (@)")
+	}
+
+	return nil
+
+}
+
+func sfArrayValue(l *lexer) stateFunc {
+
+	r := l.next()
+
+	if l.lookup[r]&whitespace != 0 {
+		return sfSkip(l, sfArrayValue)
+	}
+
+	if l.lookup[r]&comment != 0 {
+		l.push(sfArrayValue)
+		return sfCommentStart
+	}
+
+	if r == ',' {
+		return l.emitError("unexpected ',' in array start")
+	}
+
+	if r == arrayEnd {
+		return sfArrayEnd
+	}
+
+	l.backup()
+	l.push(sfArrayValueEnd)
+	return sfValue
+
+}
+
+func sfArrayValueEnd(l *lexer) stateFunc {
+
+	r := l.next()
+
+	log.Printf("array value end reached %s", string(l.input[l.start:l.pos]))
+
+	if l.lookup[r]&whitespace != 0 {
+		return sfSkip(l, sfArrayValueEnd)
+	}
+
+	if l.lookup[r]&comment != 0 {
+		l.push(sfArrayValueEnd)
+		return sfCommentStart
+	}
+
+	if r == arrayValSep || r == '\n' || r == '\r' {
+		log.Printf("found separator so switching to sfArrayValue to process next in array")
+		return sfSkip(l, sfArrayValue)
+	}
+
+	if r == arrayEnd {
+		return sfArrayEnd
+	}
+
+	return l.emitError("expected array value separator or comment - got (%s) instead", string(r))
+
+}
+
+func sfArrayEnd(l *lexer) stateFunc {
+	l.ignore()
+	l.emit(tokenArrayEnd)
+	return l.pop()
+}
+
+func sfMapKeyStart(l *lexer) stateFunc {
+
+	r := l.peek()
+
+	switch {
+	case l.lookup[r]&whitespace != 0:
+		l.next()
+		return sfSkip(l, sfMapKeyStart)
+	case r == mapEnd:
+		l.next()
+		return sfSkip(l, sfMapEnd)
+	case r == keyValueSep || r == '=':
+		return l.emitError("unexpected character - (%s)", string(r))
+	case r == arrayEnd:
+		return l.emitError("unexpected array end - (%s)", string(r))
+	case l.lookup[r]&comment != 0:
+		l.next()
+		l.push(sfMapKeyStart)
+		return sfCommentStart
+	case l.lookup[r]&identStart == 0: // Key must be valid identifier start so we check here and error early before continuing to lex
+		return l.emitError("expected identifier start - got (%s)", string(r))
+	case l.lookup[r]&quote != 0:
+		l.next()
+		l.ignore()
+		if r == sStringStart {
+			return sfMapQuoteKey
+		} else {
+			return sfMapDQuoteKey
+		}
+	}
+
+	l.ignore()
+	l.printPosition()
+	l.next()
+	return sfMapKey
+
+}
+
+func sfMapQuoteKey(l *lexer) stateFunc {
+
+	r := l.peek()
+
+	if r == eof {
+		return l.emitError("unexpected EOF processing quoted map key - (%s)", string(r))
+	} else if r == sStringEnd {
+		l.emit(tokenKey)
+		l.next()
+		return sfSkip(l, sfMapKeyEnd)
+	}
+
+	l.next()
+	return sfMapQuoteKey
+}
+
+func sfMapDQuoteKey(l *lexer) stateFunc {
+
+	r := l.peek()
+
+	if r == eof {
+		return l.emitError("unexpected EOF processing quoted map key - (%s)", string(r))
+	} else if r == dStringEnd {
+		l.emit(tokenKey)
+		l.next()
+		return sfSkip(l, sfMapKeyEnd)
+	}
+
+	l.next()
+	return sfMapDQuoteKey
+}
+
+func sfMapKey(l *lexer) stateFunc {
+
+	// We could check for space and do keyword check in future
+
+	r := l.peek()
+
+	if r == eof {
+		return l.emitError("unexpected EOF processing map key - (%s)", string(r))
+	} else if r == keyValueSep || r == keyValueEqSep {
+		log.Printf("found key separator - (%s)", string(r))
+		l.emit(tokenKey)
+		return sfMapKeyEnd
+	}
+
+	l.next()
+	return sfMapKey
+
+}
+
+func sfMapKeyEnd(l *lexer) stateFunc {
+
+	r := l.next()
+
+	switch {
+	case l.lookup[r]&whitespace != 0:
+		return sfSkip(l, sfMapKeyEnd)
+	case r == keyValueSep || r == keyValueEqSep:
+		return sfSkip(l, sfMapValue)
+	}
+
+	l.backup()
+
+	return sfMapValue
+}
+
+func sfMapValue(l *lexer) stateFunc {
+	return nil
+}
+
+func sfMapValueEnd(l *lexer) stateFunc {
+	return nil
+}
+
+func sfMapEnd(l *lexer) stateFunc {
+
+	// TODO Finish
+	return nil
 }
 
 func dQuotedString(l *lexer) stateFunc {
@@ -683,9 +897,10 @@ func sfStringValue(l *lexer) stateFunc {
 		return sfEscapedString
 	}
 
-	if r == eof || l.lookup[r]&whitespace != 0 || r == arrayEnd || r == mapEnd {
+	if r == eof || l.lookup[r]&whitespace != 0 || r == arrayEnd || r == arrayValSep || r == mapEnd {
 
 		l.backup()
+		log.Printf("found terminator (%s) - backing up and popping from stack", string(r))
 		if l.stringState != nil {
 			l.emitString()
 
@@ -750,6 +965,24 @@ func sfSkip(l *lexer, nextFn stateFunc) stateFunc {
 		l.ignore()
 		return nextFn
 	}
+}
+
+func sfCommentStart(l *lexer) stateFunc {
+	l.emit(tokenCommentStart)
+	l.ignore()
+	return sfComment
+}
+
+func sfComment(l *lexer) stateFunc {
+
+	r := l.peek()
+	if r == '\n' || r == '\r' || r == eof {
+		l.emit(tokenText)
+		return l.pop()
+	}
+
+	l.next()
+	return sfComment
 }
 
 func (l *lexer) printCurrentToken() {

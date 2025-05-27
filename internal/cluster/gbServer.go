@@ -674,6 +674,18 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 	s.serverLock.RUnlock()
 
 	for i, addr := range seeds {
+
+		if addr.resolved.IP.Equal(s.boundTCPAddr.IP) && addr.resolved.Port == s.boundTCPAddr.Port {
+			log.Printf("skipping same seed addr")
+			continue
+		}
+
+		// TODO Need a connection check here so we don't redial and already made connection
+
+		if s.isSeed {
+			log.Printf("dialing other seed addr %s", addr.host)
+		}
+
 		conn, err := net.Dial("tcp", addr.resolved.String())
 		if err != nil {
 			log.Printf("Failed to dial seed %s: %v -- trying reconnect...", addr.host, err)
@@ -692,7 +704,7 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 		return conn, nil
 	}
 
-	return nil, Errors.DialSeedErr
+	return nil, nil
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
@@ -887,7 +899,10 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	// If a seed node hasn't been added OR we have been started before the seed node then we can initiate a retry until fail and end server
 
-	if !s.isSeed {
+	//TODO here we need to handle if connection returned is nil meaning seed is not live yet - do we want to retry the go-routine?
+	// or retry within the connectToSeed method?
+
+	if !s.isSeed || len(s.gbClusterConfig.SeedServers) > 1 {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
 		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {

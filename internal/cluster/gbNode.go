@@ -95,6 +95,11 @@ func (s *GBServer) connectToSeed() error {
 		return err
 	}
 
+	if conn == nil {
+		log.Printf("seed not reachable will try again...")
+		return nil
+	}
+
 	reqID, err := s.acquireReqID()
 	if err != nil {
 		return fmt.Errorf("connect to seed - acquire request ID: %s", err)
