@@ -901,6 +901,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	//TODO here we need to handle if connection returned is nil meaning seed is not live yet - do we want to retry the go-routine?
 	// or retry within the connectToSeed method?
+	// we would only want to retry if a batch of seed nodes were started together and needed a delay to wait for one or more to go live
 
 	if !s.isSeed || len(s.gbClusterConfig.SeedServers) > 1 {
 		// If we're not the original (seed) node, connect to the seed server

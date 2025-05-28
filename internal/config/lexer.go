@@ -55,6 +55,7 @@ const (
 	identContinue = identifier | digit | connector
 	identStart    = identifier | digit | quote
 	check         = identifier | digit | connector | whitespace | comment | quote | object
+	valueCheck    = identContinue | quote | object
 	junk          = ^check
 )
 
@@ -264,7 +265,7 @@ func (l *lexer) next() (r rune) {
 
 func (l *lexer) ignore() {
 	l.start = l.pos
-	l.itemLineStart = l.start
+	l.itemLineStart = l.lineStart
 }
 
 func (l *lexer) backup() {
@@ -303,9 +304,10 @@ func (l *lexer) emit(typ tokenType) {
 	value := strings.Join(l.stringParts, "") + l.input[l.start:l.pos]
 
 	pos := l.pos - l.itemLineStart - len(value)
+
 	l.tokens <- token{typ: typ, value: value, line: l.line, pos: pos}
 	l.start = l.pos
-	l.itemLineStart = l.start
+	l.itemLineStart = l.lineStart
 
 }
 
@@ -335,7 +337,7 @@ func (l *lexer) emitString() {
 	pos := l.pos - l.itemLineStart - len(str)
 	l.tokens <- token{typ: tokenString, value: str, line: l.line, pos: pos}
 	l.start = l.pos
-	l.itemLineStart = l.start
+	l.itemLineStart = l.lineStart
 
 }
 
@@ -362,8 +364,6 @@ func sfTop(l *lexer) stateFunc {
 
 	r := l.next()
 
-	l.printPosition()
-
 	if r < 0 || r > 255 {
 		return l.emitError("unexpected non-ASCII input")
 	}
@@ -388,18 +388,12 @@ func sfTop(l *lexer) stateFunc {
 		return sfSkip(l, sfTop)
 	}
 
-	if r == '@' {
-		fmt.Println("processing section")
-		return nil
-	}
-
 	if l.lookup[r]&comment != 0 {
 		fmt.Println("processing comment")
 		l.emitError("i have not implemented this yet lol")
 		return nil
 	}
 
-	// Will have to emit error before returning nil
 	l.backup()
 	l.push(sfTopValueEnd)
 	return sfKeyStart
@@ -453,13 +447,6 @@ func sfKeyStart(l *lexer) stateFunc {
 		}
 	}
 
-	if r == sectionStart {
-		l.next()
-		l.emit(tokenSection)
-		return sfSkip(l, sfKeyStart)
-	}
-
-	l.ignore()
 	l.next()
 	return sfKey
 
@@ -468,8 +455,6 @@ func sfKeyStart(l *lexer) stateFunc {
 func sfDQuotedKey(l *lexer) stateFunc {
 
 	r := l.peek()
-
-	l.printPosition()
 
 	log.Printf("quoted key: %s", string(r))
 
@@ -502,18 +487,12 @@ func sfKey(l *lexer) stateFunc {
 
 	r := l.peek()
 
-	l.printPosition()
-
-	if l.lookup[r]&identContinue == 0 {
-		log.Printf("warning: found wrong char in key %s", string(r))
-		// Make decision on what to do here
+	if l.lookup[r]&whitespace != 0 {
+		l.emit(tokenKey)
+		return sfKeyEnd
 	}
 
-	if r == keyValueSep || r == eof {
-		log.Println("HERE NOW")
-
-		// We are at : here but because we are peeking at the r and haven't moved the lexer forward we go into lex key end
-		// Still on the last char of the key, and therefore we can lookup the next char in keyEnd
+	if r == keyValueSep || r == keyValueEqSep || r == eof {
 
 		l.emit(tokenKey)
 		return sfKeyEnd
@@ -533,10 +512,7 @@ func sfKeyEnd(l *lexer) stateFunc {
 
 	r := l.next()
 
-	l.printPosition()
-
-	if l.lookup[r]&check != 0 {
-		log.Printf("skipping junk = %s", string(r))
+	if l.lookup[r]&whitespace != 0 {
 		return sfSkip(l, sfKeyEnd)
 	}
 
@@ -552,13 +528,13 @@ func sfKeyEnd(l *lexer) stateFunc {
 		return nil
 	}
 
-	if l.lookup[r]&identifier != 0 {
-		l.backup()
-		return sfValue
-	}
+	//if l.lookup[r]&valueCheck != 0 {
+	//	l.backup()
+	//	return sfValue
+	//}
 
-	l.emitError("expected a value but got %s", string(r))
-	return nil
+	l.backup()
+	return sfValue
 
 }
 
@@ -566,8 +542,7 @@ func sfValue(l *lexer) stateFunc {
 
 	r := l.next()
 
-	l.printPosition()
-	log.Printf("r = %s", string(r))
+	//log.Printf("r = %s", string(r))
 
 	// Here we must identify the start of a value and ignore all junk before this after reaching key end
 	// If there is whitespace we ignore it
@@ -575,16 +550,11 @@ func sfValue(l *lexer) stateFunc {
 
 	switch {
 
-	case l.lookup[r]&check == 0:
-		return l.emitError("unexpected character - %s", string(r))
+	case r == keyValueEqSep || r == keyValueSep:
+		return sfSkip(l, sfValue)
 
 	case l.lookup[r]&whitespace != 0 || l.lookup[r]&comment != 0:
 		return sfSkip(l, sfValue)
-
-	case r == sectionStart:
-		l.ignore()
-		l.emit(tokenSection)
-		return sfSkip(l, sfSectionStart)
 
 	case l.lookup[r]&object != 0:
 
@@ -596,7 +566,6 @@ func sfValue(l *lexer) stateFunc {
 			log.Printf("object = %s", string(l.input[l.start:l.pos]))
 			l.ignore()
 			l.emit(tokenArrayStart)
-			l.printPosition()
 			log.Printf("next token will be --> %s", string(l.peek()))
 			return sfArrayValue
 		}
@@ -604,7 +573,6 @@ func sfValue(l *lexer) stateFunc {
 			log.Printf("found map start")
 			l.ignore()
 			l.emit(tokenMapStart)
-			l.printPosition()
 			log.Printf("next token will be --> %s", string(l.peek()))
 			return sfMapKeyStart
 		}
@@ -635,20 +603,6 @@ func sfValue(l *lexer) stateFunc {
 
 }
 
-func sfSectionStart(l *lexer) stateFunc {
-
-	r := l.peek()
-
-	// checks for valid section start - should be identifier only - no quotes
-
-	if r == eof {
-		return l.emitError("unexpected EOF - valid identifier [a-z|A-Z] must follow section tag - (@)")
-	}
-
-	return nil
-
-}
-
 func sfArrayValue(l *lexer) stateFunc {
 
 	r := l.next()
@@ -672,7 +626,7 @@ func sfArrayValue(l *lexer) stateFunc {
 
 	l.backup()
 	l.push(sfArrayValueEnd)
-	return sfValue
+	return sfValue // Move to string lexer to process inner string - this will pop last state from stack
 
 }
 
@@ -729,8 +683,6 @@ func sfMapKeyStart(l *lexer) stateFunc {
 		l.next()
 		l.push(sfMapKeyStart)
 		return sfCommentStart
-	case l.lookup[r]&identStart == 0: // Key must be valid identifier start so we check here and error early before continuing to lex
-		return l.emitError("expected identifier start - got (%s)", string(r))
 	case l.lookup[r]&quote != 0:
 		l.next()
 		l.ignore()
@@ -742,7 +694,6 @@ func sfMapKeyStart(l *lexer) stateFunc {
 	}
 
 	l.ignore()
-	l.printPosition()
 	l.next()
 	return sfMapKey
 
@@ -786,10 +737,14 @@ func sfMapKey(l *lexer) stateFunc {
 
 	r := l.peek()
 
-	if r == eof {
+	switch {
+	case r == eof:
 		return l.emitError("unexpected EOF processing map key - (%s)", string(r))
-	} else if r == keyValueSep || r == keyValueEqSep {
-		log.Printf("found key separator - (%s)", string(r))
+	case l.lookup[r]&whitespace != 0:
+		l.emit(tokenKey)
+		return sfMapKeyEnd
+	case r == keyValueSep || r == keyValueEqSep:
+		log.Printf("found key separator in map - (%s)", string(r))
 		l.emit(tokenKey)
 		return sfMapKeyEnd
 	}
@@ -816,24 +771,52 @@ func sfMapKeyEnd(l *lexer) stateFunc {
 }
 
 func sfMapValue(l *lexer) stateFunc {
-	return nil
+
+	r := l.next()
+
+	switch {
+	case l.lookup[r]&whitespace != 0:
+		return sfSkip(l, sfMapValue)
+	case r == mapValSep:
+		return l.emitError("unexpected map terminator - (%s)", string(r))
+	case r == mapEnd:
+		return sfSkip(l, sfMapEnd)
+	}
+
+	l.backup()
+	l.push(sfMapValueEnd)
+	return sfValue
 }
 
 func sfMapValueEnd(l *lexer) stateFunc {
-	return nil
+
+	r := l.next()
+
+	switch {
+	case r == optValEnd || r == mapValSep || r == '\n' || r == '\r': // We put this at the top to not skip the whitespace which could signal a termination of map value
+		return sfSkip(l, sfMapKeyStart)
+	case l.lookup[r]&whitespace != 0:
+		return sfSkip(l, sfMapValueEnd)
+	case l.lookup[r]&comment != 0:
+		l.push(sfMapValueEnd)
+		return sfCommentStart
+	case r == mapEnd:
+		return sfSkip(l, sfMapEnd)
+	}
+
+	return l.emitError("expected a terminator (%q | %q) or map end (%q) but got (%s) instead", mapValSep, optValEnd, mapEnd, string(r))
 }
 
 func sfMapEnd(l *lexer) stateFunc {
-
-	// TODO Finish
-	return nil
+	l.ignore()
+	log.Printf("emitting map end")
+	l.emit(tokenMapEnd)
+	return l.pop()
 }
 
 func dQuotedString(l *lexer) stateFunc {
 
 	r := l.next()
-
-	l.printPosition()
 
 	switch {
 
@@ -886,8 +869,6 @@ func sQuotedString(l *lexer) stateFunc {
 func sfStringValue(l *lexer) stateFunc {
 
 	r := l.next()
-
-	l.printPosition()
 
 	log.Printf("string value = %s", string(r))
 

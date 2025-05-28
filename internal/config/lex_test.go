@@ -170,11 +170,12 @@ func TestArrayEmit(t *testing.T) {
 
 func TestMapEmit(t *testing.T) {
 
-	input := `"some-key": {
-  "some_map" = {
-    key1: "value1"
-  }
-}`
+	input := `some-key {
+  				 some_map {
+    				key1: "value1"
+					key2: "value2"
+  				 }
+			  }`
 
 	lex := lex(input)
 

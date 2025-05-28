@@ -100,11 +100,16 @@ func (s *GBServer) connectToSeed() error {
 		return nil
 	}
 
+	//TODO If we are here - we now need to handle cluster config
+	// If we are a seed, we must hash our config - send and compare received hash - if different then we fail early or defer to older seed
+	// If we are not a seed, we must send our information and be ready to receive a cluster config
+
 	reqID, err := s.acquireReqID()
 	if err != nil {
 		return fmt.Errorf("connect to seed - acquire request ID: %s", err)
 	}
 
+	// TODO Will need to change this
 	pay1, err := s.prepareSelfInfoSend(NEW_JOIN, int(reqID), 0)
 	if err != nil {
 		return err
