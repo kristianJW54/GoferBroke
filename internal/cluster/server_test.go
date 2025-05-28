@@ -18,8 +18,8 @@ func TestServerNameLengthError(t *testing.T) {
 	config := &GbClusterConfig{
 		SeedServers: []Seeds{
 			{
-				SeedHost: ip,
-				SeedPort: port,
+				Host: ip,
+				Port: port,
 			},
 		},
 	}
@@ -49,12 +49,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	config := &GbClusterConfig{
 		SeedServers: []Seeds{
 			{
-				SeedHost: ip,
-				SeedPort: port,
+				Host: ip,
+				Port: port,
 			},
 			{
-				SeedHost: ip2,
-				SeedPort: port2,
+				Host: ip2,
+				Port: port2,
 			},
 		},
 		Cluster: &ClusterOptions{
@@ -118,8 +118,8 @@ func TestGossipSignal(t *testing.T) {
 	config := &GbClusterConfig{
 		SeedServers: []Seeds{
 			{
-				SeedHost: ip,
-				SeedPort: port,
+				Host: ip,
+				Port: port,
 			},
 		},
 		Cluster: &ClusterOptions{
@@ -187,8 +187,8 @@ func TestGossipDifferentStates(t *testing.T) {
 	config := &GbClusterConfig{
 		SeedServers: []Seeds{
 			{
-				SeedHost: "127.0.0.1",
-				SeedPort: "8081",
+				Host: "127.0.0.1",
+				Port: "8081",
 			},
 		},
 	}

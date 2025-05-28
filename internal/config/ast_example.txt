@@ -1,0 +1,72 @@
+Example AST representation for the following config input:
+
+    Name: "test-server"
+    SeedServers: [
+        { Host: 192.168.0.1, Port: 8081 },
+        { Host: 192.168.0.1, Port: 8082 },
+    ]
+    Cluster {}
+
+
+=========================================================================
+
+Parsed AST (Go structs):
+
+&ConfigNode{
+    Entries: []Node{
+
+        // Represents: Name: "test-server"
+        &KeyValueNode{
+            Key: "Name",
+            Value: &StringNode{
+                Value: "test-server",
+            },
+        },
+
+        // Represents: SeedServers: [ {...}, {...} ]
+        &KeyValueNode{
+            Key: "SeedServers",
+            Value: &ListNode{
+                Items: []Node{
+
+                    // First object in the list: { Host: 192.168.0.1, Port: 8081 }
+                    &ObjectNode{
+                        Pairs: []*KeyValueNode{
+                            {
+                                Key: "Host",
+                                Value: &StringNode{Value: "192.168.0.1"},
+                            },
+                            {
+                                Key: "Port",
+                                Value: &StringNode{Value: "8081"},
+                            },
+                        },
+                    },
+
+                    // Second object in the list: { Host: 192.168.0.1, Port: 8082 }
+                    &ObjectNode{
+                        Pairs: []*KeyValueNode{
+                            {
+                                Key: "Host",
+                                Value: &StringNode{Value: "192.168.0.1"},
+                            },
+                            {
+                                Key: "Port",
+                                Value: &StringNode{Value: "8082"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+
+        // Represents: Cluster {}
+        &KeyValueNode{
+            Key: "Cluster",
+            Value: &BlockNode{
+                Name: "Cluster",
+                Children: []Node{}, // Empty block body
+            },
+        },
+    },
+}

@@ -204,3 +204,41 @@ func TestMapEmit(t *testing.T) {
 	}
 
 }
+
+func TestBasicConfig(t *testing.T) {
+
+	input := `
+Name: "test-server"
+SeedServers: [
+    { host: 192.168.0.1, port: 8081 },
+    { host: "192.168.0.1", port: 8082 },
+]
+Cluster {}`
+
+	lex := lex(input)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	tokenCount := 0
+	tokens := make([]string, 0)
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("lexer timeout")
+		default:
+			token := lex.nextToken()
+			log.Println(token)
+
+			tokenCount++
+			tokens = append(tokens, token.value)
+
+			if token.typ == tokenEOF {
+				log.Printf("total tokens = %v || tokens --> %+s", tokenCount, tokens)
+				return
+			}
+		}
+	}
+
+}

@@ -101,8 +101,8 @@ func (cc *ClusterConfig) InitConfig() error {
 	}
 	ss := make([]cluster.Seeds, len(cc.SeedServers))
 	for i, server := range cc.SeedServers {
-		ss[i].SeedPort = server.SeedPort
-		ss[i].SeedHost = server.SeedHost
+		ss[i].Port = server.SeedPort
+		ss[i].Host = server.SeedHost
 	}
 
 	config := &cluster.GbClusterConfig{

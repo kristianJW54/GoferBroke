@@ -45,8 +45,8 @@ type GbClusterConfig struct {
 }
 
 type Seeds struct {
-	SeedHost string
-	SeedPort string
+	Host string
+	Port string
 }
 
 type ClusterNetworkType int

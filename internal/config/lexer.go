@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -404,23 +405,22 @@ func sfTopValueEnd(l *lexer) stateFunc {
 
 	r := l.next()
 
-	if l.lookup[r]&comment != 0 {
-		// l.push(sfTop)
-		// return commentStart
-		l.emitError("i have not implemented this yet lol")
-		return nil
-	}
+	switch {
 
-	if l.lookup[r]&whitespace != 0 {
-		return sfTopValueEnd
-	}
+	case l.lookup[r]&comment != 0:
+		l.push(sfTop)
+		return sfCommentStart
 
-	if r == eof {
+	case r == keyValueEqSep || r == keyValueSep || r == '\n' || r == '\r' || r == eof:
 		l.ignore()
 		return sfTop
+
+	case l.lookup[r]&whitespace != 0:
+		return sfTopValueEnd
+
 	}
 
-	return l.emitError("expected value to have an end but got %s instead", string(r))
+	return l.emitError("expected a value to end with new line, comment or EOF - got (%s)", string(r))
 
 }
 
@@ -430,14 +430,12 @@ func sfKeyStart(l *lexer) stateFunc {
 
 	if l.lookup[r]&whitespace != 0 {
 		l.next()
-		l.ignore()
 		return sfSkip(l, sfKeyStart)
 	}
 
 	if l.lookup[r]&quote != 0 {
 
 		l.next()
-		l.ignore()
 
 		switch {
 		case r == dStringStart:
@@ -447,6 +445,7 @@ func sfKeyStart(l *lexer) stateFunc {
 		}
 	}
 
+	l.ignore()
 	l.next()
 	return sfKey
 
@@ -516,9 +515,8 @@ func sfKeyEnd(l *lexer) stateFunc {
 		return sfSkip(l, sfKeyEnd)
 	}
 
-	if r == keyValueSep {
+	if r == keyValueSep || r == keyValueEqSep {
 		log.Printf("found key separator (%s)", string(r))
-		l.printCurrentToken()
 		log.Printf("next char = %s", string(l.peek()))
 		return sfSkip(l, sfValue)
 	}
@@ -527,11 +525,6 @@ func sfKeyEnd(l *lexer) stateFunc {
 		l.emit(tokenEOF)
 		return nil
 	}
-
-	//if l.lookup[r]&valueCheck != 0 {
-	//	l.backup()
-	//	return sfValue
-	//}
 
 	l.backup()
 	return sfValue
@@ -548,12 +541,13 @@ func sfValue(l *lexer) stateFunc {
 	// If there is whitespace we ignore it
 	// Now anything that isn't something we expect from a value we error on and switch on all value cases
 
+	if l.lookup[r]&whitespace != 0 || l.lookup[r]&comment != 0 {
+		return sfSkip(l, sfValue)
+	}
+
 	switch {
 
 	case r == keyValueEqSep || r == keyValueSep:
-		return sfSkip(l, sfValue)
-
-	case l.lookup[r]&whitespace != 0 || l.lookup[r]&comment != 0:
 		return sfSkip(l, sfValue)
 
 	case l.lookup[r]&object != 0:
@@ -589,11 +583,14 @@ func sfValue(l *lexer) stateFunc {
 			l.ignore()
 			return sQuotedString
 		}
-
 		// Else we have an escaped string
 		l.backup()
 		l.stringState = sfStringValue // We set our string state function to where we want to return back to after processing sub string elements
 		return sfStringValue
+
+	case l.lookup[r]&digit != 0:
+		l.backup()
+		return sfDigitStart
 
 	}
 
@@ -930,6 +927,74 @@ func sfEscapedString(l *lexer) stateFunc {
 	}
 
 	return l.emitError("Invalid escape sequence '%s' - escapes allowed [\\t, \\n, \\r, \\\", \\\\]", string(r))
+
+}
+
+func sfDigitStart(l *lexer) stateFunc {
+
+	r := l.next()
+
+	log.Printf("digit start = %s", string(r))
+
+	if !unicode.IsDigit(r) {
+		return l.emitError("expected digit but got (%s)", string(r))
+	}
+
+	return sfDigit
+
+}
+
+func sfDigit(l *lexer) stateFunc {
+
+	//TODO Here we can do a few things like NATS does with convenient numbers (1kb etc) if we want to but for our config use case
+	// simple numbers and IPs are ok for now
+
+	r := l.next()
+
+	switch {
+
+	case l.lookup[r]&digit != 0:
+		return sfDigit
+
+	case r == '.':
+		// We could process float here, but we currently do not have floats available in our config
+		return sfIPStart
+
+	case !(r == mapEnd || r == keyValueSep || r == keyValueEqSep || l.lookup[r]&whitespace != 0 || l.lookup[r]&digit != 0):
+		l.stringState = sfStringValue
+		return sfStringValue
+
+	}
+
+	l.backup()
+	l.emit(tokenInteger)
+	return l.pop()
+
+}
+
+func sfIPStart(l *lexer) stateFunc {
+
+	r := l.next()
+
+	if !unicode.IsDigit(r) {
+		return l.emitError("expected digit but got (%s)", string(r))
+	}
+
+	return sfIP
+
+}
+
+func sfIP(l *lexer) stateFunc {
+
+	r := l.next()
+
+	if l.lookup[r]&digit != 0 || r == '.' || r == ':' || r == '-' {
+		return sfIP
+	}
+
+	l.backup()
+	l.emit(tokenString)
+	return l.pop()
 
 }
 

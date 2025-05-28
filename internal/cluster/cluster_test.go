@@ -652,8 +652,8 @@ func TestLiveGossip(t *testing.T) {
 	config := &GbClusterConfig{
 		SeedServers: []Seeds{
 			{
-				SeedHost: ip,
-				SeedPort: port,
+				Host: ip,
+				Port: port,
 			},
 		},
 		Cluster: &ClusterOptions{},

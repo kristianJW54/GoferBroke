@@ -50,8 +50,8 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		config = &GbClusterConfig{
 			SeedServers: []Seeds{
 				{
-					SeedHost: ip,
-					SeedPort: port,
+					Host: ip,
+					Port: port,
 				},
 			},
 			Cluster: &ClusterOptions{
@@ -66,8 +66,8 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		config = &GbClusterConfig{
 			SeedServers: []Seeds{
 				{
-					SeedHost: clusterIP,
-					SeedPort: clusterPort,
+					Host: clusterIP,
+					Port: clusterPort,
 				},
 			},
 			Cluster: &ClusterOptions{
@@ -588,12 +588,12 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 		defer s.serverLock.Unlock()
 
 		for _, value := range s.gbClusterConfig.SeedServers {
-			addr := net.JoinHostPort(value.SeedHost, value.SeedPort)
+			addr := net.JoinHostPort(value.Host, value.Port)
 			tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 			if err != nil {
 				return err
 			}
-			s.seedAddr = append(s.seedAddr, &seedEntry{host: value.SeedHost, port: value.SeedPort, resolved: tcpAddr})
+			s.seedAddr = append(s.seedAddr, &seedEntry{host: value.Host, port: value.Port, resolved: tcpAddr})
 		}
 
 	}
