@@ -5,7 +5,10 @@ Example AST representation for the following config input:
         { Host: 192.168.0.1, Port: 8081 },
         { Host: 192.168.0.1, Port: 8082 },
     ]
-    Cluster {}
+    Cluster {
+        option: option1,
+
+    }
 
 
 =========================================================================

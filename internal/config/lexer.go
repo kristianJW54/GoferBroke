@@ -455,8 +455,6 @@ func sfDQuotedKey(l *lexer) stateFunc {
 
 	r := l.peek()
 
-	log.Printf("quoted key: %s", string(r))
-
 	if r == eof {
 		l.emitError("unexpected EOF")
 		return nil
@@ -497,8 +495,6 @@ func sfKey(l *lexer) stateFunc {
 		return sfKeyEnd
 	}
 
-	log.Printf("r = %s", string(r))
-
 	l.next()
 	return sfKey
 
@@ -516,8 +512,6 @@ func sfKeyEnd(l *lexer) stateFunc {
 	}
 
 	if r == keyValueSep || r == keyValueEqSep {
-		log.Printf("found key separator (%s)", string(r))
-		log.Printf("next char = %s", string(l.peek()))
 		return sfSkip(l, sfValue)
 	}
 
@@ -552,22 +546,16 @@ func sfValue(l *lexer) stateFunc {
 
 	case l.lookup[r]&object != 0:
 
-		log.Printf("object = %s", string(r))
 		// Switch on what object
 
 		if r == arrayStart {
-			log.Printf("found array start")
-			log.Printf("object = %s", string(l.input[l.start:l.pos]))
 			l.ignore()
 			l.emit(tokenArrayStart)
-			log.Printf("next token will be --> %s", string(l.peek()))
 			return sfArrayValue
 		}
 		if r == mapStart {
-			log.Printf("found map start")
 			l.ignore()
 			l.emit(tokenMapStart)
-			log.Printf("next token will be --> %s", string(l.peek()))
 			return sfMapKeyStart
 		}
 
@@ -631,8 +619,6 @@ func sfArrayValueEnd(l *lexer) stateFunc {
 
 	r := l.next()
 
-	log.Printf("array value end reached %s", string(l.input[l.start:l.pos]))
-
 	if l.lookup[r]&whitespace != 0 {
 		return sfSkip(l, sfArrayValueEnd)
 	}
@@ -643,7 +629,6 @@ func sfArrayValueEnd(l *lexer) stateFunc {
 	}
 
 	if r == arrayValSep || r == '\n' || r == '\r' {
-		log.Printf("found separator so switching to sfArrayValue to process next in array")
 		return sfSkip(l, sfArrayValue)
 	}
 
@@ -741,7 +726,6 @@ func sfMapKey(l *lexer) stateFunc {
 		l.emit(tokenKey)
 		return sfMapKeyEnd
 	case r == keyValueSep || r == keyValueEqSep:
-		log.Printf("found key separator in map - (%s)", string(r))
 		l.emit(tokenKey)
 		return sfMapKeyEnd
 	}
@@ -806,7 +790,6 @@ func sfMapValueEnd(l *lexer) stateFunc {
 
 func sfMapEnd(l *lexer) stateFunc {
 	l.ignore()
-	log.Printf("emitting map end")
 	l.emit(tokenMapEnd)
 	return l.pop()
 }
@@ -867,10 +850,7 @@ func sfStringValue(l *lexer) stateFunc {
 
 	r := l.next()
 
-	log.Printf("string value = %s", string(r))
-
 	if r == '\\' {
-		log.Printf("found escaped string")
 		l.addToStringParts(1)
 		return sfEscapedString
 	}
@@ -878,7 +858,6 @@ func sfStringValue(l *lexer) stateFunc {
 	if r == eof || l.lookup[r]&whitespace != 0 || r == arrayEnd || r == arrayValSep || r == mapEnd {
 
 		l.backup()
-		log.Printf("found terminator (%s) - backing up and popping from stack", string(r))
 		if l.stringState != nil {
 			l.emitString()
 
@@ -892,7 +871,6 @@ func sfStringValue(l *lexer) stateFunc {
 	}
 
 	if r == sStringEnd {
-		log.Printf("found end string")
 		l.backup()
 		l.emitString()
 		l.next()
@@ -933,8 +911,6 @@ func sfEscapedString(l *lexer) stateFunc {
 func sfDigitStart(l *lexer) stateFunc {
 
 	r := l.next()
-
-	log.Printf("digit start = %s", string(r))
 
 	if !unicode.IsDigit(r) {
 		return l.emitError("expected digit but got (%s)", string(r))

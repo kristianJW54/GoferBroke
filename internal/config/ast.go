@@ -23,7 +23,6 @@ type ListNode struct {
 	Items []Node
 }
 
-type BlockNode struct {
-	Name     string
-	Children []Node
+type ObjectNode struct {
+	Children []*KeyValueNode
 }
