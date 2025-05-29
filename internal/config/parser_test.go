@@ -1,11 +1,19 @@
 package config
 
-import "testing"
+import (
+	"log"
+	"testing"
+)
 
-func TestParserTokenTest(t *testing.T) {
+func TestParserToken(t *testing.T) {
 
 	d := `key1: "value2"`
 
-	parse(d)
-	
+	token, err := parseConfig(d)
+	if err != nil {
+		t.Error(err)
+	}
+
+	log.Println(token)
+
 }
