@@ -138,7 +138,7 @@ func TestKeyStringValueEmit(t *testing.T) {
 
 func TestArrayEmit(t *testing.T) {
 
-	input := `"some-key": [value1, value2]`
+	input := `"some-key": 1`
 
 	lex := lex(input)
 

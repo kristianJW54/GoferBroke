@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"strconv"
 )
 
 type ParseContext int
@@ -72,6 +73,24 @@ func (p *parser) addToParent(child Node, key string) error {
 
 	currCtx := p.peekContext()
 
+	// If we're nested under a KeyValueNode (i.e., context is a kv pair), unwrap the value
+	if kv, ok := currCtx.node.(*KeyValueNode); ok {
+		// Redirect to the inner node, which should be a ListNode or ObjectNode
+		switch val := kv.Value.(type) {
+		case *ListNode:
+			val.Items = append(val.Items, child)
+		case *ObjectNode:
+			if kvChild, ok := child.(*KeyValueNode); ok {
+				val.Children = append(val.Children, kvChild)
+			} else {
+				val.Children = append(val.Children, &KeyValueNode{key, child})
+			}
+		default:
+			return fmt.Errorf("unexpected child type for KeyValueNode: %T", val)
+		}
+		return nil
+	}
+
 	switch currCtx.ctx {
 
 	case ContextRoot:
@@ -99,7 +118,12 @@ func (p *parser) addToParent(child Node, key string) error {
 			return fmt.Errorf("expected object node, got %T", currCtx.ctx)
 		}
 
-		obj.Children = append(obj.Children, &KeyValueNode{key, child})
+		if kv, ok := child.(*KeyValueNode); ok {
+			obj.Children = append(obj.Children, kv)
+		} else {
+			// If we get a raw node and key, wrap it
+			obj.Children = append(obj.Children, &KeyValueNode{key, child})
+		}
 
 	default:
 		return fmt.Errorf("unknown context %v", currCtx.ctx)
@@ -124,7 +148,6 @@ func parseConfig(data string) (*RootConfig, error) {
 	for {
 
 		t := p.peek()
-		log.Printf("t = %s", t.value)
 
 		if t.typ == tokenEOF {
 			break
@@ -138,7 +161,10 @@ func parseConfig(data string) (*RootConfig, error) {
 		// We will only break when we have either EOF or Error
 		// We can then use this loop to have a manual stack with no recursion
 
-		p.parseToken()
+		_, err := p.parseToken()
+		if err != nil {
+			return nil, err
+		}
 
 	}
 
@@ -152,30 +178,77 @@ func parseConfig(data string) (*RootConfig, error) {
 
 }
 
-func (p *parser) parseToken() token {
+func (p *parser) parseToken() (token, error) {
 
 	t := p.next()
 
 	switch t.typ {
 
+	case tokenEOF:
+		return t, nil
+
+	case tokenError:
+		return t, fmt.Errorf("received error token")
+
 	case tokenKey:
-		log.Printf("found me a key boii --> %s", t.value)
 		if err := p.parseKey(t); err != nil {
 			log.Printf("error parsing key - %s", err)
 		}
 
 	// Account for all starts as potential nested children
 
+	case tokenMapStart:
+
+		obj := &ObjectNode{
+			make([]*KeyValueNode, 0, 4),
+		}
+
+		p.pushContext(ContextMap, obj, "")
+
+		err := p.parseMap(p.next())
+		if err != nil {
+			return t, err
+		}
+
+	case tokenArrayStart:
+
+		list := &ListNode{
+			make([]Node, 0, 4),
+		}
+
+		p.pushContext(ContextArray, list, "")
+
+		err := p.parseList(p.next())
+		if err != nil {
+			return t, err
+		}
+
 	case tokenArrayEnd:
-		log.Printf("got the end of list - popping")
+
 		ctx := p.popContext()
-		if err := p.addToParent(ctx.node, ctx.key); err != nil {
-			log.Printf("error attaching closed context - %s", err)
+		if ctx.ctx != ContextArray {
+			return t, fmt.Errorf("expected ContextArray, got %T", ctx.node)
+		}
+
+		err := p.addToParent(ctx.node, ctx.key)
+		if err != nil {
+			return t, fmt.Errorf("error closing array context: %v", err)
+		}
+
+	case tokenMapEnd:
+
+		ctx := p.popContext()
+		if ctx.ctx != ContextMap {
+			return t, fmt.Errorf("expected ContextMap, got %T", ctx.node)
+		}
+		err := p.addToParent(ctx.node, ctx.key)
+		if err != nil {
+			return t, fmt.Errorf("error closing map context: %v", err)
 		}
 
 	}
 
-	return t
+	return t, nil
 
 }
 
@@ -191,21 +264,57 @@ func (p *parser) parseKey(t token) error {
 		return fmt.Errorf("next token is invalid - got (%T) expected either Value, List or Map", next.typ)
 
 	case next.typ == tokenString:
-		log.Printf("oh yeah baby --> %s", next.value)
-		kv := &KeyValueNode{key, next.value}
+		kv := &KeyValueNode{key, &StringNode{next.value}}
 		err := p.addToParent(kv, key)
 		if err != nil {
 			return err
 		}
 
+	case next.typ == tokenInteger:
+		intValue, err := strconv.Atoi(next.value)
+		if err != nil {
+			return err
+		}
+		kv := &KeyValueNode{key, &DigitNode{Value: intValue}}
+		err = p.addToParent(kv, key)
+		if err != nil {
+			return err
+		}
+
 	case next.typ == tokenArrayStart:
-		log.Printf("found array start")
+
 		list := &ListNode{
 			Items: make([]Node, 0, 4), // Pre-allocate to a reasonable capacity to avoid re-sizing
 		}
 
-		p.pushContext(ContextArray, list, key)
+		kv := &KeyValueNode{key, list}
+
+		//err := p.addToParent(kv, key)
+		//if err != nil {
+		//	return err
+		//}
+
+		p.pushContext(ContextArray, kv, key)
 		err := p.parseList(p.next())
+		if err != nil {
+			return err
+		}
+
+	case next.typ == tokenMapStart:
+
+		obj := &ObjectNode{
+			make([]*KeyValueNode, 0, 4),
+		}
+
+		kv := &KeyValueNode{key, obj}
+
+		//err := p.addToParent(kv, key)
+		//if err != nil {
+		//	return err
+		//}
+
+		p.pushContext(ContextMap, kv, key)
+		err := p.parseMap(p.next())
 		if err != nil {
 			return err
 		}
@@ -225,8 +334,10 @@ func (p *parser) parseList(t token) error {
 	case next.typ == tokenEOF || next.typ == tokenError:
 		return fmt.Errorf("error in parsing list")
 
+	case next.typ == tokenKey:
+		return fmt.Errorf("tokenKey not a valid entry in list")
+
 	case next.typ == tokenString:
-		log.Printf("another one! - %s", next.value)
 		err := p.addToParent(&StringNode{next.value}, "")
 		if err != nil {
 			return err
@@ -237,7 +348,6 @@ func (p *parser) parseList(t token) error {
 
 		// If we encounter map here it is anonymous and does not have a key
 
-		log.Printf("found map start")
 		obj := &ObjectNode{
 			make([]*KeyValueNode, 0, 4),
 		}
@@ -263,10 +373,26 @@ func (p *parser) parseMap(t token) error {
 	switch {
 
 	case next.typ == tokenKey:
-		log.Printf("map key = %s", key)
-		// Finish
-		return nil
 
+		err := p.parseKey(p.next())
+		if err != nil {
+			return err
+		}
+
+	case next.typ == tokenMapEnd:
+
+		if ctx := p.popContext(); ctx.ctx == ContextMap {
+			err := p.addToParent(ctx.node, key)
+			if err != nil {
+				return err
+			}
+
+		} else {
+			return fmt.Errorf("wrong context on the stack - expected ContextMap - got (%T)", ctx.node)
+		}
+
+	default:
+		return fmt.Errorf("expected map key, got (%T) instead", next.typ)
 	}
 
 	return nil

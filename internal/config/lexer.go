@@ -577,6 +577,7 @@ func sfValue(l *lexer) stateFunc {
 		return sfStringValue
 
 	case l.lookup[r]&digit != 0:
+		log.Printf("found digit = %s", string(r))
 		l.backup()
 		return sfDigitStart
 
@@ -936,7 +937,7 @@ func sfDigit(l *lexer) stateFunc {
 		// We could process float here, but we currently do not have floats available in our config
 		return sfIPStart
 
-	case !(r == mapEnd || r == keyValueSep || r == keyValueEqSep || l.lookup[r]&whitespace != 0 || l.lookup[r]&digit != 0):
+	case !(r == mapEnd || r == keyValueSep || r == keyValueEqSep || l.lookup[r]&whitespace != 0 || l.lookup[r]&digit == 0):
 		l.stringState = sfStringValue
 		return sfStringValue
 
