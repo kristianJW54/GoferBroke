@@ -22,11 +22,16 @@ func TestServerNameLengthError(t *testing.T) {
 				Port: port,
 			},
 		},
+		Cluster: &ClusterOptions{
+			ClusterNetworkType: C_LOCAL,
+		},
 	}
 
-	nodeConfig := &GbNodeConfig{}
+	nodeConfig := &GbNodeConfig{
+		Internal: &InternalOptions{},
+	}
 
-	_, err := NewServer("test-server-name-long-error", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
+	_, err := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
 	if err == nil {
 		t.Errorf("TestServerNameLengthError should have returned an error")
 	}
@@ -42,19 +47,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	ip := "localhost" // Use the full IP address
 	port := "8081"
 
-	ip2 := "localhost"
-	port2 := "8082"
-
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
 		SeedServers: []Seeds{
 			{
 				Host: ip,
 				Port: port,
-			},
-			{
-				Host: ip2,
-				Port: port2,
 			},
 		},
 		Cluster: &ClusterOptions{
@@ -66,12 +64,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 		Internal: &InternalOptions{},
 	}
 
-	gbs, err := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs, err := NewServer("test-server-1", config, nodeConfig, "localhost", "8081", "8080", lc)
 	if err != nil {
 		t.Errorf("TestServerRunningTwoNodes should not have returned an error - got %v", err)
 		return
 	}
-	gbs2, err := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs2, err := NewServer("test-server-2", config, nodeConfig, "localhost", "8082", "8083", lc)
 	if err != nil {
 		t.Errorf("TestServerRunningTwoNodes should not have returned an error - got %v", err)
 		return
@@ -131,9 +129,9 @@ func TestGossipSignal(t *testing.T) {
 		Internal: &InternalOptions{},
 	}
 
-	gbs, _ := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
-	gbs3, _ := NewServer("test-server", 3, config, nodeConfig, "localhost", "8085", "8084", lc)
+	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs3, _ := NewServer("test-server", config, nodeConfig, "localhost", "8085", "8084", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
@@ -197,8 +195,8 @@ func TestGossipDifferentStates(t *testing.T) {
 		Internal: testConfig,
 	}
 
-	gbs, _ := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8080", lc)
+	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8080", lc)
 
 	UpdateServerNameAndTime(t, gbs, 1735988400)
 	UpdateServerNameAndTime(t, gbs2, 1735988401)

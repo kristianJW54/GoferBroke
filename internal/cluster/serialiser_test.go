@@ -129,7 +129,7 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 
 			// Step 4: Validate Results
 			if result[0] != gbs.ServerName {
-				t.Errorf("Expected result[0] to be %s, got %s", gbs.ServerName, result[0])
+				t.Errorf("Expected result[0] to be %s, got %s", gbs.PrettyName(), result[0])
 			}
 
 			if len(result) != tt.expectedLen {

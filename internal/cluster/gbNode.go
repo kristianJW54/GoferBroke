@@ -65,12 +65,12 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// Start time, reference count etc
 
 	// Track the goroutine for the read loop using startGoRoutine
-	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
+	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("read loop for %s", name), func() {
 		client.readLoop()
 	})
 
 	//Write loop -
-	s.startGoRoutine(s.ServerName, fmt.Sprintf("write loop for %s", name), func() {
+	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("write loop for %s", name), func() {
 		client.writeLoop()
 	})
 

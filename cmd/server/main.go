@@ -7,38 +7,72 @@ import (
 	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"log"
 	"os"
+	"strings"
 )
 
-func main() {
+type clusterSeedAddrs []string
 
+func (a *clusterSeedAddrs) String() string {
+	return strings.Join(*a, ",")
+}
+
+func (a *clusterSeedAddrs) Set(value string) error {
+	*a = append(*a, value)
+	return nil
+}
+
+func main() {
 	fmt.Println("===================================================")
 	fmt.Println("                   GoferBrokeMQ                    ")
 	fmt.Println("===================================================")
 
-	//==============================================================
+	// Run command = ./cmd/server ....
 
-	nameFlag := flag.String("name", "", "name to use")
-	idFlag := flag.Int("ID", 1, "uuid for server")
-	clusterIP := flag.String("clusterIP", "", "ip of the cluster seed")
-	clusterPort := flag.String("clusterPort", "", "port of the cluster seed")
-	clusterNetwork := flag.String("clusterNetwork", "", "network type [PUBLIC, PRIVATE, LOCAL]")
-	ipFlag := flag.String("nodeIP", "", "ip address for node")
-	portFlag := flag.String("nodePort", "", "port number for node")
+	var routes clusterSeedAddrs
+
+	modeFlag := flag.String("mode", "", "Mode to run: seed | node")
+	nameFlag := flag.String("name", "", "Name of node")
+	addrFlag := flag.String("nodeAddr", "", "Node address in host:port format")
+	clusterNetwork := flag.String("clusterNetwork", "LOCAL", "Network type [PUBLIC, PRIVATE, LOCAL]")
+	nodeFileConfig := flag.String("nodeConfig", "", "Configuration file for this node")
+	clusterFileConfig := flag.String("clusterConfig", "", "Configuration file for this cluster")
+
+	flag.Var(&routes, "routes", "Route addresses - can be specified multiple times")
 
 	flag.Parse()
+
+	// Validate common fields
+	if *modeFlag != "seed" && *modeFlag != "node" {
+		log.Fatalf("Invalid --mode specified: must be 'seed' or 'node'")
+	}
+	if *addrFlag == "" {
+		log.Fatalf("--nodeAddr is required")
+	}
+	if *nameFlag == "" {
+		log.Fatalf("--name is required")
+	}
+	if len(routes) == 0 && *clusterFileConfig == "" {
+		log.Fatalf("--routes are required when no --clusterConfig is specified")
+	}
 
 	fmt.Printf("Arguments: %v\n", os.Args)
 
 	ctx := context.Background()
 
-	// Call run and check for any errors
-	if err := cluster.Run(ctx, os.Stdout, *nameFlag, *idFlag, *clusterIP, *clusterPort, *clusterNetwork, *ipFlag, *portFlag); err != nil {
+	// Run your cluster logic
+	if err := cluster.Run(
+		ctx,
+		os.Stdout,
+		*modeFlag,
+		*nameFlag,
+		routes, // use as []string directly
+		*clusterNetwork,
+		*addrFlag,
+		*nodeFileConfig,
+		*clusterFileConfig,
+	); err != nil {
 		log.Fatalf("Error running server: %v\n", err)
 	}
 
-	log.Printf("Name: %s, ID: %d, ClusterIP: %s, ClusterPort: %s, ClusterNetwork: %s, NodeIP: %s, NodePort: %s\n",
-		*nameFlag, *idFlag, *clusterIP, *clusterPort, *clusterNetwork, *ipFlag, *portFlag)
-
-	log.Println("Server exited.")
-
+	log.Printf("[BOOT] Mode: %s, Name: %s, Addr: %s", *modeFlag, *nameFlag, *addrFlag)
 }

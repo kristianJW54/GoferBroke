@@ -148,6 +148,7 @@ const (
 	_HEARTBEAT_       = "heartbeat"
 	_UPDATE_INTERVAL_ = "update_interval"
 	_NETWORK_LOAD_    = "network_load"
+	_NODE_NAME_       = "node_name"
 )
 
 // Standard Delta Key-Groups
@@ -435,7 +436,7 @@ func (p *Participant) Get(deltaKey string) (*Delta, error) {
 //---------------------
 
 // TODO We need to return error for this and handle them accordingly
-func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
+func initClusterMap(uuid string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
 
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
@@ -445,7 +446,7 @@ func initClusterMap(name string, seed *net.TCPAddr, participant *Participant) *C
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
-	cm.participants[name] = participant
+	cm.participants[uuid] = participant
 	cm.participantArray = append(cm.participantArray, participant.name)
 
 	return cm
@@ -463,13 +464,13 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 	cm := s.clusterMap.participants
 	s.clusterMapLock.RUnlock()
 
-	for name, d := range delta.delta {
+	for uuid, d := range delta.delta {
 
-		if name == s.ServerName {
+		if uuid == s.getID() {
 			continue
 		}
 
-		if participant, exists := cm[name]; exists {
+		if participant, exists := cm[uuid]; exists {
 
 			// Here we have a participant with values we need to update for our map
 			// Use the locking strategy to lock participant in order to update
@@ -545,7 +546,7 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 		} else {
 
 			// If here then we have a new participant to add
-			err := s.addParticipantFromTmp(name, d)
+			err := s.addParticipantFromTmp(uuid, d)
 			if err != nil {
 				return err
 			}
@@ -1150,7 +1151,7 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 		defer cancel()
 		if err != nil {
-			log.Printf("%s - error in sending goss_syn_ack: %v", c.srv.ServerName, err.Error())
+			log.Printf("%s - error in sending goss_syn_ack: %v", c.srv.PrettyName(), err.Error())
 			// Need to handle the error but for now just return
 			return
 		}
@@ -1159,7 +1160,7 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		srv := c.srv
 
 		// TODO When we reach here - at this point we can have a corrupt max-version - it is also only on seed-server for all nodes
-		log.Printf("%s - delta in async [][][][][][][][][] = %s", srv.ServerName, delta.msg)
+		log.Printf("%s - delta in async [][][][][][][][][] = %s", srv.PrettyName(), delta.msg)
 
 		cd, e := deserialiseDelta(delta.msg)
 		if e != nil {
@@ -1351,7 +1352,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		s.gossip.gossMu.Lock()
 
 		if s.ServerContext.Err() != nil {
-			log.Printf("%s - gossip process exiting due to context cancellation", s.ServerName)
+			log.Printf("%s - gossip process exiting due to context cancellation", s.PrettyName())
 			//s.endGossip()
 			s.gossip.gossMu.Unlock()
 			return
@@ -1389,7 +1390,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 func (s *GBServer) tryStartGossip() bool {
 	// Check if shutting down or context is canceled before attempting gossip
 	if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
-		log.Printf("%s - Cannot start gossip: shutting down or context canceled", s.ServerName)
+		log.Printf("%s - Cannot start gossip: shutting down or context canceled", s.PrettyName())
 		return false
 	}
 
@@ -1420,7 +1421,7 @@ func (s *GBServer) startGossipProcess() bool {
 
 	// Exit immediately if the server context is already canceled
 	if s.ServerContext.Err() != nil {
-		log.Printf("%s - Server context already canceled, exiting gossip process", s.ServerName)
+		log.Printf("%s - Server context already canceled, exiting gossip process", s.PrettyName())
 		return false
 	}
 
@@ -1428,7 +1429,7 @@ func (s *GBServer) startGossipProcess() bool {
 	for {
 		select {
 		case <-s.ServerContext.Done():
-			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.ServerName)
+			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.PrettyName())
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
 			s.endGossip()          // Ensure state is reset
 			return false
@@ -1436,7 +1437,7 @@ func (s *GBServer) startGossipProcess() bool {
 
 			// Check if context cancellation occurred
 			if s.ServerContext.Err() != nil || s.flags.isSet(SHUTTING_DOWN) {
-				log.Printf("%s - Server shutting down during ticker event", s.ServerName)
+				log.Printf("%s - Server shutting down during ticker event", s.PrettyName())
 				s.gossip.gossWg.Wait()
 				s.endGossip()
 				return false
@@ -1446,11 +1447,11 @@ func (s *GBServer) startGossipProcess() bool {
 			if !s.tryStartGossip() {
 
 				if s.flags.isSet(SHUTTING_DOWN) {
-					log.Printf("%s - Gossip process is shutting down, exiting", s.ServerName)
+					log.Printf("%s - Gossip process is shutting down, exiting", s.PrettyName())
 					return false
 				}
 
-				log.Printf("%s - Skipping gossip round because a round is already active", s.ServerName)
+				log.Printf("%s - Skipping gossip round because a round is already active", s.PrettyName())
 
 				continue
 			}
@@ -1533,7 +1534,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 				})
 
 				if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
-					log.Printf("%s - exiting discovery phase", s.ServerName)
+					log.Printf("%s - exiting discovery phase", s.PrettyName())
 					s.discoveryPhase = false
 				} else {
 					log.Printf("Discovery failed: %v", err)
@@ -1560,7 +1561,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		num := rand.Intn(pl) + 1
 		selectedNode := s.clusterMap.participantArray[num]
 		if s.clusterMap.participants[selectedNode].paDetection.dead {
-			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.ServerName, selectedNode)
+			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.PrettyName(), selectedNode)
 
 			//TODO Once we have a dead node we need to move it to a deadNodeStore either after some time for garbage collection
 			// Or we move straight away and garbage collect after some time and after we have tried to revive a few times
@@ -1574,7 +1575,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		s.clusterMapLock.RUnlock()
 
 		// TODO We need to collect the errors and make a decision on what to do with them based on the error itself
-		s.startGoRoutine(s.ServerName, fmt.Sprintf("gossip-round-%v", i), func() {
+		s.startGoRoutine(s.PrettyName(), fmt.Sprintf("gossip-round-%v", i), func() {
 			defer func() {
 				done <- struct{}{}
 
@@ -1597,7 +1598,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	for i := 0; i < int(ns); i++ {
 		select {
 		case <-ctx.Done():
-			log.Printf("%s - Gossip round canceled: %v", s.ServerName, ctx.Err())
+			log.Printf("%s - Gossip round canceled: %v", s.PrettyName(), ctx.Err())
 			return
 		case <-done:
 			//log.Printf("%s - Node gossip task completed", s.ServerName)
@@ -1658,13 +1659,13 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// TODO Need to clean up and make more clear the goss stages and req-resp cycle
 
 	stage = 1
-	log.Printf("%s - Gossiping with node %s (stage %d)", s.ServerName, node, stage)
+	log.Printf("%s - Gossiping with node %s (stage %d)", s.PrettyName(), node, stage)
 
 	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, err)
+			log.Printf("%s - Gossip round canceled at stage %d: %v", s.PrettyName(), stage, err)
 		} else {
 			log.Printf("Error in gossip round (stage %d): %v", stage, err)
 			return

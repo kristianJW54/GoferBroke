@@ -190,7 +190,7 @@ func serverSetup() *GBServer {
 
 	nodeConfig := &GbNodeConfig{}
 
-	gbs, _ := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
 	return gbs
 }
 

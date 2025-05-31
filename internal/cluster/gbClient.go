@@ -304,13 +304,13 @@ func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clie
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
 	// Track the goroutine for the read loop using startGoRoutine
-	s.startGoRoutine(s.ServerName, fmt.Sprintf("read loop for %s", name), func() {
+	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("read loop for %s", name), func() {
 		defer conn.Close() // TODO Should this be here if closure is managed elsewhere?
 		client.readLoop()
 	})
 
 	//Write loop -
-	s.startGoRoutine(s.ServerName, fmt.Sprintf("write loop for %s", name), func() {
+	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("write loop for %s", name), func() {
 		client.writeLoop()
 	})
 
@@ -764,7 +764,7 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) (response
 		//log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
 	case err := <-rsp.err:
-		log.Printf("err in wait for response for %s-%v", c.srv.ServerName, err)
+		log.Printf("err in wait for response for %s-%v", c.srv.PrettyName(), err)
 		return responsePayload{}, Errors.WrapGBError(Errors.ResponseErr, err)
 	}
 }
@@ -898,7 +898,7 @@ func (c *gbClient) dispatchClientCommands(message []byte) {
 func (c *gbClient) processDelta(message []byte) error {
 
 	srv := c.srv
-	log.Printf("%s processing command", srv.ServerName)
+	log.Printf("%s processing command", srv.PrettyName())
 
 	// Will need to copy message buf and msg length to avoid race conditions with the parser setting to nil
 	// TODO Consider more efficient way of reducing allocations - maybe another pool of buffers? for inbound?

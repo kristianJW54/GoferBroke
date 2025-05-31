@@ -32,7 +32,7 @@ func TestConnectToSeedErrorEvent(t *testing.T) {
 		Internal: &InternalOptions{},
 	}
 
-	gbs2, err := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs2, err := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8083", lc)
 	if err != nil {
 		t.Errorf("TestServerRunningTwoNodes should not have returned an error - got %v", err)
 		return

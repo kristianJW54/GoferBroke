@@ -289,11 +289,6 @@ func (p *parser) parseKey(t token) error {
 
 		kv := &KeyValueNode{key, list}
 
-		//err := p.addToParent(kv, key)
-		//if err != nil {
-		//	return err
-		//}
-
 		p.pushContext(ContextArray, kv, key)
 		err := p.parseList(p.next())
 		if err != nil {
@@ -307,11 +302,6 @@ func (p *parser) parseKey(t token) error {
 		}
 
 		kv := &KeyValueNode{key, obj}
-
-		//err := p.addToParent(kv, key)
-		//if err != nil {
-		//	return err
-		//}
 
 		p.pushContext(ContextMap, kv, key)
 		err := p.parseMap(p.next())

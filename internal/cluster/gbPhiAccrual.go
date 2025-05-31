@@ -109,7 +109,7 @@ func (s *GBServer) initPhiAccrual() *phiAccrual {
 // TODO Need to use this to ensure we are not stuck or spinning, leaking etc
 func (s *GBServer) tryStartPhiProcess() bool {
 	if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
-		log.Printf("%s - Cannot start phi: shutting down or context canceled", s.ServerName)
+		log.Printf("%s - Cannot start phi: shutting down or context canceled", s.PrettyName())
 		return false
 	}
 
@@ -146,7 +146,7 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 		s.gossip.gossMu.Lock()
 
 		if s.ServerContext.Err() != nil {
-			log.Printf("%s - gossip process exiting due to context cancellation", s.ServerName)
+			log.Printf("%s - gossip process exiting due to context cancellation", s.PrettyName())
 			//s.endGossip()
 			s.gossip.gossMu.Unlock()
 			return
@@ -338,7 +338,7 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 	// Periodically run a phi check on all participant in the cluster
 	select {
 	case <-ctx.Done():
-		log.Printf("%s - phi process exiting due to context cancellation", s.ServerName)
+		log.Printf("%s - phi process exiting due to context cancellation", s.PrettyName())
 		return
 	default:
 		// First calculate mean

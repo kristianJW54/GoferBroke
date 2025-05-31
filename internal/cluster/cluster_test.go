@@ -661,9 +661,9 @@ func TestLiveGossip(t *testing.T) {
 
 	nodeConfig := &GbNodeConfig{}
 
-	gbs, _ := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
-	gbs3, _ := NewServer("test-server", 3, config, nodeConfig, "localhost", "8085", "8084", lc)
+	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs3, _ := NewServer("test-server", config, nodeConfig, "localhost", "8085", "8084", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)

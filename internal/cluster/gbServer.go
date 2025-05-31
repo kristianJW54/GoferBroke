@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	uuid2 "github.com/google/uuid"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,19 +22,33 @@ import (
 
 const ServerNameMaxLength = 32 - (8 + 1)
 
-func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clusterPort, clusterNetwork, nodeIp, nodePort string) error {
+func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, clusterNetwork, nodeAddr, nodeFileConfig, clusterFileConfig string) error {
 
 	log.SetOutput(w)
+
+	nodeIP, nodePort := strings.Split(nodeAddr, ":")[0], strings.Split(nodeAddr, ":")[1]
 
 	// Create a new context that listens for interrupt signals
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
+	switch {
+	case mode == "seed" || mode == "Seed":
+
+		// First determine if we need to parser config files
+		if clusterFileConfig != "" {
+			log.Printf("need to parse config file")
+			// clusterConfig will be created here
+		} else {
+			//config := &GbClusterConfig{}
+		}
+
+	}
+
 	lc := net.ListenConfig{}
 
 	var config *GbClusterConfig
 
-	// TODO default to 0.0.0.0. maybe ??
 	nodeConfig := &GbNodeConfig{
 		Internal: &InternalOptions{},
 	}
@@ -42,8 +58,8 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 	cn, err := ParseClusterConfigNetworkType(clusterNetwork)
 
 	// TODO This needs to change - cannot be localhost
-	if clusterIP == "" && clusterPort == "" {
-		ip := nodeIp // Use interface for now - will change when actual config is implemented
+	if len(routes) == 0 {
+		ip := nodeIP // Use interface for now - will change when actual config is implemented
 		port := nodePort
 
 		// Initialize config with the seed server address
@@ -61,7 +77,9 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 		log.Println("Config initialized:", config)
 	} else {
 
-		log.Printf("cluster ip == %s", clusterIP)
+		log.Printf("cluster addr == %s", routes[0])
+
+		clusterIP, clusterPort := strings.Split(routes[0], ":")[0], strings.Split(routes[0], ":")[1]
 
 		config = &GbClusterConfig{
 			SeedServers: []Seeds{
@@ -78,7 +96,7 @@ func Run(ctx context.Context, w io.Writer, name string, uuid int, clusterIP, clu
 	}
 
 	// Create and start the server
-	gbs, err := NewServer(name, uuid, config, nodeConfig, nodeIp, nodePort, "5000", lc)
+	gbs, err := NewServer(name, config, nodeConfig, nodeIP, nodePort, "5000", lc)
 	if err != nil {
 		return err
 	}
@@ -146,11 +164,11 @@ func (sf *serverFlags) setIfNotSet(s serverFlags) bool {
 // ServerID combines a server name, uuid and creation time into a broadcast name for other nodes to identify other nodes with
 type ServerID struct {
 	name     string
-	uuid     int
+	uuid     string
 	timeUnix uint64
 }
 
-func NewServerID(name string, uuid int) *ServerID {
+func NewServerID(name string, uuid string) *ServerID {
 	return &ServerID{
 		name:     name,
 		uuid:     uuid,
@@ -159,11 +177,15 @@ func NewServerID(name string, uuid int) *ServerID {
 }
 
 func (sf *ServerID) String() string {
-	return fmt.Sprintf("%s-%v@%v", sf.name, sf.uuid, sf.timeUnix)
+	return fmt.Sprintf("%s@%v", sf.uuid, sf.timeUnix)
 }
 
 func (sf *ServerID) getID() string {
-	return fmt.Sprintf("%s-%v", sf.name, sf.uuid)
+	return fmt.Sprintf("%s", sf.uuid)
+}
+
+func (sf *ServerID) PrettyName() string {
+	return sf.name
 }
 
 func (sf *ServerID) updateTime() {
@@ -254,7 +276,7 @@ type seedEntry struct {
 	resolved *net.TCPAddr
 }
 
-func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
+func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
 
 	if len([]byte(serverName)) > ServerNameMaxLength {
 		return nil, fmt.Errorf("server name length exceeds %d", ServerNameMaxLength)
@@ -286,9 +308,10 @@ func NewServer(serverName string, uuid int, gbConfig *GbClusterConfig, gbNodeCon
 	}
 
 	// Generates a server name object with name, uuid and time unix
-	serverID := NewServerID(serverName, uuid)
+	uuid := uuid2.New()
+	serverID := NewServerID(serverName, uuid.String())
 	// Joins the object to a string name
-	srvName := serverID.String()
+	srvName := uuid.String()
 
 	// Creation steps
 
@@ -367,9 +390,9 @@ func (s *GBServer) StartServer() {
 
 	if s.gbNodeConfig.Internal.IsTestMode {
 		// Add debug mode output
-		log.Printf("Server starting in test mode: %s\n", s.ServerName)
+		log.Printf("Server starting in test mode: %s\n", s.PrettyName())
 	} else {
-		fmt.Printf("Server starting: %s\n", s.ServerName)
+		fmt.Printf("Server starting: %s\n", s.PrettyName())
 
 	}
 	//s.clusterMapLock.Lock()
@@ -377,7 +400,7 @@ func (s *GBServer) StartServer() {
 		log.Printf("Cluster Map and Self Info not initialised")
 	} else {
 		s.phi = *s.initPhiControl()
-		selfInfo := initSelfParticipant(s.ServerName, s.addr, s.reachability)
+		selfInfo := initSelfParticipant(s.ServerName, s.PrettyName(), s.addr, s.reachability)
 		selfInfo.paDetection = s.initPhiAccrual()
 		s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
 
@@ -445,7 +468,7 @@ func (s *GBServer) StartServer() {
 	s.startupSync.Wait()
 
 	// Start up phi process which will wait for the gossip signal
-	s.startGoRoutine(s.ServerName, "phi-process", func() {
+	s.startGoRoutine(s.PrettyName(), "phi-process", func() {
 
 		// Phi cleanup needed?
 		s.phiProcess(s.ServerContext)
@@ -454,7 +477,7 @@ func (s *GBServer) StartServer() {
 
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	if !s.gbNodeConfig.Internal.DisableGossip {
-		s.startGoRoutine(s.ServerName, "gossip-process",
+		s.startGoRoutine(s.PrettyName(), "gossip-process",
 			func() {
 				defer s.gossipCleanup()
 				s.gossipProcess(s.ServerContext)
@@ -476,13 +499,13 @@ func (s *GBServer) Shutdown() {
 
 	// Try to acquire the server lock
 	if !s.serverLock.TryLock() { // Assuming TryLock is implemented
-		log.Printf("%s - Shutdown blocked waiting on serverLock", s.ServerName)
+		log.Printf("%s - Shutdown blocked waiting on serverLock", s.PrettyName())
 		return
 	}
 	defer s.serverLock.Unlock()
 
 	// Log shutdown initiation
-	log.Printf("%s - Shutdown Initiated", s.ServerName)
+	log.Printf("%s - Shutdown Initiated", s.PrettyName())
 
 	// Cancel the server context to signal all other processes
 	s.serverContextCancel()
@@ -511,7 +534,7 @@ func (s *GBServer) Shutdown() {
 			return true // Continue iteration
 		}
 		if c.gbc != nil {
-			log.Printf("%s -- closing temp node %s", s.ServerName, key)
+			log.Printf("%s -- closing temp node %s", s.PrettyName(), key)
 			c.gbc.Close()
 		}
 		s.tmpConnStore.Delete(key)
@@ -527,7 +550,7 @@ func (s *GBServer) Shutdown() {
 			return true
 		}
 		if c.gbc != nil {
-			log.Printf("%s -- closing node %s", s.ServerName, key)
+			log.Printf("%s -- closing node %s", s.PrettyName(), key)
 			c.gbc.Close()
 		}
 		s.nodeConnStore.Delete(key)
@@ -750,15 +773,25 @@ func initConnectionMetaData(reachableClaim int, givenAddr *net.TCPAddr, inbound 
 }
 
 // And environment + users use case + config map parsing of initialised delta map
-func initSelfParticipant(name, addr string, reach Network.NodeNetworkReachability) *Participant {
+func initSelfParticipant(nameID, prettyName, addr string, reach Network.NodeNetworkReachability) *Participant {
 
 	t := time.Now().Unix()
 
 	p := &Participant{
-		name:       name,
+		name:       nameID,
 		keyValues:  make(map[string]*Delta),
 		maxVersion: t,
 	}
+
+	nameDelta := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _NODE_NAME_,
+		ValueType: D_STRING_TYPE,
+		Version:   t,
+		Value:     []byte(prettyName),
+	}
+
+	p.keyValues[MakeDeltaKey(nameDelta.KeyGroup, nameDelta.Key)] = nameDelta
 
 	// TODO Address needs more attention with configuration, different types of addresses and address key groups
 	// Add the _ADDRESS_ delta
@@ -875,7 +908,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	s.nodeListener = nl
 
-	s.startGoRoutine(s.ServerName, "accept-connection routine", func() {
+	s.startGoRoutine(s.PrettyName(), "accept-connection routine", func() {
 		s.acceptConnection(nl, "node-test",
 			func(conn net.Conn) {
 				s.createNodeClient(conn, "node-client", false, NODE)
@@ -906,7 +939,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 	if !s.isSeed || len(s.gbClusterConfig.SeedServers) > 1 {
 		// If we're not the original (seed) node, connect to the seed server
 		//go s.connectToSeed()
-		s.startGoRoutine(s.ServerName, "connect to seed routine", func() {
+		s.startGoRoutine(s.PrettyName(), "connect to seed routine", func() {
 			err := s.connectToSeed()
 			if err != nil {
 				log.Printf("Error connecting to seed: %v", err)
@@ -970,7 +1003,7 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 			continue
 		}
 		// go createFunc(conn)
-		s.startGoRoutine(s.ServerName, "create connection routine", func() {
+		s.startGoRoutine(s.PrettyName(), "create connection routine", func() {
 			createConnFunc(conn)
 		})
 	}

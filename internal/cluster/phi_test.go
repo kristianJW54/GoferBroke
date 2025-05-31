@@ -96,11 +96,11 @@ func TestPhiLive(t *testing.T) {
 		Internal: &InternalOptions{},
 	}
 
-	gbs, err := NewServer("test-server", 1, config, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs, err := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gbs2, err := NewServer("test-server", 2, config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs2, err := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8083", lc)
 	if err != nil {
 		t.Fatal(err)
 	}
