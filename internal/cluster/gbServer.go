@@ -32,25 +32,23 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	switch {
-	case mode == "seed" || mode == "Seed":
-
-		// First determine if we need to parser config files
-		if clusterFileConfig != "" {
-			log.Printf("need to parse config file")
-			// clusterConfig will be created here
-		} else {
-			//config := &GbClusterConfig{}
-		}
-
-	}
+	// TODO Need to complete this function - to seed checks and addr checks before creating servers
+	// TODO Once server is created and started it is the job of dialling and exchanging to validate and fail etc -- need rules on this
 
 	lc := net.ListenConfig{}
 
 	var config *GbClusterConfig
+	var nodeConfig *GbNodeConfig
 
-	nodeConfig := &GbNodeConfig{
-		Internal: &InternalOptions{},
+	if nodeFileConfig == "" {
+		// Load default config file from internal
+		nodeConfig = &GbNodeConfig{
+			Internal: &InternalOptions{},
+		}
+	}
+
+	if clusterFileConfig == "" {
+		config = &GbClusterConfig{}
 	}
 
 	var cn ClusterNetworkType
@@ -93,6 +91,19 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 			},
 		}
 		log.Println("Config initialized:", config)
+	}
+
+	switch {
+	case mode == "seed" || mode == "Seed":
+
+		// First determine if we need to parser config files
+		if clusterFileConfig != "" {
+			log.Printf("need to parse config file")
+			// clusterConfig will be created here
+		} else {
+			//config := &GbClusterConfig{}
+		}
+
 	}
 
 	// Create and start the server

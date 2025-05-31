@@ -3,6 +3,7 @@ package cluster
 import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
+	"reflect"
 	"strings"
 )
 
@@ -119,6 +120,118 @@ type InternalOptions struct {
 
 	// Need logging config also
 }
+
+//=====================================================================
+// Extract field names to use as delta keys
+//=====================================================================
+
+type clusterSetterMapFunc func(*GbClusterConfig, any) error
+
+func getConfigFields(v reflect.Value, prefix string) []string {
+
+	//v := reflect.ValueOf(gb)
+
+	var names []string
+
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	//names := make([]string, t.NumField())
+	for i := range v.NumField() {
+
+		field := v.Field(i)
+		structField := v.Type().Field(i)
+
+		fieldName := structField.Name
+		fullPath := fieldName
+
+		if prefix != "" {
+			fullPath = fmt.Sprintf("%s.%s", prefix, fieldName)
+		}
+
+		if field.Kind() == reflect.Ptr {
+			field = field.Elem()
+		}
+
+		if field.Kind() == reflect.Struct {
+			subFields := getConfigFields(field, fullPath)
+			names = append(names, subFields...)
+			continue
+		}
+
+		names = append(names, fullPath)
+
+	}
+
+	return names
+
+}
+
+func buildDynamicSetters(paths []string) map[string]clusterSetterMapFunc {
+	setters := make(map[string]clusterSetterMapFunc)
+
+	for _, path := range paths {
+		keys := strings.Split(path, ".")
+
+		// capture path and key locally
+		localPath := path
+		localKeys := keys
+
+		setters[localPath] = func(cfg *GbClusterConfig, val any) error {
+			v := reflect.ValueOf(cfg).Elem() // Start from the root config
+
+			for i, key := range localKeys {
+				field := v.FieldByName(key)
+				if !field.IsValid() {
+					return fmt.Errorf("field %q not found", key)
+				}
+
+				if field.Kind() == reflect.Ptr {
+					if field.IsNil() {
+						field.Set(reflect.New(field.Type().Elem()))
+					}
+					field = field.Elem()
+				}
+
+				// If it's the last key, assign the value
+				if i == len(localKeys)-1 {
+					switch field.Kind() {
+					case reflect.String:
+						strVal, ok := val.(string)
+						if !ok {
+							return fmt.Errorf("expected string for field %q", key)
+						}
+						field.SetString(strVal)
+						return nil
+
+					case reflect.Int, reflect.Int64:
+						intVal, ok := val.(int)
+						if !ok {
+							return fmt.Errorf("expected int for field %q", key)
+						}
+						field.SetInt(int64(intVal))
+						return nil
+
+					// TODO Extend with more supported types
+					default:
+						return fmt.Errorf("unsupported type %s for field %q", field.Kind(), key)
+					}
+				}
+
+				v = field // Traverse deeper
+			}
+
+			return nil
+		}
+	}
+
+	return setters
+}
+
+//TODO Now need to handle tracking our config state in deltas - (once server is live we do not reflect on config)
+// - when we change a config state, we update our delta which we then gossip
+// - if we detect a newer version delta config we change our state (need to carefully think about this)
 
 //=====================================================================
 

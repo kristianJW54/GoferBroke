@@ -365,11 +365,11 @@ func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 //=======================================================
 
 func MakeDeltaKey(group, key string) string {
-	return fmt.Sprintf("%s:%s", group, key)
+	return fmt.Sprintf("%s.%s", group, key)
 }
 
 func ParseDeltaKey(key string) (string, string) {
-	parts := strings.Split(key, ":")
+	parts := strings.Split(key, ".")
 	return parts[0], parts[1]
 }
 
@@ -862,8 +862,6 @@ func (s *GBServer) generateDigest() ([]byte, int, error) {
 		return nil, 0, err
 	}
 
-	// If not, we need to decide if we will stream or do a random subset of participants (increasing propagation time)
-
 	return b, size, nil
 }
 
@@ -1067,7 +1065,6 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 // TODO So during this process I want to log or track the amount of times we go over MTU - so log as warning but also take the count along with the trace of where and when
 
-// TODO Change output to byte as we will be serialising the delta after comparing and populating the queues
 func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte, error) {
 
 	// Prepare our own digest first as we need to know if digest reaches its cap, so we know how much space we have left for the Delta

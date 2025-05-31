@@ -85,10 +85,10 @@ func (c *gbClient) ProcessHeaderFromParser(header []byte) {
 
 }
 
-var rounds int
-var b byte
-
 func (c *gbClient) ParsePacket(packet []byte) {
+
+	var rounds int
+	var b byte
 
 	rounds++
 	var i int
