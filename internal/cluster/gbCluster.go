@@ -22,11 +22,18 @@ import (
 // Gossip
 //===================================================================================
 
-// Will need to make a gossip cleanup which we can defer in the main server go-routine
+// TODO Draft struct for gossip metrics which will drive events for warning etc and maintain gossip cluster health
+type gossipMetrics struct {
+	bytesPerRound   int
+	roundSkips      int
+	inFlightErrors  int
+	mtuReached      int
+	avgExchangeTime int
+}
 
 type gossip struct {
 	gossInterval         time.Duration
-	nodeSelection        uint8
+	nodeSelection        uint8 // Remove and use node config instead OR use config to populate this
 	gossipControlChannel chan bool
 	gossipTimeout        time.Duration
 	gossipOK             bool
@@ -171,6 +178,9 @@ type Seed struct {
 
 //-------------------
 // Main cluster map for gossiping
+
+//TODO For flow-control we will need to add the rates to the header of a digest exchange
+// therefore we need to think where we track and store the rates - in a struct, embedded or calculated and included in the serialised digest on the fly
 
 type Delta struct {
 	index     int
@@ -1501,7 +1511,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	defer s.endGossip() // Ensure gossip state is reset when the process ends
 	defer s.clearGossipingWithMap()
 
-	ns := s.gossip.nodeSelection
+	ns := s.gossip.nodeSelection // TODO Switch this to node config
 	pl := len(s.clusterMap.participantArray) - 1
 
 	if int(ns) > pl {

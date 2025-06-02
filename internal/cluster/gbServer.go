@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -237,16 +238,15 @@ type GBServer struct {
 	ServerContext       context.Context
 	serverContextCancel context.CancelFunc
 
-	// Configurations and extensibility should be handled in Options which will be embedded here
-	// Config + Options
+	//Configuration
 	gbClusterConfig *GbClusterConfig
 	gbNodeConfig    *GbNodeConfig
 	seedAddr        []*seedEntry
 
-	// Options - for config - tls etc...
+	configFields  []string
+	configSetters map[string]clusterConfigSetterMapFunc
+	configGetters map[string]clusterConfigGetterMapFunc
 
-	//TODO Need to carefully handle self info to avoid contention with cluster map during gossip - May need to just have cluster map
-	// with special selfInfo methods which update and manage the servers own info within the cluster map
 	//Server Info for gossip
 	clusterMap ClusterMap
 	phi        phiControl
@@ -309,8 +309,7 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		return nil, err
 	}
 
-	// TODO for client addresses do we use same host? and specify a port range?
-	cAddr := net.JoinHostPort("0.0.0.0", clientPort)
+	cAddr := net.JoinHostPort(nodeHost, clientPort)
 
 	// TODO Need to determine client network type as well
 	clientAddr, err := net.ResolveTCPAddr("tcp", cAddr)
@@ -329,12 +328,10 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	// Build EventDispatcher
 	ed := NewEventDispatcher()
 
-	// Config setup //TODO
-
 	// Init gossip
-	goss := initGossipSettings(1*time.Second, 1) // TODO Node selection should be taken from config or default to 1
+	goss := initGossipSettings(1*time.Second, 1) //gbConfig.Cluster.NodeSelection
 
-	seq := newSeqReqPool(10) // TODO Pool size should be taken from config or default to 10
+	seq := newSeqReqPool(10) //gbConfig.Cluster.RequestIDPool
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -347,7 +344,7 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		addr:          addr,
 		boundTCPAddr:  nodeTCPAddr,
 		clientTCPAddr: clientAddr,
-		reachability:  1,
+		reachability:  1, // TODO : Yet to implement
 
 		event: ed,
 
@@ -357,8 +354,11 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 
 		gbClusterConfig: gbConfig,
 		gbNodeConfig:    gbNodeConfig,
-		seedAddr:        make([]*seedEntry, 0),
-		clientStore:     make(map[uint64]*gbClient),
+		seedAddr:        make([]*seedEntry, 0, 2),
+
+		configFields: getConfigFields(reflect.ValueOf(gbConfig), ""),
+
+		clientStore: make(map[uint64]*gbClient),
 
 		gossip:          goss,
 		isSeed:          false,
@@ -381,6 +381,19 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	}
 
 	return s, nil
+}
+
+func (s *GBServer) initSelf() {
+
+	defer s.startupSync.Done()
+
+	s.phi = *s.initPhiControl()
+	selfInfo := s.initSelfParticipant()
+	selfInfo.paDetection = s.initPhiAccrual()
+	s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
+	s.configSetters = buildConfigSetters(s.gbClusterConfig, s.configFields)
+	s.configGetters = buildConfigGetters(s.gbClusterConfig, s.configFields)
+
 }
 
 // StartServer should be run in a go-routine. Upon start, the server will check it's state and launch both internal and gossip processes once accept connection routines
@@ -408,13 +421,11 @@ func (s *GBServer) StartServer() {
 	}
 	//s.clusterMapLock.Lock()
 	if s.gbNodeConfig.Internal.DisableInitialiseSelf {
-		log.Printf("Cluster Map and Self Info not initialised")
+		log.Printf("[WARN] Config, Cluster Map, Phi Accrual, Self -> Not Initialised\n")
 	} else {
-		s.phi = *s.initPhiControl()
-		selfInfo := initSelfParticipant(s.ServerName, s.PrettyName(), s.addr, s.reachability)
-		selfInfo.paDetection = s.initPhiAccrual()
-		s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
-
+		// Debug logs here
+		s.startupSync.Add(1)
+		s.initSelf()
 	}
 
 	//-----------------------------------------------
@@ -426,14 +437,8 @@ func (s *GBServer) StartServer() {
 		log.Fatal(err)
 	}
 
-	// Move this seed logic elsewhere
-	//TODO If we are not the seed - then we need to include a reset logic where we try to connect to seed and if there is nothing - then we need to come
-	// enter a retry phase with backoff until either a seed joins and is reachable or we abort and ask for a seed to be started
-	if s.seedCheck() == 1 {
-		s.isSeed = true
-	} else {
-		s.isSeed = false
-		s.discoveryPhase = true
+	if !s.isSeed {
+		s.seedCheck()
 	}
 
 	// Setting go routine tracking flag to true - mainly used in testing
@@ -441,6 +446,7 @@ func (s *GBServer) StartServer() {
 
 	//---------------- Event Handler Registers ----------------//
 
+	s.startupSync.Add(1)
 	// We need to spin up event handlers here to catch any error during start up processes
 	err = s.registerAndStartInternalHandlers()
 	if err != nil {
@@ -599,23 +605,6 @@ func (s *GBServer) resetContext() {
 
 func (s *GBServer) resolveConfigSeedAddr() error {
 
-	//TODO Need to review this - do we want the nodes address being used as seed if we don't know the advertise or definite reachability
-	// or know if aligned to the cluster network type?
-
-	// Check if no seed servers are configured
-	//if s.gbClusterConfig.SeedServers == nil {
-	//	// Ensure s.nodeTCPAddr is initialized
-	//	if s.boundTCPAddr == nil {
-	//		return fmt.Errorf("nodeTCPAddr is not initialized")
-	//	}
-	//	// Use this node's TCP address as the seed
-	//	s.serverLock.Lock()
-	//	s.seedAddr = append(s.seedAddr, &seedEntry{host: s.host, port: s.port, resolved: s.boundTCPAddr})
-	//	s.serverLock.Unlock()
-	//	//log.Printf("seed server list --> %v\n", s.seedAddr)
-	//	return nil
-	//}
-
 	if len(s.gbClusterConfig.SeedServers) >= 1 {
 
 		s.serverLock.Lock()
@@ -742,17 +731,17 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
-func (s *GBServer) seedCheck() int {
+func (s *GBServer) seedCheck() {
 
 	if len(s.seedAddr) >= 1 {
 		for _, addr := range s.seedAddr {
 			if addr.resolved.IP.Equal(s.boundTCPAddr.IP) && addr.resolved.Port == s.boundTCPAddr.Port {
-				return 1
+				s.isSeed = true
 			}
 		}
 	}
 
-	return 0
+	s.isSeed = false
 
 }
 
@@ -783,23 +772,38 @@ func initConnectionMetaData(reachableClaim int, givenAddr *net.TCPAddr, inbound 
 
 }
 
+func initConfigDeltas(config *GbClusterConfig, fields []string) Delta {
+
+	for _, f := range fields {
+
+		// TODO FINISH ----
+	}
+
+	return Delta{}
+
+}
+
 // And environment + users use case + config map parsing of initialised delta map
-func initSelfParticipant(nameID, prettyName, addr string, reach Network.NodeNetworkReachability) *Participant {
+func (s *GBServer) initSelfParticipant() *Participant {
 
 	t := time.Now().Unix()
 
 	p := &Participant{
-		name:       nameID,
+		name:       s.ServerName,
 		keyValues:  make(map[string]*Delta),
 		maxVersion: t,
 	}
+
+	//for _, f := range s.configFields {
+	//
+	//}
 
 	nameDelta := &Delta{
 		KeyGroup:  SYSTEM_DKG,
 		Key:       _NODE_NAME_,
 		ValueType: D_STRING_TYPE,
 		Version:   t,
-		Value:     []byte(prettyName),
+		Value:     []byte(s.name),
 	}
 
 	p.keyValues[MakeDeltaKey(nameDelta.KeyGroup, nameDelta.Key)] = nameDelta
@@ -811,10 +815,13 @@ func initSelfParticipant(nameID, prettyName, addr string, reach Network.NodeNetw
 		Key:       _ADDRESS_,
 		ValueType: D_INT64_TYPE,
 		Version:   t,
-		Value:     []byte(addr),
+		Value:     []byte(s.addr),
 	}
 
 	p.keyValues[MakeDeltaKey(addrDelta.KeyGroup, addrDelta.Key)] = addrDelta
+
+	//TODO Think about how we implement reachability - what do we want to gossip and why
+	// Are we letting the cluster know if our reachability can be used for NAT Traversal?
 
 	// Add the _REACHABLE_ delta
 	reachDelta := &Delta{
@@ -822,7 +829,7 @@ func initSelfParticipant(nameID, prettyName, addr string, reach Network.NodeNetw
 		Key:       _REACHABLE_,
 		ValueType: D_INT_TYPE,
 		Version:   t,
-		Value:     []byte{byte(int(reach))},
+		Value:     []byte{byte(int(s.reachability))},
 	}
 
 	p.keyValues[MakeDeltaKey(reachDelta.KeyGroup, reachDelta.Key)] = reachDelta
@@ -1028,6 +1035,8 @@ func (s *GBServer) acceptConnection(l net.Listener, name string, createConnFunc 
 //=======================================================
 
 func (s *GBServer) registerAndStartInternalHandlers() error {
+
+	defer s.startupSync.Done()
 
 	errCtx := &errorContext{
 		s.ServerContext,

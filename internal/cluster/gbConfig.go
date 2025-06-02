@@ -71,7 +71,7 @@ type ClusterOptions struct {
 	NodeSelectionPerGossipRound   int
 	MaxParticipantHeapSize        int
 	PreferredAddrGroup            string
-	DiscoveryPercentage           int8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
+	DiscoveryPercentage           uint8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
 	PaWindowSize                  int
 	PaThreshold                   int
 	ClusterNetworkType            ClusterNetworkType
@@ -79,6 +79,7 @@ type ClusterOptions struct {
 	LoggingURL                    string
 	MetricsURL                    string
 	ErrorsURL                     string
+	RequestIDPool                 uint16
 
 	NodeMTLSRequired   bool
 	ClientMTLSRequired bool
@@ -112,6 +113,7 @@ type InternalOptions struct {
 	DebugMode                             bool
 	DisableInternalGossipSystemUpdate     bool
 	DisableUpdateServerTimeStampOnStartup bool
+	NodeSelection                         uint8
 
 	// TLS
 	CACertFilePath string
@@ -125,7 +127,12 @@ type InternalOptions struct {
 // Extract field names to use as delta keys
 //=====================================================================
 
-type clusterSetterMapFunc func(*GbClusterConfig, any) error
+// The reason why we map these functions up-front is that reflect is quite expensive and to keep calling it at
+// Runtime will slow us down - therefore we do it once at compile time and store the functions
+// With this we (mostly) avoid reflect
+
+type clusterConfigSetterMapFunc func(any) error
+type clusterConfigGetterMapFunc func(string) (any, error)
 
 func getConfigFields(v reflect.Value, prefix string) []string {
 
@@ -168,65 +175,125 @@ func getConfigFields(v reflect.Value, prefix string) []string {
 
 }
 
-func buildDynamicSetters(paths []string) map[string]clusterSetterMapFunc {
-	setters := make(map[string]clusterSetterMapFunc)
+func buildConfigSetters(cfg *GbClusterConfig, paths []string) map[string]clusterConfigSetterMapFunc {
+	setters := make(map[string]clusterConfigSetterMapFunc, len(paths))
 
 	for _, path := range paths {
 		keys := strings.Split(path, ".")
 
-		// capture path and key locally
-		localPath := path
-		localKeys := keys
-
-		setters[localPath] = func(cfg *GbClusterConfig, val any) error {
-			v := reflect.ValueOf(cfg).Elem() // Start from the root config
-
-			for i, key := range localKeys {
-				field := v.FieldByName(key)
-				if !field.IsValid() {
-					return fmt.Errorf("field %q not found", key)
+		// Traverse ONCE during setup
+		v := reflect.ValueOf(cfg).Elem()
+		for i := 0; i < len(keys)-1; i++ {
+			v = v.FieldByName(keys[i])
+			if v.Kind() == reflect.Ptr {
+				if v.IsNil() {
+					v.Set(reflect.New(v.Type().Elem()))
 				}
+				v = v.Elem()
+			}
+		}
 
-				if field.Kind() == reflect.Ptr {
-					if field.IsNil() {
-						field.Set(reflect.New(field.Type().Elem()))
-					}
-					field = field.Elem()
+		lastKey := keys[len(keys)-1]
+		field := v.FieldByName(lastKey)
+
+		if !field.IsValid() {
+			continue
+		}
+
+		f := field // Re-capture to avoid variable loop closures
+
+		switch f.Kind() {
+		case reflect.String:
+			setters[path] = func(val any) error {
+				strVal, ok := val.(string)
+				if !ok {
+					return fmt.Errorf("expected string")
 				}
-
-				// If it's the last key, assign the value
-				if i == len(localKeys)-1 {
-					switch field.Kind() {
-					case reflect.String:
-						strVal, ok := val.(string)
-						if !ok {
-							return fmt.Errorf("expected string for field %q", key)
-						}
-						field.SetString(strVal)
-						return nil
-
-					case reflect.Int, reflect.Int64:
-						intVal, ok := val.(int)
-						if !ok {
-							return fmt.Errorf("expected int for field %q", key)
-						}
-						field.SetInt(int64(intVal))
-						return nil
-
-					// TODO Extend with more supported types
-					default:
-						return fmt.Errorf("unsupported type %s for field %q", field.Kind(), key)
-					}
+				f.SetString(strVal)
+				return nil
+			}
+		case reflect.Int, reflect.Int64:
+			setters[path] = func(val any) error {
+				intVal, ok := val.(int)
+				if !ok {
+					return fmt.Errorf("expected int")
 				}
-
-				v = field // Traverse deeper
+				field.SetInt(int64(intVal))
+				return nil
 			}
 
-			return nil
+		case reflect.Uint8:
+			setters[path] = func(val any) error {
+				intVal, ok := val.(uint8)
+				if !ok {
+					return fmt.Errorf("expected uint8")
+				}
+				f.SetUint(uint64(intVal))
+				return nil
+			}
+
+		case reflect.Uint16:
+			setters[path] = func(val any) error {
+				intVal, ok := val.(uint16)
+				if !ok {
+					return fmt.Errorf("expected uint8")
+				}
+				f.SetUint(uint64(intVal))
+				return nil
+			}
+
+		case reflect.Bool:
+			setters[path] = func(val any) error {
+				boolVal, ok := val.(bool)
+				if !ok {
+					return fmt.Errorf("expected bool")
+				}
+				f.SetBool(boolVal)
+				return nil
+			}
+
 		}
 	}
 
 	return setters
+}
+
+func buildConfigGetters(cfg *GbClusterConfig, paths []string) map[string]clusterConfigGetterMapFunc {
+
+	//getters := make(map[string]clusterConfigGetterMapFunc, len(paths))
+	getters := make(map[string]clusterConfigGetterMapFunc, len(paths))
+
+	for _, path := range paths {
+		keys := strings.Split(path, ".")
+
+		// Traverse ONCE during setup
+		v := reflect.ValueOf(cfg).Elem()
+		for i := 0; i < len(keys)-1; i++ {
+			v = v.FieldByName(keys[i])
+			if v.Kind() == reflect.Ptr {
+				if v.IsNil() {
+					v.Set(reflect.New(v.Type().Elem()))
+				}
+				v = v.Elem()
+			}
+		}
+
+		lastKey := keys[len(keys)-1]
+		field := v.FieldByName(lastKey)
+
+		if !field.IsValid() {
+			continue
+		}
+
+		f := field
+
+		getters[path] = func(s string) (any, error) {
+			return f, nil
+		}
+
+	}
+
+	return getters
 }
 
 //TODO Now need to handle tracking our config state in deltas - (once server is live we do not reflect on config)

@@ -18,7 +18,13 @@ free up for the gc as quickly as possible
 TODO
 
 Node connection garbage collection - dead node cleaning
-Same Node different address detections
-KeyValues delta memory warnings
 Bit compression for delta messages
 Client connection routing - reach out to seed - seed decides best node to connect to - client then dials that and maybe keeps seed as fallback?
+
+
+////
+
+Need a node update rate which each node shares
+A server will then have the update rate of all nodes and can determine gossip interval
+
+Log the time of phi-accrual detecting dead node and use the timestamp to flag to a background process if it can clean the connection or not
