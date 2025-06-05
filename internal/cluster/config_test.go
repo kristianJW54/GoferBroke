@@ -149,11 +149,11 @@ func TestConfigSettersAndGetters(t *testing.T) {
 		t.Fatal("Delta not found in getters")
 	}
 
-	val, err := getter(delta.Key)
+	typ, val, err := getter(delta.Key)
 	if err != nil {
 		t.Fatalf("failed to get delta value: %v", err)
 	}
 
-	log.Printf("testConfig getter -> %s", val)
+	log.Printf("testConfig getter -> (%v-%s)", typ, val)
 
 }

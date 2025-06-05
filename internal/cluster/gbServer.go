@@ -9,6 +9,7 @@ import (
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"os/signal"
@@ -388,7 +389,10 @@ func (s *GBServer) initSelf() {
 	defer s.startupSync.Done()
 
 	s.phi = *s.initPhiControl()
-	selfInfo := s.initSelfParticipant()
+	selfInfo, err := s.initSelfParticipant()
+	if err != nil {
+		return
+	}
 	selfInfo.paDetection = s.initPhiAccrual()
 	s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
 	s.configSetters = buildConfigSetters(s.gbClusterConfig, s.configFields)
@@ -772,19 +776,47 @@ func initConnectionMetaData(reachableClaim int, givenAddr *net.TCPAddr, inbound 
 
 }
 
-func initConfigDeltas(config *GbClusterConfig, fields []string) Delta {
+func initConfigDeltas(configGetters map[string]clusterConfigGetterMapFunc, fields []string) (map[string]*Delta, error) {
+
+	deltas := make(map[string]*Delta, len(fields))
+
+	now := time.Now().Unix()
 
 	for _, f := range fields {
 
-		// TODO FINISH ----
+		if value, ok := configGetters[f]; ok {
+
+			typ, val, err := value(f)
+			if err != nil {
+				return nil, err
+			}
+
+			b, err := encodeGetterValue(val)
+			if err != nil {
+				return nil, err
+			}
+
+			d := &Delta{
+				KeyGroup:  CONFIG_DKG,
+				Key:       f,
+				Version:   now,
+				ValueType: typ,
+				Value:     b,
+			}
+
+			deltas[MakeDeltaKey(CONFIG_DKG, f)] = d
+
+		}
+
 	}
 
-	return Delta{}
+	return deltas, nil
 
 }
 
+// TODO Need GBErrors Here--
 // And environment + users use case + config map parsing of initialised delta map
-func (s *GBServer) initSelfParticipant() *Participant {
+func (s *GBServer) initSelfParticipant() (*Participant, error) {
 
 	t := time.Now().Unix()
 
@@ -794,9 +826,10 @@ func (s *GBServer) initSelfParticipant() *Participant {
 		maxVersion: t,
 	}
 
-	//for _, f := range s.configFields {
-	//
-	//}
+	cfgKV, err := initConfigDeltas(s.configGetters, s.configFields)
+	if err != nil {
+		return nil, err
+	}
 
 	nameDelta := &Delta{
 		KeyGroup:  SYSTEM_DKG,
@@ -808,7 +841,6 @@ func (s *GBServer) initSelfParticipant() *Participant {
 
 	p.keyValues[MakeDeltaKey(nameDelta.KeyGroup, nameDelta.Key)] = nameDelta
 
-	// TODO Address needs more attention with configuration, different types of addresses and address key groups
 	// Add the _ADDRESS_ delta
 	addrDelta := &Delta{
 		KeyGroup:  ADDR_DKG,
@@ -858,7 +890,9 @@ func (s *GBServer) initSelfParticipant() *Participant {
 	}
 	p.keyValues[MakeDeltaKey(heartbeatDelta.KeyGroup, heartbeatDelta.Key)] = heartbeatDelta
 
-	return p
+	maps.Copy(p.keyValues, cfgKV)
+
+	return p, nil
 
 }
 

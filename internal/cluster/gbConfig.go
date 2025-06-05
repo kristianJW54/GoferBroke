@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"reflect"
@@ -132,7 +133,7 @@ type InternalOptions struct {
 // With this we (mostly) avoid reflect
 
 type clusterConfigSetterMapFunc func(any) error
-type clusterConfigGetterMapFunc func(string) (any, error)
+type clusterConfigGetterMapFunc func(string) (uint8, any, error)
 
 func getConfigFields(v reflect.Value, prefix string) []string {
 
@@ -287,13 +288,124 @@ func buildConfigGetters(cfg *GbClusterConfig, paths []string) map[string]cluster
 
 		f := field
 
-		getters[path] = func(s string) (any, error) {
-			return f, nil
+		switch f.Kind() {
+
+		case reflect.String:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_STRING_TYPE, f, nil
+			}
+
+		case reflect.Int:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_INT_TYPE, f, nil
+			}
+
+		case reflect.Int8:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_INT8_TYPE, f, nil
+			}
+
+		case reflect.Int16:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_INT16_TYPE, f, nil
+			}
+
+		case reflect.Int32:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_INT32_TYPE, f, nil
+			}
+
+		case reflect.Int64:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_INT64_TYPE, f, nil
+			}
+
+		case reflect.Uint8:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_UINT8_TYPE, f, nil
+			}
+
+		case reflect.Uint16:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_UINT16_TYPE, f, nil
+			}
+
+		case reflect.Uint32:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_UINT32_TYPE, f, nil
+			}
+
+		case reflect.Uint64:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_UINT64_TYPE, f, nil
+			}
+
+		case reflect.Bool:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_BOOL_TYPE, f, nil
+			}
+
+		default:
+			getters[path] = func(s string) (uint8, any, error) {
+				return D_INT8_TYPE, f, nil
+			}
+
 		}
 
 	}
 
 	return getters
+}
+
+func encodeGetterValue(val any) ([]byte, error) {
+
+	switch v := val.(type) {
+	case string:
+		return []byte(v), nil
+	case int8:
+		buf := make([]byte, 1)
+		buf[0] = byte(v)
+		return buf, nil
+	case int16:
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(v))
+		return buf, nil
+	case int32:
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, uint32(v))
+		return buf, nil
+	case int64:
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(v))
+		return buf, nil
+	case uint8:
+		buf := make([]byte, 1)
+		buf[0] = byte(v)
+		return buf, nil
+	case uint16:
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(v))
+		return buf, nil
+	case uint32:
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, uint32(v))
+		return buf, nil
+	case uint64:
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(v))
+		return buf, nil
+	case bool:
+		buf := make([]byte, 1)
+		if v {
+			buf[0] = 0x01
+		} else {
+			buf[0] = 0x00
+		}
+		return buf, nil
+	}
+
+	return nil, fmt.Errorf("unknown type %v", reflect.TypeOf(val))
+
 }
 
 //TODO Now need to handle tracking our config state in deltas - (once server is live we do not reflect on config)

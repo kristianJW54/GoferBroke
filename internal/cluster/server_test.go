@@ -40,6 +40,8 @@ func TestServerNameLengthError(t *testing.T) {
 
 }
 
+// TODO Add Server INITs here including config init with deltas full formed
+
 func TestServerRunningTwoNodes(t *testing.T) {
 
 	lc := net.ListenConfig{}
