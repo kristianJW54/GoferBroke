@@ -42,6 +42,54 @@ func TestServerNameLengthError(t *testing.T) {
 
 // TODO Add Server INITs here including config init with deltas full formed
 
+func TestConfigInitDeltas(t *testing.T) {
+
+	lc := net.ListenConfig{}
+
+	ip := "127.0.0.1" // Use the full IP address
+	port := "8081"
+
+	// Initialize config with the seed server address
+	config := &GbClusterConfig{
+		Name: "test-cluster",
+		SeedServers: []Seeds{
+			{
+				Host: ip,
+				Port: port,
+			},
+		},
+		Cluster: &ClusterOptions{
+			ClusterNetworkType: C_LOCAL,
+		},
+	}
+
+	nodeConfig := &GbNodeConfig{
+		Internal:    &InternalOptions{},
+		NetworkType: LOCAL,
+	}
+
+	gbs, err := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
+	if err != nil {
+		t.Errorf("TestServerNameLengthError error = %v", err)
+	}
+
+	gbs.StartServer()
+	time.Sleep(1 * time.Second)
+
+	if delta, ok := gbs.clusterMap.participants[gbs.ServerName].keyValues["config:Name"]; ok {
+
+		log.Printf("delta - (%s-%s)", delta.Key, delta.Value)
+
+	} else {
+		t.Errorf("TestConfigInitDeltas should have returned a key")
+	}
+
+	time.Sleep(1 * time.Second)
+
+	gbs.Shutdown()
+
+}
+
 func TestServerRunningTwoNodes(t *testing.T) {
 
 	lc := net.ListenConfig{}

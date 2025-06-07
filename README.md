@@ -138,7 +138,7 @@ Keep pull requests focused; avoid bundling unrelated changes.
 Ensure changes are backward-compatible where possible.
 
 Get in Touch
-If you’re unsure where to start or have questions, feel free to open a discussion or create an issue. I'm appy to help :)
+If you’re unsure where to start or have questions, feel free to open a discussion or create an issue. I'm happy to help :)
 
 Your contributions are what make this project thrive—thank you for supporting GoferBroke!
 

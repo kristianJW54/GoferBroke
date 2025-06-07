@@ -201,8 +201,8 @@ func (sf *ServerID) PrettyName() string {
 	return sf.name
 }
 
-func (sf *ServerID) updateTime() {
-	sf.timeUnix = uint64(time.Now().Unix())
+func (sf *ServerID) updateTime(time uint64) {
+	sf.timeUnix = time
 }
 
 // GBServer is the main server struct
@@ -210,7 +210,7 @@ type GBServer struct {
 	//Server Info - can add separate info struct later
 	ServerID
 	ServerName       string //ID and timestamp
-	initialised      int64  //time of server creation - can point to ServerID timestamp
+	initialised      uint64 //time of server creation - can point to ServerID timestamp
 	host             string
 	port             string
 	addr             string
@@ -324,7 +324,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	// Joins the object to a string name
 	srvName := uuid.String()
 
-	// Creation steps
+	// Config setting
+	cfgFields := getConfigFields(reflect.ValueOf(gbConfig), "")
 
 	// Build EventDispatcher
 	ed := NewEventDispatcher()
@@ -339,7 +340,7 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	s := &GBServer{
 		ServerID:      *serverID,
 		ServerName:    srvName,
-		initialised:   int64(serverID.timeUnix),
+		initialised:   uint64(serverID.timeUnix),
 		host:          nodeHost,
 		port:          nodePort,
 		addr:          addr,
@@ -357,7 +358,9 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		gbNodeConfig:    gbNodeConfig,
 		seedAddr:        make([]*seedEntry, 0, 2),
 
-		configFields: getConfigFields(reflect.ValueOf(gbConfig), ""),
+		configFields:  cfgFields,
+		configSetters: buildConfigSetters(gbConfig, cfgFields),
+		configGetters: buildConfigGetters(gbConfig, cfgFields),
 
 		clientStore: make(map[uint64]*gbClient),
 
@@ -384,6 +387,19 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	return s, nil
 }
 
+func NewSeedServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
+
+	srv, err := NewServer(serverName, gbConfig, gbNodeConfig, nodeHost, nodePort, clientPort, lc)
+	if err != nil {
+		return nil, err
+	}
+
+	srv.isSeed = true
+
+	return srv, nil
+
+}
+
 func (s *GBServer) initSelf() {
 
 	defer s.startupSync.Done()
@@ -391,12 +407,11 @@ func (s *GBServer) initSelf() {
 	s.phi = *s.initPhiControl()
 	selfInfo, err := s.initSelfParticipant()
 	if err != nil {
+		log.Printf("error in init participant %v", err)
 		return
 	}
 	selfInfo.paDetection = s.initPhiAccrual()
 	s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
-	s.configSetters = buildConfigSetters(s.gbClusterConfig, s.configFields)
-	s.configGetters = buildConfigGetters(s.gbClusterConfig, s.configFields)
 
 }
 
@@ -411,7 +426,11 @@ func (s *GBServer) StartServer() {
 	s.serverLock.Unlock()
 
 	if !s.gbNodeConfig.Internal.DisableUpdateServerTimeStampOnStartup {
-		s.updateTime() // To sync to when the server is started
+
+		now := uint64(time.Now().Unix())
+
+		s.updateTime(now) // To sync to when the server is started
+		s.initialised = now
 		srvName := s.String()
 		s.ServerName = srvName
 	}
@@ -442,6 +461,9 @@ func (s *GBServer) StartServer() {
 	}
 
 	if !s.isSeed {
+		//TODO Decision here: if we are not a seed - then a user has NOT started a seed server so there is intention
+		// do we want to then override this and upgrade node to a seed if we detect addr to be the same? or fail early and
+		// assume intention?
 		s.seedCheck()
 	}
 
@@ -462,7 +484,10 @@ func (s *GBServer) StartServer() {
 	// Here we attempt to dial and connect to seed
 
 	s.startupSync.Add(1)
-	s.AcceptNodeLoop("node-test")
+	err = s.AcceptNodeLoop("node-test")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	//---------------- Client Accept Loop ----------------//
 	//s.AcceptLoop("client-test")
@@ -488,16 +513,17 @@ func (s *GBServer) StartServer() {
 	// We wait for start up to complete here
 	s.startupSync.Wait()
 
-	// Start up phi process which will wait for the gossip signal
-	s.startGoRoutine(s.PrettyName(), "phi-process", func() {
-
-		// Phi cleanup needed?
-		s.phiProcess(s.ServerContext)
-
-	})
-
 	// Gossip process launches a sync.Cond wait pattern which will be signalled when connections join and leave using a connection check.
 	if !s.gbNodeConfig.Internal.DisableGossip {
+
+		// Start up phi process which will wait for the gossip signal
+		s.startGoRoutine(s.PrettyName(), "phi-process", func() {
+
+			// Phi cleanup needed?
+			s.phiProcess(s.ServerContext)
+
+		})
+
 		s.startGoRoutine(s.PrettyName(), "gossip-process",
 			func() {
 				defer s.gossipCleanup()
@@ -700,6 +726,35 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 	seeds := s.seedAddr
 	s.serverLock.RUnlock()
 
+	if len(seeds) <= 1 {
+
+		if seeds[0].resolved.IP.Equal(s.boundTCPAddr.IP) && seeds[0].resolved.Port == s.boundTCPAddr.Port {
+			log.Printf("I am the only seed - returning...")
+			return nil, nil
+		} else {
+
+			conn, err := net.Dial("tcp", seeds[0].resolved.String())
+			if err != nil {
+				// TODO Need to check the error because if it is an already made connection then we can just return
+				log.Printf("Failed to dial seed %s: %v -- trying reconnect...", seeds[0].host, err)
+				conn, err = s.tryReconnectToSeed(0)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			// Connection succeeded, check if we need to update local advertise address
+			err = s.ComputeAdvertiseAddr(conn)
+			if err != nil {
+				return conn, Errors.WrapGBError(Errors.DialSeedErr, err)
+			}
+
+			return conn, nil
+
+		}
+
+	}
+
 	for i, addr := range seeds {
 
 		if addr.resolved.IP.Equal(s.boundTCPAddr.IP) && addr.resolved.Port == s.boundTCPAddr.Port {
@@ -708,10 +763,6 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 		}
 
 		// TODO Need a connection check here so we don't redial and already made connection
-
-		if s.isSeed {
-			log.Printf("dialing other seed addr %s", addr.host)
-		}
 
 		conn, err := net.Dial("tcp", addr.resolved.String())
 		if err != nil {
@@ -791,7 +842,9 @@ func initConfigDeltas(configGetters map[string]clusterConfigGetterMapFunc, field
 				return nil, err
 			}
 
-			b, err := encodeGetterValue(val)
+			log.Printf("typ %v - val %T", typ, val)
+
+			b, err := encodeGetterValue(val) // TODO Need to add an index return here for object/arrays
 			if err != nil {
 				return nil, err
 			}
@@ -942,7 +995,7 @@ func (s *GBServer) AcceptLoop(name string) {
 //TODO Figure out how to manage routines and shutdown signals
 
 // AcceptNodeLoop sets up a context and listener and then calls an internal acceptConnection method
-func (s *GBServer) AcceptNodeLoop(name string) {
+func (s *GBServer) AcceptNodeLoop(name string) error {
 
 	s.serverLock.Lock()
 
@@ -955,7 +1008,7 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	nl, err := s.listenConfig.Listen(s.ServerContext, s.boundTCPAddr.Network(), s.boundTCPAddr.String())
 	if err != nil {
-		log.Printf("Error creating listener: %s\n", err)
+		return err // TODO Need GBError here
 	}
 
 	s.nodeListener = nl
@@ -1016,6 +1069,8 @@ func (s *GBServer) AcceptNodeLoop(name string) {
 
 	s.startupSync.Done()
 	s.serverLock.Unlock()
+
+	return nil
 
 }
 

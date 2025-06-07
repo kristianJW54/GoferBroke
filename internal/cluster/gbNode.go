@@ -87,7 +87,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // will return that error and trigger logic to either retry or exit the process
 func (s *GBServer) connectToSeed() error {
 
-	ctx, cancel := context.WithTimeout(s.ServerContext, 1*time.Second) // TODO will be configurable
+	ctx, cancel := context.WithTimeout(s.ServerContext, 1*time.Second)
 	defer cancel()
 
 	conn, err := s.dialSeed()
@@ -97,6 +97,7 @@ func (s *GBServer) connectToSeed() error {
 
 	if conn == nil {
 		log.Printf("seed not reachable will try again...")
+		// TODO Maybe return a specific error which we can match on and then do a retry
 		return nil
 	}
 

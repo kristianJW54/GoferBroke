@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
+	"log"
 	"reflect"
 	"strings"
 )
@@ -42,7 +43,7 @@ const (
 
 type GbClusterConfig struct {
 	Name        string
-	SeedServers []Seeds `gb:"seed"`
+	SeedServers []Seeds
 	Cluster     *ClusterOptions
 }
 
@@ -292,62 +293,62 @@ func buildConfigGetters(cfg *GbClusterConfig, paths []string) map[string]cluster
 
 		case reflect.String:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_STRING_TYPE, f, nil
+				return D_STRING_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Int:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT_TYPE, f, nil
+				return D_INT_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Int8:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT8_TYPE, f, nil
+				return D_INT8_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Int16:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT16_TYPE, f, nil
+				return D_INT16_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Int32:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT32_TYPE, f, nil
+				return D_INT32_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Int64:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT64_TYPE, f, nil
+				return D_INT64_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Uint8:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT8_TYPE, f, nil
+				return D_UINT8_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Uint16:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT16_TYPE, f, nil
+				return D_UINT16_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Uint32:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT32_TYPE, f, nil
+				return D_UINT32_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Uint64:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT64_TYPE, f, nil
+				return D_UINT64_TYPE, f.Interface(), nil
 			}
 
 		case reflect.Bool:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_BOOL_TYPE, f, nil
+				return D_BOOL_TYPE, f.Interface(), nil
 			}
 
 		default:
 			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT8_TYPE, f, nil
+				return D_INT8_TYPE, f.Interface(), nil
 			}
 
 		}
@@ -357,6 +358,7 @@ func buildConfigGetters(cfg *GbClusterConfig, paths []string) map[string]cluster
 	return getters
 }
 
+// TODO Need to modify to handle array types and return index and value
 func encodeGetterValue(val any) ([]byte, error) {
 
 	switch v := val.(type) {
@@ -402,9 +404,20 @@ func encodeGetterValue(val any) ([]byte, error) {
 			buf[0] = 0x00
 		}
 		return buf, nil
+	case int:
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(v))
+		return buf, nil
+	case ClusterNetworkType:
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(v))
+		return buf, nil
+	case []Seeds:
+		log.Println("GOT EM")
+		return nil, nil
 	}
 
-	return nil, fmt.Errorf("unknown type %v", reflect.TypeOf(val))
+	return nil, fmt.Errorf("unknown type %T", val)
 
 }
 

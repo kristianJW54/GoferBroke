@@ -383,11 +383,11 @@ func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 //=======================================================
 
 func MakeDeltaKey(group, key string) string {
-	return fmt.Sprintf("%s.%s", group, key)
+	return fmt.Sprintf("%s:%s", group, key)
 }
 
 func ParseDeltaKey(key string) (string, string) {
-	parts := strings.Split(key, ".")
+	parts := strings.Split(key, ":")
 	return parts[0], parts[1]
 }
 
@@ -454,17 +454,21 @@ func (p *Participant) Get(deltaKey string) (*Delta, error) {
 //---------------------
 
 // TODO We need to return error for this and handle them accordingly
-func initClusterMap(uuid string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
+func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
+
+	log.Printf("called")
 
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
-		make([]string, 0),
+		make([]string, 0, 4),
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
-	cm.participants[uuid] = participant
+	log.Printf("adding %s to cluster map ", serverName)
+
+	cm.participants[serverName] = participant
 	cm.participantArray = append(cm.participantArray, participant.name)
 
 	return cm
