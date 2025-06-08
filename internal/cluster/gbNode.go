@@ -388,7 +388,7 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 			continue
 		}
 
-		if sizeEstimate+len(name) > DEFAULT_MAX_DISCOVERY_SIZE {
+		if uint16(sizeEstimate+len(name)) > DEFAULT_MAX_DISCOVERY_SIZE {
 			return addrMap, nil
 		}
 
@@ -400,7 +400,7 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 			if value.KeyGroup == ADDR_DKG {
 				log.Printf("tcpKey = %v", key)
 
-				if sizeEstimate+len(key) > DEFAULT_MAX_DISCOVERY_SIZE {
+				if uint16(sizeEstimate+len(key)) > DEFAULT_MAX_DISCOVERY_SIZE {
 					return addrMap, nil
 				} else {
 					addrMap[name] = append(addrMap[name], value.Key)

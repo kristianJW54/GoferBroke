@@ -71,11 +71,12 @@ func (g *grTracking) logActiveGoRoutines() {
 	})
 }
 
-func percMakeup(known, want int) int {
+// TODO Need to check we can't get a cast error here
+func percMakeup(known, want int) uint8 {
 	if want == 0 {
 		return 0 // Prevent division by zero
 	}
-	return (known * 100) / want
+	return uint8((known * 100) / want)
 }
 
 //==========================================================================================
@@ -93,35 +94,35 @@ var heartBeatKV = map[string]*Delta{
 }
 
 var keyValues1 = map[string]*Delta{
-	"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-	"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-	"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-	"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
-	"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
+	"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: D_STRING_TYPE, Version: 1640995205, Value: []byte("A")},
+	"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: D_STRING_TYPE, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+	"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: D_STRING_TYPE, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+	"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: D_STRING_TYPE, Version: 1640995208, Value: []byte("Another simple string.")},
 }
 
 var keyValues1LowerVersion = map[string]*Delta{
-	"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-	"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-	"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995201, Value: []byte("Test serialization with repeated values.")},
-	"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995202, Value: []byte("😃")},
-	"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("Another string")},
+	"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+	"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: D_STRING_TYPE, Version: 1640995205, Value: []byte("A")},
+	"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: D_STRING_TYPE, Version: 1640995201, Value: []byte("Test serialization with repeated values.")},
+	"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: D_STRING_TYPE, Version: 1640995202, Value: []byte("😃")},
+	"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: D_STRING_TYPE, Version: 1640995207, Value: []byte("Another string")},
 }
 
 var addressTestingKVs = map[string]*Delta{
-	"address:tcp": {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: ADDR_V, Version: 1640995204, Value: []byte("127.0.0.1")},
+	"address:tcp": {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("127.0.0.1")},
 }
 
 var multipleAddressTestingKVs = map[string]*Delta{
-	"address:tcp":   {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: ADDR_V, Version: 1640995204, Value: []byte("127.0.0.1")},
-	"address:CLOUD": {KeyGroup: ADDR_DKG, Key: "CLOUD", ValueType: ADDR_V, Version: 1640995204, Value: []byte("137.184.248.0")},
-	"address:DNS":   {KeyGroup: ADDR_DKG, Key: "DNS", ValueType: ADDR_V, Version: 1640995204, Value: []byte("example.com")},
+	"address:tcp":   {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("127.0.0.1")},
+	"address:CLOUD": {KeyGroup: ADDR_DKG, Key: "CLOUD", ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("137.184.248.0")},
+	"address:DNS":   {KeyGroup: ADDR_DKG, Key: "DNS", ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("example.com")},
 }
 
 var keyValues2 = map[string]*Delta{
-	"address:tcp":        {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: ADDR_V, Version: 1640995204, Value: []byte("127.0.0.1")},
-	"address:NODE_CONNS": {KeyGroup: ADDR_DKG, Key: _NODE_CONNS_, ValueType: NUM_NODE_CONN_V, Version: 1640995205, Value: []byte{0}},
-	"address:HEARTBEAT":  {KeyGroup: ADDR_DKG, Key: _HEARTBEAT_, ValueType: HEARTBEAT_V, Version: 1640995206, Value: int64ToBytes(1640995206)},
+	"address:tcp":        {KeyGroup: ADDR_DKG, Key: _ADDRESS_, ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("127.0.0.1")},
+	"address:NODE_CONNS": {KeyGroup: ADDR_DKG, Key: _NODE_CONNS_, ValueType: D_INT_TYPE, Version: 1640995205, Value: []byte{0}},
+	"address:HEARTBEAT":  {KeyGroup: ADDR_DKG, Key: _HEARTBEAT_, ValueType: D_INT64_TYPE, Version: 1640995206, Value: int64ToBytes(1640995206)},
 }
 
 // TODO Make another one of these but with config
@@ -140,7 +141,7 @@ func GenerateDefaultTestServer(serverName string, kv map[string]*Delta, numParti
 		},
 		ServerName: serverName,
 		gbClusterConfig: &GbClusterConfig{
-			SeedServers: []Seeds{
+			SeedServers: []*Seeds{
 				{},
 			},
 			Cluster: &ClusterOptions{},

@@ -1,10 +1,8 @@
 package cluster
 
 import (
-	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
-	"log"
 	"reflect"
 	"strings"
 )
@@ -29,21 +27,28 @@ Internal will be local to the node - such as node name or address etc.
 
 */
 
+//=============================================================
+// Cluster
+//=============================================================
+
 const (
-	DEFAULT_MAX_DELTA_SIZE            = DEFAULT_MAX_GSA - 400 // TODO If config not set then we default to this
-	DEFAULT_MAX_DISCOVERY_SIZE        = 1024
-	DEFAULT_DISCOVERY_PERCENTAGE      = 50
-	DEFAULT_MAX_GSA                   = 1400
-	DEFAULT_MAX_DELTA_PER_PARTICIPANT = 5
-	DEFAULT_PA_WINDOW_SIZE            = 100
-	DEFAULT_PA_THRESHOLD              = 8
+	DEFAULT_MAX_DELTA_SIZE            = DEFAULT_MAX_GSA - 400
+	DEFAULT_MAX_DISCOVERY_SIZE        = uint16(1024)
+	DEFAULT_DISCOVERY_PERCENTAGE      = uint8(50)
+	DEFAULT_MAX_GSA                   = uint16(1400)
+	DEFAULT_MAX_DELTA_PER_PARTICIPANT = uint8(5)
+	DEFAULT_PA_WINDOW_SIZE            = uint16(100)
+	DEFAULT_NODE_SELECTION_PER_ROUND  = uint8(1)
+	DEFAULT_MAX_GOSSIP_SIZE           = uint16(2048)
+	DEFAULT_MAX_NUMBER_OF_NODES       = uint32(1000)
+	DEFAULT_SEQUENCE_ID_POOL          = uint32(100)
 )
 
 // TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
 
 type GbClusterConfig struct {
 	Name        string
-	SeedServers []Seeds
+	SeedServers []*Seeds
 	Cluster     *ClusterOptions
 }
 
@@ -63,29 +68,55 @@ const (
 )
 
 type ClusterOptions struct {
-	MaxGossipSize                 uint16
-	MaxDeltaSize                  uint16
-	MaxDiscoverySize              uint16
-	DiscoveryPercentageProportion int
-	MaxNumberOfNodes              int
-	DefaultSubsetDigestNodes      int
-	MaxSequenceIDPool             int
-	NodeSelectionPerGossipRound   int
-	MaxParticipantHeapSize        int
-	PreferredAddrGroup            string
-	DiscoveryPercentage           uint8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
-	PaWindowSize                  int
-	PaThreshold                   int
-	ClusterNetworkType            ClusterNetworkType
-	DynamicGossipScaling          bool // Adjusts node selection, delta size, discovery size, etc based on cluster metrics and size
-	LoggingURL                    string
-	MetricsURL                    string
-	ErrorsURL                     string
-	RequestIDPool                 uint16
+	NodeSelectionPerGossipRound    uint8
+	DiscoveryPercentage            uint8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
+	MaxDeltaGossipedPerParticipant uint8
+	MaxGossipSize                  uint16
+	MaxDeltaSize                   uint16
+	MaxDiscoverySize               uint16
+	PaWindowSize                   uint16
+	MaxGossSynAck                  uint16
+	MaxNumberOfNodes               uint32
+	MaxSequenceIDPool              uint32
+	ClusterNetworkType             ClusterNetworkType
+	DynamicGossipScaling           bool // Adjusts node selection, delta size, discovery size, etc based on cluster metrics and size
+	LoggingURL                     string
+	MetricsURL                     string
+	ErrorsURL                      string
 
-	NodeMTLSRequired   bool
-	ClientMTLSRequired bool
+	NodeMTLSRequired   bool `default:"false"`
+	ClientMTLSRequired bool `default:"false"`
 }
+
+func InitDefaultClusterConfig() *GbClusterConfig {
+
+	return &GbClusterConfig{
+		Name:        "",
+		SeedServers: make([]*Seeds, 0, 4),
+		Cluster: &ClusterOptions{
+			NodeSelectionPerGossipRound:    DEFAULT_NODE_SELECTION_PER_ROUND,
+			DiscoveryPercentage:            DEFAULT_DISCOVERY_PERCENTAGE,
+			MaxDeltaGossipedPerParticipant: DEFAULT_MAX_DELTA_PER_PARTICIPANT,
+			MaxGossipSize:                  DEFAULT_MAX_GOSSIP_SIZE,
+			MaxDeltaSize:                   DEFAULT_MAX_DELTA_SIZE,
+			MaxDiscoverySize:               DEFAULT_MAX_DISCOVERY_SIZE,
+			PaWindowSize:                   DEFAULT_PA_WINDOW_SIZE,
+			MaxGossSynAck:                  DEFAULT_MAX_GSA,
+			MaxNumberOfNodes:               DEFAULT_MAX_NUMBER_OF_NODES,
+			MaxSequenceIDPool:              DEFAULT_SEQUENCE_ID_POOL,
+			ClusterNetworkType:             C_UNDEFINED,
+			DynamicGossipScaling:           false,
+			LoggingURL:                     "",
+			MetricsURL:                     "",
+			ErrorsURL:                      "",
+			NodeMTLSRequired:               false,
+			ClientMTLSRequired:             false,
+		},
+	}
+
+}
+
+//=============================================================
 
 type NodeNetworkType int
 
@@ -115,7 +146,6 @@ type InternalOptions struct {
 	DebugMode                             bool
 	DisableInternalGossipSystemUpdate     bool
 	DisableUpdateServerTimeStampOnStartup bool
-	NodeSelection                         uint8
 
 	// TLS
 	CACertFilePath string
@@ -126,7 +156,7 @@ type InternalOptions struct {
 }
 
 //=====================================================================
-// Extract field names to use as delta keys
+// Config Schema
 //=====================================================================
 
 // The reason why we map these functions up-front is that reflect is quite expensive and to keep calling it at
@@ -134,291 +164,168 @@ type InternalOptions struct {
 // With this we (mostly) avoid reflect
 
 type clusterConfigSetterMapFunc func(any) error
-type clusterConfigGetterMapFunc func(string) (uint8, any, error)
+type clusterConfigGetterMapFunc func() any
 
-func getConfigFields(v reflect.Value, prefix string) []string {
+type ConfigSchema struct {
+	Path     string
+	Type     reflect.Type
+	Kind     reflect.Kind
+	isSlice  bool
+	isMap    bool
+	isPtr    bool
+	elemType *ConfigSchema
+	Getter   clusterConfigGetterMapFunc
+	Setter   clusterConfigSetterMapFunc
+	//Custom Encode + Decode to be included?
+}
 
-	//v := reflect.ValueOf(gb)
+func joinPath(prefix, name string) string {
+	if prefix == "" {
+		return name
+	}
+	return prefix + "." + name
+}
 
-	var names []string
+func BuildConfigSchema(cfg *GbClusterConfig) map[string]*ConfigSchema {
+
+	out := make(map[string]*ConfigSchema)
+	buildSchemaRecursive(reflect.ValueOf(&cfg).Elem(), "", out)
+	return out
+
+}
+
+func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*ConfigSchema) {
 
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 
-	//names := make([]string, t.NumField())
-	for i := range v.NumField() {
+	t := v.Type()
 
-		field := v.Field(i)
-		structField := v.Type().Field(i)
+	// Loop through each field of the struct
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		fieldValue := v.Field(i)
+		path := joinPath(parent, field.Name)
+		kind := field.Type.Kind()
 
-		fieldName := structField.Name
-		fullPath := fieldName
+		switch kind {
 
-		if prefix != "" {
-			fullPath = fmt.Sprintf("%s.%s", prefix, fieldName)
-		}
+		case reflect.Struct:
 
-		if field.Kind() == reflect.Ptr {
-			field = field.Elem()
-		}
-
-		if field.Kind() == reflect.Struct {
-			subFields := getConfigFields(field, fullPath)
-			names = append(names, subFields...)
-			continue
-		}
-
-		names = append(names, fullPath)
-
-	}
-
-	return names
-
-}
-
-func buildConfigSetters(cfg *GbClusterConfig, paths []string) map[string]clusterConfigSetterMapFunc {
-	setters := make(map[string]clusterConfigSetterMapFunc, len(paths))
-
-	for _, path := range paths {
-		keys := strings.Split(path, ".")
-
-		// Traverse ONCE during setup
-		v := reflect.ValueOf(cfg).Elem()
-		for i := 0; i < len(keys)-1; i++ {
-			v = v.FieldByName(keys[i])
-			if v.Kind() == reflect.Ptr {
-				if v.IsNil() {
-					v.Set(reflect.New(v.Type().Elem()))
+			buildSchemaRecursive(fieldValue, path, out)
+		case reflect.Ptr:
+			if field.Type.Elem().Kind() == reflect.Struct {
+				if fieldValue.IsNil() {
+					fieldValue.Set(reflect.New(field.Type.Elem()))
 				}
-				v = v.Elem()
-			}
-		}
-
-		lastKey := keys[len(keys)-1]
-		field := v.FieldByName(lastKey)
-
-		if !field.IsValid() {
-			continue
-		}
-
-		f := field // Re-capture to avoid variable loop closures
-
-		switch f.Kind() {
-		case reflect.String:
-			setters[path] = func(val any) error {
-				strVal, ok := val.(string)
-				if !ok {
-					return fmt.Errorf("expected string")
+				buildSchemaRecursive(fieldValue, path, out)
+			} else {
+				out[path] = &ConfigSchema{
+					Path:   path,
+					Type:   field.Type.Elem(),
+					Kind:   field.Type.Elem().Kind(),
+					isPtr:  true,
+					Setter: makeDirectSetter(fieldValue),
+					Getter: makeDirectGetter(fieldValue),
 				}
-				f.SetString(strVal)
-				return nil
 			}
-		case reflect.Int, reflect.Int64:
-			setters[path] = func(val any) error {
-				intVal, ok := val.(int)
-				if !ok {
-					return fmt.Errorf("expected int")
+
+		case reflect.Slice:
+
+			elemType := fieldValue.Type().Elem() // Example -> *Seeds
+			elemKind := elemType.Kind()          // Example -> reflect.Ptr
+			indexPath := path + ".0"             // Example -> "SeedServers.0"
+
+			if elemKind == reflect.Ptr && elemType.Elem().Kind() == reflect.Struct {
+				//Ensure we have one element, so we can walk into it
+				if fieldValue.Len() == 0 {
+					newElem := reflect.New(field.Type.Elem())
+					fieldValue.Set(reflect.Append(fieldValue, newElem))
 				}
-				field.SetInt(int64(intVal))
-				return nil
-			}
 
-		case reflect.Uint8:
-			setters[path] = func(val any) error {
-				intVal, ok := val.(uint8)
-				if !ok {
-					return fmt.Errorf("expected uint8")
+				firstElem := fieldValue.Index(0)
+				if firstElem.Kind() == reflect.Ptr && firstElem.IsNil() {
+					firstElem.Set(reflect.New(field.Type.Elem()))
 				}
-				f.SetUint(uint64(intVal))
-				return nil
-			}
+				buildSchemaRecursive(firstElem, indexPath, out)
+			} else {
 
-		case reflect.Uint16:
-			setters[path] = func(val any) error {
-				intVal, ok := val.(uint16)
-				if !ok {
-					return fmt.Errorf("expected uint8")
+				out[indexPath] = &ConfigSchema{
+					Path:    indexPath,
+					Type:    field.Type.Elem(),
+					Kind:    field.Type.Elem().Kind(),
+					isSlice: true,
+					Setter:  nil,
+					Getter:  nil,
 				}
-				f.SetUint(uint64(intVal))
-				return nil
+
 			}
 
-		case reflect.Bool:
-			setters[path] = func(val any) error {
-				boolVal, ok := val.(bool)
-				if !ok {
-					return fmt.Errorf("expected bool")
+		case reflect.Map:
+
+			if field.Type.Key().Kind() == reflect.String {
+				mapPath := path + ".<key>"
+				out[mapPath] = &ConfigSchema{
+					Path:   mapPath,
+					Type:   field.Type.Key(),
+					Kind:   field.Type.Key().Kind(),
+					isMap:  true,
+					Getter: nil,
+					Setter: nil,
 				}
-				f.SetBool(boolVal)
-				return nil
-			}
-
-		}
-	}
-
-	return setters
-}
-
-func buildConfigGetters(cfg *GbClusterConfig, paths []string) map[string]clusterConfigGetterMapFunc {
-
-	//getters := make(map[string]clusterConfigGetterMapFunc, len(paths))
-	getters := make(map[string]clusterConfigGetterMapFunc, len(paths))
-
-	for _, path := range paths {
-		keys := strings.Split(path, ".")
-
-		// Traverse ONCE during setup
-		v := reflect.ValueOf(cfg).Elem()
-		for i := 0; i < len(keys)-1; i++ {
-			v = v.FieldByName(keys[i])
-			if v.Kind() == reflect.Ptr {
-				if v.IsNil() {
-					v.Set(reflect.New(v.Type().Elem()))
-				}
-				v = v.Elem()
-			}
-		}
-
-		lastKey := keys[len(keys)-1]
-		field := v.FieldByName(lastKey)
-
-		if !field.IsValid() {
-			continue
-		}
-
-		f := field
-
-		switch f.Kind() {
-
-		case reflect.String:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_STRING_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Int:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Int8:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT8_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Int16:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT16_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Int32:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT32_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Int64:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT64_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Uint8:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT8_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Uint16:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT16_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Uint32:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT32_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Uint64:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_UINT64_TYPE, f.Interface(), nil
-			}
-
-		case reflect.Bool:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_BOOL_TYPE, f.Interface(), nil
 			}
 
 		default:
-			getters[path] = func(s string) (uint8, any, error) {
-				return D_INT8_TYPE, f.Interface(), nil
+			out[path] = &ConfigSchema{
+				Path:   path,
+				Type:   field.Type,
+				Kind:   kind,
+				Setter: makeDirectSetter(fieldValue),
+				Getter: makeDirectGetter(fieldValue),
 			}
 
 		}
 
 	}
 
-	return getters
 }
 
-// TODO Need to modify to handle array types and return index and value
-func encodeGetterValue(val any) ([]byte, error) {
+// For getters and setters - we only cache functions on primitives which are simple and predictable
+// more complex types like slices/maps etc. we will use a runtime reflection which will be able to extract indexes
+// walk to the value and set
+// To do this, we will access the schema for the respective field we are trying to get/set and check the type
+// if it is a complex type we know it will not have cached function and we can call a runtime function to handle
 
-	switch v := val.(type) {
-	case string:
-		return []byte(v), nil
-	case int8:
-		buf := make([]byte, 1)
-		buf[0] = byte(v)
-		return buf, nil
-	case int16:
-		buf := make([]byte, 2)
-		binary.BigEndian.PutUint16(buf, uint16(v))
-		return buf, nil
-	case int32:
-		buf := make([]byte, 4)
-		binary.BigEndian.PutUint32(buf, uint32(v))
-		return buf, nil
-	case int64:
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(v))
-		return buf, nil
-	case uint8:
-		buf := make([]byte, 1)
-		buf[0] = byte(v)
-		return buf, nil
-	case uint16:
-		buf := make([]byte, 2)
-		binary.BigEndian.PutUint16(buf, uint16(v))
-		return buf, nil
-	case uint32:
-		buf := make([]byte, 4)
-		binary.BigEndian.PutUint32(buf, uint32(v))
-		return buf, nil
-	case uint64:
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(v))
-		return buf, nil
-	case bool:
-		buf := make([]byte, 1)
-		if v {
-			buf[0] = 0x01
-		} else {
-			buf[0] = 0x00
+func makeDirectSetter(fv reflect.Value) clusterConfigSetterMapFunc {
+	if fv.Kind() == reflect.Ptr {
+		if fv.IsNil() {
+			fv.Set(reflect.New(fv.Type().Elem()))
 		}
-		return buf, nil
-	case int:
-		buf := make([]byte, 2)
-		binary.BigEndian.PutUint16(buf, uint16(v))
-		return buf, nil
-	case ClusterNetworkType:
-		buf := make([]byte, 2)
-		binary.BigEndian.PutUint16(buf, uint16(v))
-		return buf, nil
-	case []Seeds:
-		log.Println("GOT EM")
-		return nil, nil
+		fv = fv.Elem()
 	}
 
-	return nil, fmt.Errorf("unknown type %T", val)
+	return func(value any) error {
+		val := reflect.ValueOf(value)
+		if !val.Type().AssignableTo(fv.Type()) {
+			return fmt.Errorf("cannot assign %T to %s", value, fv.Type())
+		}
+		fv.Set(val)
+		return nil
+	}
+}
 
+func makeDirectGetter(fv reflect.Value) clusterConfigGetterMapFunc {
+	if fv.Kind() == reflect.Ptr {
+		if fv.IsNil() {
+			fv.Set(reflect.New(fv.Type().Elem()))
+		}
+		fv = fv.Elem()
+	}
+
+	return func() any {
+		return fv.Interface()
+	}
 }
 
 //TODO Now need to handle tracking our config state in deltas - (once server is live we do not reflect on config)

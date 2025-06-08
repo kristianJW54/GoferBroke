@@ -127,16 +127,6 @@ func (s *GBServer) gossipCleanup() {
 
 // System gossip types
 const (
-	HEARTBEAT_V = iota
-	ADDR_V
-	CPU_USAGE_V
-	MEMORY_USAGE_V
-	NUM_NODE_CONN_V
-	NUM_CLIENT_CONN_V
-	STRING_V
-)
-
-const (
 	D_STRING_TYPE = iota
 	D_BYTE_TYPE
 	D_INT_TYPE
@@ -247,29 +237,6 @@ type participantQueue struct {
 }
 
 type participantHeap []*participantQueue
-
-//-------------------
-//Heartbeat Monitoring + Failure Detection
-
-type phiControl struct {
-	windowSize   int
-	threshold    int
-	phiSemaphore chan struct{}
-	phiControl   chan bool
-	phiOK        bool
-	warmUpBucket int
-	mu           sync.RWMutex
-}
-
-type phiAccrual struct {
-	lastBeat     int64
-	window       []int64
-	windowIndex  int
-	score        float64
-	warmupBucket int
-	dead         bool
-	pa           sync.Mutex
-}
 
 //=======================================================
 // Participant Heap
@@ -664,7 +631,7 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 			part.keyValues[addrKey] = &Delta{
 				Key:       key,
 				KeyGroup:  group,
-				ValueType: ADDR_V,
+				ValueType: D_STRING_TYPE,
 				Version:   0,
 				Value:     valueByte,
 			}
@@ -689,7 +656,7 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 
 		newParticipant.keyValues[addrKey] = &Delta{
 			Key:       addrKey,
-			ValueType: ADDR_V,
+			ValueType: D_STRING_TYPE,
 			Version:   0,
 			Value:     valueByte,
 		}
@@ -775,7 +742,7 @@ func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
 	perc := percMakeup(current, int(addrNodes.addrCount))
 
 	if s.gbClusterConfig.Cluster.DiscoveryPercentage != 0 {
-		if perc >= int(s.gbClusterConfig.Cluster.DiscoveryPercentage) {
+		if perc >= s.gbClusterConfig.Cluster.DiscoveryPercentage {
 			s.discoveryPhase = false
 		}
 	} else if perc >= DEFAULT_DISCOVERY_PERCENTAGE {
@@ -1035,7 +1002,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			// TODO We also want to track and trace overloaded delta to see and monitor
 
-			overloaded := len(delta.Value) > DEFAULT_MAX_DELTA_SIZE
+			overloaded := len(delta.Value) > int(DEFAULT_MAX_DELTA_SIZE)
 
 			// Overloaded check and trace here (only if they are gossiped?)
 
@@ -1121,7 +1088,7 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 		return nil, err
 	}
 
-	remaining := DEFAULT_MAX_GSA - newSize
+	remaining := int(DEFAULT_MAX_GSA) - newSize
 
 	// Populate delta queues and build selected deltas
 	selectedDeltas, deltaSize, err := s.buildDelta(&partQueue, remaining)
@@ -1133,7 +1100,6 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	cereal, err := s.serialiseGSA(newD, selectedDeltas, deltaSize)
 
 	// Return
-	// TODO somewhere after this another 13 10 gets added to the delta buff causing a length mismatch
 	return cereal, nil
 }
 
@@ -1178,7 +1144,6 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		// If we receive a response delta - process and add it to our map
 		srv := c.srv
 
-		// TODO When we reach here - at this point we can have a corrupt max-version - it is also only on seed-server for all nodes
 		log.Printf("%s - delta in async [][][][][][][][][] = %s", srv.PrettyName(), delta.msg)
 
 		cd, e := deserialiseDelta(delta.msg)
@@ -1227,7 +1192,7 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 
 	}
 
-	remaining := DEFAULT_MAX_GSA
+	remaining := int(DEFAULT_MAX_GSA)
 
 	// Populate delta queues and build selected deltas
 	selectedDeltas, deltaSize, err := s.buildDelta(&partQueue, remaining)
@@ -1251,9 +1216,6 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 //=======================================================
 // Gossip Signalling + Process
 //=======================================================
-
-//TODO to avoid bouncing gossip between two nodes - server should flag what node it is gossiping with
-// If it selects a node to gossip with and it is the one it is currently gossiping with then it should pick another or wait
 
 //----------------
 //Gossip Signalling
@@ -1507,12 +1469,6 @@ func (s *GBServer) startGossipProcess() bool {
 // Gossip Round
 //=======================================================
 
-// TODO Think about introducing a gossip result struct for a channel to feed back errors
-// type GossipResult struct {
-//    Node string
-//    Err  error
-//}
-
 func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	if s.flags.isSet(SHUTTING_DOWN) {
@@ -1673,9 +1629,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// So what we can do is set up a progress and error collection
 
 	//------------- GOSS_SYN Stage 1 -------------//
-
-	// TODO The max version seems to have caused a problem + discovery is also a problem + we dialled for some reason
-	// TODO Need to clean up and make more clear the goss stages and req-resp cycle
 
 	stage = 1
 	log.Printf("%s - Gossiping with node %s (stage %d)", s.PrettyName(), node, stage)

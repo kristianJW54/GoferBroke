@@ -14,13 +14,13 @@ func TestEventBasic(t *testing.T) {
 	now := time.Now().Unix()
 
 	newer := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: D_STRING_TYPE, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now, Value: []byte("Try to gossip about me and see what happens")},
 	}
 
 	outdated := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now - 2, Value: []byte("I am a delta blissfully")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: D_STRING_TYPE, Version: now - 2, Value: []byte("I am a delta blissfully")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
 	}
 
 	gbs := GenerateDefaultTestServer("node-1", newer, 1)

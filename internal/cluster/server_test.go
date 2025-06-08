@@ -16,7 +16,7 @@ func TestServerNameLengthError(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{
 				Host: ip,
 				Port: port,
@@ -52,7 +52,7 @@ func TestConfigInitDeltas(t *testing.T) {
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
 		Name: "test-cluster",
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{
 				Host: ip,
 				Port: port,
@@ -99,7 +99,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{
 				Host: ip,
 				Port: port,
@@ -164,7 +164,7 @@ func TestGossipSignal(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{
 				Host: ip,
 				Port: port,
@@ -233,7 +233,7 @@ func TestGossipDifferentStates(t *testing.T) {
 		DisableUpdateServerTimeStampOnStartup: true,
 	}
 	config := &GbClusterConfig{
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{
 				Host: "127.0.0.1",
 				Port: "8081",

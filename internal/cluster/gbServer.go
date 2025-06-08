@@ -9,11 +9,9 @@ import (
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"io"
 	"log"
-	"maps"
 	"net"
 	"os"
 	"os/signal"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,7 +62,7 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 
 		// Initialize config with the seed server address
 		config = &GbClusterConfig{
-			SeedServers: []Seeds{
+			SeedServers: []*Seeds{
 				{
 					Host: ip,
 					Port: port,
@@ -82,7 +80,7 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 		clusterIP, clusterPort := strings.Split(routes[0], ":")[0], strings.Split(routes[0], ":")[1]
 
 		config = &GbClusterConfig{
-			SeedServers: []Seeds{
+			SeedServers: []*Seeds{
 				{
 					Host: clusterIP,
 					Port: clusterPort,
@@ -325,7 +323,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	srvName := uuid.String()
 
 	// Config setting
-	cfgFields := getConfigFields(reflect.ValueOf(gbConfig), "")
 
 	// Build EventDispatcher
 	ed := NewEventDispatcher()
@@ -357,10 +354,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		gbClusterConfig: gbConfig,
 		gbNodeConfig:    gbNodeConfig,
 		seedAddr:        make([]*seedEntry, 0, 2),
-
-		configFields:  cfgFields,
-		configSetters: buildConfigSetters(gbConfig, cfgFields),
-		configGetters: buildConfigGetters(gbConfig, cfgFields),
 
 		clientStore: make(map[uint64]*gbClient),
 
@@ -827,46 +820,6 @@ func initConnectionMetaData(reachableClaim int, givenAddr *net.TCPAddr, inbound 
 
 }
 
-func initConfigDeltas(configGetters map[string]clusterConfigGetterMapFunc, fields []string) (map[string]*Delta, error) {
-
-	deltas := make(map[string]*Delta, len(fields))
-
-	now := time.Now().Unix()
-
-	for _, f := range fields {
-
-		if value, ok := configGetters[f]; ok {
-
-			typ, val, err := value(f)
-			if err != nil {
-				return nil, err
-			}
-
-			log.Printf("typ %v - val %T", typ, val)
-
-			b, err := encodeGetterValue(val) // TODO Need to add an index return here for object/arrays
-			if err != nil {
-				return nil, err
-			}
-
-			d := &Delta{
-				KeyGroup:  CONFIG_DKG,
-				Key:       f,
-				Version:   now,
-				ValueType: typ,
-				Value:     b,
-			}
-
-			deltas[MakeDeltaKey(CONFIG_DKG, f)] = d
-
-		}
-
-	}
-
-	return deltas, nil
-
-}
-
 // TODO Need GBErrors Here--
 // And environment + users use case + config map parsing of initialised delta map
 func (s *GBServer) initSelfParticipant() (*Participant, error) {
@@ -877,11 +830,6 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 		name:       s.ServerName,
 		keyValues:  make(map[string]*Delta),
 		maxVersion: t,
-	}
-
-	cfgKV, err := initConfigDeltas(s.configGetters, s.configFields)
-	if err != nil {
-		return nil, err
 	}
 
 	nameDelta := &Delta{
@@ -942,8 +890,6 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 		Value:     heart,
 	}
 	p.keyValues[MakeDeltaKey(heartbeatDelta.KeyGroup, heartbeatDelta.Key)] = heartbeatDelta
-
-	maps.Copy(p.keyValues, cfgKV)
 
 	return p, nil
 

@@ -13,6 +13,29 @@ import (
 // Phi Accrual Failure Detection
 //=======================================================
 
+//-------------------
+//Heartbeat Monitoring + Failure Detection
+
+type phiControl struct {
+	threshold    uint8
+	warmUpBucket uint16
+	windowSize   uint16
+	phiSemaphore chan struct{}
+	phiControl   chan bool
+	phiOK        bool
+	mu           sync.RWMutex
+}
+
+type phiAccrual struct {
+	warmupBucket uint16
+	lastBeat     int64
+	window       []int64
+	windowIndex  int
+	score        float64
+	dead         bool
+	pa           sync.Mutex
+}
+
 // Phi calculates the suspicion level of a participant using the ϕ accrual failure detection model.
 //
 // From the paper "The ϕ Accrual Failure Detector" (Hayashibara et al., 2004):
@@ -34,7 +57,7 @@ import (
 // We don't gossip phi scores or node failures to others in the cluster as the detection is based on local time
 // It is for other nodes to detect failed nodes themselves
 
-func (s *GBServer) generateDefaultThreshold(windowSize int) int {
+func (s *GBServer) generateDefaultThreshold(windowSize uint16) uint8 {
 	if windowSize == 0 {
 		return 0
 	}
@@ -51,7 +74,7 @@ func (s *GBServer) generateDefaultThreshold(windowSize int) int {
 
 func (s *GBServer) initPhiControl() *phiControl {
 
-	var paWindowSize int
+	var paWindowSize uint16
 
 	if s.gbClusterConfig.Cluster.PaWindowSize == 0 {
 		paWindowSize = DEFAULT_PA_WINDOW_SIZE
@@ -61,18 +84,19 @@ func (s *GBServer) initPhiControl() *phiControl {
 
 	// Should be taken from config
 	return &phiControl{
-		paWindowSize, // TODO Make sure to switch back to the variable paWindowSize
 		s.generateDefaultThreshold(paWindowSize),
+		setWarmupBucket(paWindowSize),
+		paWindowSize,
 		make(chan struct{}),
 		make(chan bool),
 		false,
-		setWarmupBucket(paWindowSize),
+
 		sync.RWMutex{},
 	}
 
 }
 
-func setWarmupBucket(windowSize int) int {
+func setWarmupBucket(windowSize uint16) uint16 {
 
 	if windowSize >= DEFAULT_PA_WINDOW_SIZE {
 		return 10
@@ -303,8 +327,8 @@ func (s *GBServer) warmUpCheck(participant *Participant, array []int64) []int64 
 		// In warm-up phase: return a small padded window
 		warmupBucket := participant.paDetection.warmupBucket
 		sliceSize := warmupBucket + 10
-		if sliceSize > len(array) {
-			sliceSize = len(array)
+		if sliceSize > uint16(len(array)) {
+			sliceSize = uint16(len(array))
 		}
 		return array[:sliceSize]
 	}

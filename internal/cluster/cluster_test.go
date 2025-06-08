@@ -116,7 +116,7 @@ func TestBuildDelta(t *testing.T) {
 		t.Errorf("Error generating digest: %v", err)
 	}
 
-	remaining := DEFAULT_MAX_GSA - size
+	remaining := int(DEFAULT_MAX_GSA) - size
 
 	_, fd, err := deSerialiseDigest(d)
 	if err != nil {
@@ -130,7 +130,7 @@ func TestBuildDelta(t *testing.T) {
 		t.Errorf("Error building delta: %v", err)
 	}
 
-	if size > DEFAULT_MAX_GSA {
+	if size > int(DEFAULT_MAX_GSA) {
 		t.Errorf("size is greater than max delta size - got %v, expected to be less then --> %v", size, DEFAULT_MAX_GSA)
 	}
 
@@ -186,7 +186,7 @@ func TestUpdateHeartBeat(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{},
 		},
 		Cluster: &ClusterOptions{},
@@ -330,17 +330,17 @@ func TestGSATwoNodes(t *testing.T) {
 	now := time.Now().Unix()
 
 	newer := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: D_STRING_TYPE, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now, Value: []byte("Try to gossip about me and see what happens")},
 	}
 
 	outdated := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now - 2, Value: []byte("I am a delta blissfully")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: D_STRING_TYPE, Version: now - 2, Value: []byte("I am a delta blissfully")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now - 1, Value: []byte("I Don't Like Gossipers")},
 	}
 
 	brandNew := map[string]*Delta{
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 4, Value: []byte("One delta andy over here")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now - 4, Value: []byte("One delta andy over here")},
 	}
 
 	tests := []struct {
@@ -541,21 +541,21 @@ func TestAddGSADeltaToMap(t *testing.T) {
 	now := time.Now().Unix()
 
 	node1KeyValues := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("Try to gossip about me and see what happens")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: D_STRING_TYPE, Version: now, Value: []byte("I am a delta blissfully unaware as to how annoying I am to code")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now, Value: []byte("Try to gossip about me and see what happens")},
 	}
 
 	node2KeyValues := map[string]*Delta{
-		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: STRING_V, Version: now, Value: []byte("I am a delta blissfully")},
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now, Value: []byte("I Don't Like Gossipers")},
+		"test:key1": &Delta{KeyGroup: TEST_DKG, Key: "key1", ValueType: D_STRING_TYPE, Version: now, Value: []byte("I am a delta blissfully")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now, Value: []byte("I Don't Like Gossipers")},
 	}
 
 	node3KeyValues := map[string]*Delta{
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 2, Value: []byte("One delta andy over here - Im the newer version boi ;)")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now - 2, Value: []byte("One delta andy over here - Im the newer version boi ;)")},
 	}
 
 	node3KeyValuesOutdated := map[string]*Delta{
-		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: STRING_V, Version: now - 4, Value: []byte("One delta andy over here")},
+		"test:key2": &Delta{KeyGroup: TEST_DKG, Key: "key2", ValueType: D_STRING_TYPE, Version: now - 4, Value: []byte("One delta andy over here")},
 	}
 
 	// Node 1
@@ -650,7 +650,7 @@ func TestLiveGossip(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{
 				Host: ip,
 				Port: port,
@@ -730,7 +730,7 @@ func TestAddAndUpdateDelta(t *testing.T) {
 	deltaToADD := &Delta{
 		KeyGroup:  SYSTEM_DKG,
 		Key:       "test",
-		ValueType: STRING_V,
+		ValueType: D_STRING_TYPE,
 		Value:     []byte("test string being added after"),
 		Version:   now,
 	}
@@ -756,7 +756,7 @@ func TestAddAndUpdateDelta(t *testing.T) {
 	deltaToUpdate := &Delta{
 		KeyGroup:  SYSTEM_DKG,
 		Key:       "test",
-		ValueType: STRING_V,
+		ValueType: D_STRING_TYPE,
 		Value:     updatedValue,
 		Version:   now,
 	}

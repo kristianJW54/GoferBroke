@@ -29,7 +29,7 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 					part.keyValues[_ADDRESS_] = &Delta{
 						Key:       _ADDRESS_,
 						Version:   0,
-						ValueType: ADDR_V,
+						ValueType: D_STRING_TYPE,
 						Value:     []byte("127.0.0.1"),
 					}
 					cm.participants[partName] = part
@@ -54,14 +54,14 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 						part.keyValues[_NODE_CONNS_] = &Delta{
 							Key:       _NODE_CONNS_,
 							Version:   0,
-							ValueType: NUM_NODE_CONN_V,
+							ValueType: D_INT_TYPE,
 							Value:     []byte{0},
 						}
 					} else {
 						part.keyValues[_ADDRESS_] = &Delta{
 							Key:       _ADDRESS_,
 							Version:   0,
-							ValueType: ADDR_V,
+							ValueType: D_STRING_TYPE,
 							Value:     []byte("127.0.0.1"),
 						}
 					}
@@ -86,7 +86,7 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 					part.keyValues[_NODE_CONNS_] = &Delta{
 						Key:       _NODE_CONNS_,
 						Version:   0,
-						ValueType: NUM_NODE_CONN_V,
+						ValueType: D_INT_TYPE,
 						Value:     []byte{0},
 					}
 					cm.participants[partName] = part

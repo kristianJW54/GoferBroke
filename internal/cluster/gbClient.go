@@ -925,7 +925,7 @@ func (c *gbClient) processDelta(message []byte) error {
 
 func (s *GBServer) parseClientDelta(delta []byte, msgLen, keyLen, valueLen int) (int, error) {
 
-	if msgLen > DEFAULT_MAX_DELTA_SIZE {
+	if msgLen > int(DEFAULT_MAX_DELTA_SIZE) {
 		return 0, fmt.Errorf("delta value is greater than the maximum allowed delta size")
 	}
 

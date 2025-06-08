@@ -7,10 +7,16 @@ import (
 
 func TestParserToken(t *testing.T) {
 
-	d := `key1: [{mapKey: "value2", mapKey2: "value3"}]
-key2: 1`
+	//	d := `key1: [{mapKey: "value2", mapKey2: "value3"}]
+	//key2: 1`
 
-	token, err := parseConfig(d)
+	d2 := `Cluster: {
+		
+			Name: "hello :)",
+
+		}`
+
+	token, err := parseConfig(d2)
 	if err != nil {
 		t.Error(err)
 	}

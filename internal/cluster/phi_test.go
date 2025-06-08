@@ -81,7 +81,7 @@ func TestPhiLive(t *testing.T) {
 
 	// Initialize config with the seed server address
 	config := &GbClusterConfig{
-		SeedServers: []Seeds{
+		SeedServers: []*Seeds{
 			{
 				Host: ip,
 				Port: port,
