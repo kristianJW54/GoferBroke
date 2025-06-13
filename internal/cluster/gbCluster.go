@@ -997,6 +997,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		participant := cm.participants[phEntry.name]
 
 		// Make a delta heap for each participant
+		// Are we being inefficient here by pushing all deltas onto the heap everytime?
 		dh := make(deltaHeap, 0, len(participant.keyValues))
 		for _, delta := range participant.keyValues {
 
@@ -1021,7 +1022,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		// First add the participant size to the sizeOfDelta
 		sizeOfDelta += 1 + len(participant.name) + 2 // 1 byte for name length + name + size of delta key-values
 
-		deltaList := make([]*Delta, 0)
+		deltaList := make([]*Delta, 0, 10)
 
 		// Make selected delta list here and populate
 

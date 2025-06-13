@@ -3,7 +3,9 @@ package cluster
 import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
+	"log"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -83,6 +85,8 @@ type ClusterOptions struct {
 	LoggingURL                     string
 	MetricsURL                     string
 	ErrorsURL                      string
+	TestNest                       []map[string]int
+	TestNest2                      map[string][]int
 
 	NodeMTLSRequired   bool `default:"false"`
 	ClientMTLSRequired bool `default:"false"`
@@ -167,15 +171,16 @@ type clusterConfigSetterMapFunc func(any) error
 type clusterConfigGetterMapFunc func() any
 
 type ConfigSchema struct {
-	Path     string
-	Type     reflect.Type
-	Kind     reflect.Kind
-	isSlice  bool
-	isMap    bool
-	isPtr    bool
-	elemType *ConfigSchema
-	Getter   clusterConfigGetterMapFunc
-	Setter   clusterConfigSetterMapFunc
+	Path      string
+	Type      reflect.Type
+	Kind      reflect.Kind
+	isIndexed bool
+	isSlice   bool
+	isMap     bool
+	isPtr     bool
+	elemType  *ConfigSchema
+	Getter    clusterConfigGetterMapFunc
+	Setter    clusterConfigSetterMapFunc
 	//Custom Encode + Decode to be included?
 }
 
@@ -184,6 +189,16 @@ func joinPath(prefix, name string) string {
 		return name
 	}
 	return prefix + "." + name
+}
+
+func isIndexedPath(path string) bool {
+	parts := strings.Split(path, ".")
+	for _, p := range parts {
+		if _, err := strconv.Atoi(p); err == nil {
+			return true // it's an index (e.g. "0", "1")
+		}
+	}
+	return false
 }
 
 func BuildConfigSchema(cfg *GbClusterConfig) map[string]*ConfigSchema {
@@ -219,15 +234,17 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				if fieldValue.IsNil() {
 					fieldValue.Set(reflect.New(field.Type.Elem()))
 				}
+
 				buildSchemaRecursive(fieldValue, path, out)
 			} else {
 				out[path] = &ConfigSchema{
-					Path:   path,
-					Type:   field.Type.Elem(),
-					Kind:   field.Type.Elem().Kind(),
-					isPtr:  true,
-					Setter: makeDirectSetter(fieldValue),
-					Getter: makeDirectGetter(fieldValue),
+					Path:      path,
+					Type:      field.Type.Elem(),
+					Kind:      field.Type.Elem().Kind(),
+					isIndexed: isIndexedPath(path),
+					isPtr:     true,
+					Setter:    makeDirectSetter(fieldValue),
+					Getter:    makeDirectGetter(fieldValue),
 				}
 			}
 
@@ -235,7 +252,21 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 
 			elemType := fieldValue.Type().Elem() // Example -> *Seeds
 			elemKind := elemType.Kind()          // Example -> reflect.Ptr
-			indexPath := path + ".0"             // Example -> "SeedServers.0"
+
+			// Capture the container
+
+			out[path] = &ConfigSchema{
+				Path:      path,
+				Type:      field.Type,
+				Kind:      field.Type.Kind(),
+				isIndexed: false,
+				isSlice:   true,
+				isPtr:     elemKind == reflect.Ptr,
+				Setter:    nil,
+				Getter:    nil,
+			}
+
+			indexPath := path + ".0" // Example -> "SeedServers.0"
 
 			if elemKind == reflect.Ptr && elemType.Elem().Kind() == reflect.Struct {
 				//Ensure we have one element, so we can walk into it
@@ -248,41 +279,80 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				if firstElem.Kind() == reflect.Ptr && firstElem.IsNil() {
 					firstElem.Set(reflect.New(field.Type.Elem()))
 				}
+
+				out[indexPath] = &ConfigSchema{
+					Path:      indexPath,
+					Type:      elemType.Elem(),
+					Kind:      elemType.Elem().Kind(),
+					isIndexed: false,
+					isSlice:   false,
+					isPtr:     elemKind == reflect.Ptr,
+					Setter:    nil,
+					Getter:    nil,
+				}
+
 				buildSchemaRecursive(firstElem, indexPath, out)
 			} else {
 
 				out[indexPath] = &ConfigSchema{
-					Path:    indexPath,
-					Type:    field.Type.Elem(),
-					Kind:    field.Type.Elem().Kind(),
-					isSlice: true,
-					Setter:  nil,
-					Getter:  nil,
+					Path:      indexPath,
+					Type:      field.Type.Elem(),
+					Kind:      field.Type.Elem().Kind(),
+					isIndexed: true,
+					isSlice:   true,
+					Setter:    nil,
+					Getter:    nil,
 				}
 
 			}
 
 		case reflect.Map:
 
+			out[path] = &ConfigSchema{
+				Path:      path,
+				Type:      field.Type,
+				Kind:      field.Type.Elem().Kind(),
+				isIndexed: false,
+				isMap:     true,
+				Setter:    nil,
+				Getter:    nil,
+			}
+
 			if field.Type.Key().Kind() == reflect.String {
 				mapPath := path + ".<key>"
 				out[mapPath] = &ConfigSchema{
-					Path:   mapPath,
-					Type:   field.Type.Key(),
-					Kind:   field.Type.Key().Kind(),
-					isMap:  true,
-					Getter: nil,
-					Setter: nil,
+					Path:      mapPath,
+					Type:      field.Type.Key(),
+					Kind:      field.Type.Key().Kind(),
+					isIndexed: true,
+					isMap:     true,
+					Getter:    nil,
+					Setter:    nil,
 				}
 			}
 
 		default:
-			out[path] = &ConfigSchema{
-				Path:   path,
-				Type:   field.Type,
-				Kind:   kind,
-				Setter: makeDirectSetter(fieldValue),
-				Getter: makeDirectGetter(fieldValue),
+			isIndexed := isIndexedPath(path)
+			if !isIndexed {
+				out[path] = &ConfigSchema{
+					Path:      path,
+					Type:      field.Type,
+					Kind:      kind,
+					isIndexed: isIndexed,
+					Setter:    makeDirectSetter(fieldValue),
+					Getter:    makeDirectGetter(fieldValue),
+				}
+
+			} else {
+				out[path] = &ConfigSchema{
+					Path:      path,
+					Type:      field.Type,
+					Kind:      kind,
+					isIndexed: isIndexed,
+					Setter:    nil,
+					Getter:    nil,
+				}
+
 			}
 
 		}
@@ -291,11 +361,159 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 
 }
 
+func deref(v reflect.Value) reflect.Value {
+	if v.Kind() == reflect.Ptr && v.IsNil() {
+		v.Set(reflect.New(v.Type().Elem()))
+	}
+	if v.Kind() == reflect.Ptr {
+		return v.Elem()
+	}
+	return v
+}
+
+// Say we are trying to set "Seedservers.0.Host"
+// We have validated the schema and know it exist and what type/kind it is
+
+func SetByPath(sch map[string]*ConfigSchema, config *GbClusterConfig, path string, value any) error {
+
+	parts := strings.Split(path, ".") // e.g. SeedServers.1.Host -> ["SeedServers", "1", "Host"]
+
+	var prefix string // Buildup a path as we go to access the schema at each point
+
+	index := ".0"
+	key := ".<key>"
+
+	current := reflect.ValueOf(config)
+	if current.Kind() == reflect.Ptr {
+		current = current.Elem()
+	}
+
+	for i := 0; i < len(parts); i++ {
+
+		log.Printf("processing part = %s", parts[i])
+
+		if prefix == "" {
+			prefix = parts[i]
+		}
+
+		schema, ok := sch[prefix]
+		if !ok {
+			return fmt.Errorf(`prefix "%s" not exist`, prefix)
+		}
+
+		// If we are at the last part...
+		if i == len(parts)-1 {
+			schemaField := parts[i]
+
+			field := current.FieldByName(schemaField)
+			if !field.IsValid() {
+				return fmt.Errorf("field '%s' not found in struct '%s'", schemaField, prefix)
+			}
+
+			field = deref(field)
+
+			val := reflect.ValueOf(value)
+			if !val.Type().AssignableTo(field.Type()) {
+				return fmt.Errorf("cannot assign %T to %s", value, field.Type())
+			}
+
+			field.Set(val)
+			return nil
+		}
+
+		switch schema.Kind {
+		case reflect.Slice:
+			prefix += index
+			// Do work
+
+			if len(parts) <= i+1 {
+				return fmt.Errorf("unexpected end of path after '%s' at position %d — expected index or key", parts[i], i)
+			}
+
+			field := parts[i]
+
+			i++ // Consume the index in the loop, so we don't process it again
+
+			idxPart := parts[i]
+			idx, err := strconv.Atoi(idxPart)
+			if err != nil {
+				return err
+			}
+
+			// Get the slice
+			slice := current.FieldByName(field)
+			slice = deref(slice)
+			if slice.Kind() != reflect.Slice {
+				return fmt.Errorf("field '%s' is not a slice", field)
+			}
+
+			for slice.Len() <= idx {
+				elem := reflect.New(slice.Type().Elem())
+				slice = reflect.Append(slice, elem)
+			}
+			current.FieldByName(field).Set(slice)
+			current = slice.Index(idx)
+			current = deref(current)
+
+		case reflect.Map:
+
+			prefix += key
+
+			if len(parts) <= i+1 {
+				return fmt.Errorf("unexpected end of path after '%s' at position %d — expected index or key", parts[i], i)
+			}
+			part := parts[i]
+
+			i++ // Consume the index in the loop, so we don't process the map key again
+
+			mapKey := reflect.ValueOf(parts[i]) // Example "Foo" --- prefix should be "TestNest.0.<key>"
+
+			// Get the map
+			m := current.FieldByName(part)
+			m = deref(m)
+			if m.Kind() != reflect.Map {
+				return fmt.Errorf("field '%s' is not a map", part)
+			}
+
+			val := m.MapIndex(mapKey)
+			if !val.IsValid() {
+				// Key doesn't exist — create new element
+				val = reflect.New(m.Type().Elem()).Elem()
+				m.SetMapIndex(mapKey, val)
+			}
+
+			//Move current into the map value
+			current = val
+			current = deref(current)
+
+		case reflect.Struct:
+
+			prefix += "." + parts[i]
+
+			field := current.FieldByName(parts[i])
+
+			if !field.IsValid() {
+				return fmt.Errorf("field '%s' not found in struct", parts[i])
+			}
+
+			current = deref(field)
+
+		default:
+			return fmt.Errorf("unsupported kind %s at '%s'", schema.Kind, prefix)
+
+		}
+
+	}
+
+	return nil
+
+}
+
 // For getters and setters - we only cache functions on primitives which are simple and predictable
 // more complex types like slices/maps etc. we will use a runtime reflection which will be able to extract indexes
 // walk to the value and set
 // To do this, we will access the schema for the respective field we are trying to get/set and check the type
-// if it is a complex type we know it will not have cached function and we can call a runtime function to handle
+// if it is a complex type we know it will not have cached function, and we can call a runtime function to handle
 
 func makeDirectSetter(fv reflect.Value) clusterConfigSetterMapFunc {
 	if fv.Kind() == reflect.Ptr {

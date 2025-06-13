@@ -879,6 +879,7 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 	}
 	p.keyValues[MakeDeltaKey(nodeConnsDelta.KeyGroup, nodeConnsDelta.Key)] = nodeConnsDelta
 
+	// TODO Think about removing the heartbeat as we use PHI and don't actually use this
 	// Add the _HEARTBEAT_ delta
 	heart := make([]byte, 8)
 	binary.BigEndian.PutUint64(heart, uint64(t))
