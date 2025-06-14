@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/pkg/gossip"
-	"log"
 	"time"
 )
 
@@ -53,7 +52,7 @@ func main() {
 
 	if _, err := node1.OnEvent(gossip.NewDeltaAdded, func(event gossip.Event) error {
 
-		log.Printf("Handler received event: type=%v, message=%s", event.Type(), event.Message())
+		fmt.Printf("Handler received event: type=%v, message=%s", event.Type(), event.Message())
 
 		delta, ok := event.Payload().(*gossip.DeltaAddedEvent)
 		if !ok {

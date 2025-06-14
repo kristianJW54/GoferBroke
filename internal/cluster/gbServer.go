@@ -605,6 +605,21 @@ func (s *GBServer) Shutdown() {
 	s.grWg.Wait()
 	//log.Println("done")
 
+	if s.gbNodeConfig.Internal.IsTestMode {
+
+		// Dump the deltas for checking
+		for _, p := range s.clusterMap.participantArray {
+
+			log.Printf("participant --> %s", p)
+
+			for k, _ := range s.clusterMap.participants[p].keyValues {
+				log.Printf("key = %s", k)
+			}
+
+		}
+
+	}
+
 	//log.Println("Server shutdown complete")
 }
 

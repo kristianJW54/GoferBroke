@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"log"
@@ -115,6 +116,8 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			ErrorsURL:                      "",
 			NodeMTLSRequired:               false,
 			ClientMTLSRequired:             false,
+			TestNest:                       make([]map[string]int, 0, 2),
+			TestNest2:                      make(map[string][]int),
 		},
 	}
 
@@ -228,33 +231,52 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 
 		case reflect.Struct:
 
+			fv := deref(fieldValue)
+
+			log.Printf("path = %s", path)
+
+			// Register the container node (e.g., "Cluster")
+			out[path] = &ConfigSchema{
+				Path:      path,
+				Type:      fv.Type(),
+				Kind:      fv.Kind(),
+				isIndexed: isIndexedPath(path),
+				isPtr:     fieldValue.Kind() == reflect.Ptr,
+				Setter:    makeDirectSetter(fieldValue),
+				Getter:    makeDirectGetter(fieldValue),
+			}
+
 			buildSchemaRecursive(fieldValue, path, out)
 		case reflect.Ptr:
-			if field.Type.Elem().Kind() == reflect.Struct {
-				if fieldValue.IsNil() {
-					fieldValue.Set(reflect.New(field.Type.Elem()))
-				}
 
-				buildSchemaRecursive(fieldValue, path, out)
-			} else {
-				out[path] = &ConfigSchema{
-					Path:      path,
-					Type:      field.Type.Elem(),
-					Kind:      field.Type.Elem().Kind(),
-					isIndexed: isIndexedPath(path),
-					isPtr:     true,
-					Setter:    makeDirectSetter(fieldValue),
-					Getter:    makeDirectGetter(fieldValue),
-				}
+			elemKind := field.Type.Elem().Kind()
+
+			// Ensure it's initialized
+			if fieldValue.IsNil() {
+				fieldValue.Set(reflect.New(field.Type.Elem()))
+			}
+
+			out[path] = &ConfigSchema{
+				Path:      path,
+				Type:      field.Type.Elem(),
+				Kind:      elemKind,
+				isIndexed: isIndexedPath(path),
+				isPtr:     true,
+				Setter:    makeDirectSetter(fieldValue),
+				Getter:    makeDirectGetter(fieldValue),
+			}
+
+			if elemKind == reflect.Struct {
+				buildSchemaRecursive(fieldValue.Elem(), path, out)
 			}
 
 		case reflect.Slice:
 
-			elemType := fieldValue.Type().Elem() // Example -> *Seeds
-			elemKind := elemType.Kind()          // Example -> reflect.Ptr
+			elemType := field.Type.Elem()
+			elemKind := elemType.Kind()
+			indexPath := path + ".0" // Example -> "SeedServers.0"
 
-			// Capture the container
-
+			// Register the slice itself
 			out[path] = &ConfigSchema{
 				Path:      path,
 				Type:      field.Type,
@@ -266,68 +288,93 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				Getter:    nil,
 			}
 
-			indexPath := path + ".0" // Example -> "SeedServers.0"
-
-			if elemKind == reflect.Ptr && elemType.Elem().Kind() == reflect.Struct {
-				//Ensure we have one element, so we can walk into it
-				if fieldValue.Len() == 0 {
-					newElem := reflect.New(field.Type.Elem())
-					fieldValue.Set(reflect.Append(fieldValue, newElem))
+			// Ensure at least one element exists for introspection
+			if fieldValue.Len() == 0 {
+				var newElem reflect.Value
+				if elemKind == reflect.Ptr {
+					newElem = reflect.New(elemType.Elem())
+				} else {
+					newElem = reflect.New(elemType).Elem()
 				}
+				fieldValue.Set(reflect.Append(fieldValue, newElem))
+			}
 
-				firstElem := fieldValue.Index(0)
-				if firstElem.Kind() == reflect.Ptr && firstElem.IsNil() {
-					firstElem.Set(reflect.New(field.Type.Elem()))
-				}
+			// Get the first element for schema traversal
+			firstElem := fieldValue.Index(0)
+			firstElem = deref(firstElem)
 
-				out[indexPath] = &ConfigSchema{
-					Path:      indexPath,
-					Type:      elemType.Elem(),
-					Kind:      elemType.Elem().Kind(),
-					isIndexed: false,
-					isSlice:   false,
-					isPtr:     elemKind == reflect.Ptr,
-					Setter:    nil,
-					Getter:    nil,
-				}
+			// Register the .0 path
+			out[indexPath] = &ConfigSchema{
+				Path:      indexPath,
+				Type:      firstElem.Type(),
+				Kind:      firstElem.Kind(),
+				isIndexed: true,
+				isSlice:   true,
+				isPtr:     elemKind == reflect.Ptr,
+				Setter:    nil,
+				Getter:    nil,
+			}
 
+			// Recurse if element is a struct or map
+			switch firstElem.Kind() {
+			case reflect.Struct:
 				buildSchemaRecursive(firstElem, indexPath, out)
-			} else {
 
-				out[indexPath] = &ConfigSchema{
-					Path:      indexPath,
-					Type:      field.Type.Elem(),
-					Kind:      field.Type.Elem().Kind(),
+			case reflect.Map:
+				// Add <key> mapping
+				mapPath := indexPath + ".<key>"
+				out[mapPath] = &ConfigSchema{
+					Path:      mapPath,
+					Type:      firstElem.Type().Elem(),
+					Kind:      firstElem.Type().Elem().Kind(),
+					isMap:     true,
 					isIndexed: true,
-					isSlice:   true,
 					Setter:    nil,
 					Getter:    nil,
 				}
-
 			}
 
 		case reflect.Map:
-
+			// Capture the container
 			out[path] = &ConfigSchema{
 				Path:      path,
 				Type:      field.Type,
-				Kind:      field.Type.Elem().Kind(),
+				Kind:      field.Type.Kind(),
 				isIndexed: false,
 				isMap:     true,
 				Setter:    nil,
 				Getter:    nil,
 			}
 
-			if field.Type.Key().Kind() == reflect.String {
+			keyKind := field.Type.Key().Kind()
+			valType := field.Type.Elem()
+			valKind := valType.Kind()
+
+			if keyKind == reflect.String {
 				mapPath := path + ".<key>"
+
+				// Add schema entry for accessing values via key
 				out[mapPath] = &ConfigSchema{
 					Path:      mapPath,
-					Type:      field.Type.Key(),
-					Kind:      field.Type.Key().Kind(),
+					Type:      valType,
+					Kind:      valKind,
 					isIndexed: true,
 					isMap:     true,
-					Getter:    nil,
 					Setter:    nil,
+					Getter:    nil,
+				}
+
+				// If value is pointer to struct or struct, recurse
+				switch valKind {
+				case reflect.Ptr:
+					if valType.Elem().Kind() == reflect.Struct {
+						elem := reflect.New(valType.Elem()).Elem()
+						buildSchemaRecursive(elem, mapPath, out)
+					}
+
+				case reflect.Struct:
+					elem := reflect.New(valType).Elem()
+					buildSchemaRecursive(elem, mapPath, out)
 				}
 			}
 
@@ -362,151 +409,234 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 }
 
 func deref(v reflect.Value) reflect.Value {
-	if v.Kind() == reflect.Ptr && v.IsNil() {
-		v.Set(reflect.New(v.Type().Elem()))
-	}
 	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			if v.CanSet() {
+				v.Set(reflect.New(v.Type().Elem()))
+			} else {
+				// Return zero value so downstream doesn't panic
+				return reflect.Zero(v.Type().Elem())
+			}
+		}
 		return v.Elem()
 	}
 	return v
 }
 
+type configState struct {
+	current reflect.Value
+	prefix  string
+	index   int
+	parts   []string
+	schema  map[string]*ConfigSchema
+	value   any
+}
+
+type configStateFunc func(*configState) (configStateFunc, error)
+
 // Say we are trying to set "Seedservers.0.Host"
 // We have validated the schema and know it exist and what type/kind it is
 
-func SetByPath(sch map[string]*ConfigSchema, config *GbClusterConfig, path string, value any) error {
+func SetByPath(sch map[string]*ConfigSchema, config any, path string, value any) error {
 
-	parts := strings.Split(path, ".") // e.g. SeedServers.1.Host -> ["SeedServers", "1", "Host"]
-
-	var prefix string // Buildup a path as we go to access the schema at each point
-
-	index := ".0"
-	key := ".<key>"
-
-	current := reflect.ValueOf(config)
-	if current.Kind() == reflect.Ptr {
-		current = current.Elem()
+	parts := strings.Split(path, ".")
+	val := reflect.ValueOf(config)
+	if val.Kind() != reflect.Ptr || val.IsNil() {
+		return errors.New("config must be a non-nil pointer")
 	}
 
-	for i := 0; i < len(parts); i++ {
+	val = val.Elem()
 
-		log.Printf("processing part = %s", parts[i])
+	s := &configState{
+		current: val,
+		prefix:  "",
+		index:   0,
+		parts:   parts,
+		schema:  sch,
+		value:   value,
+	}
 
-		if prefix == "" {
-			prefix = parts[i]
+	fn := handleStruct
+	var err error
+
+	for fn != nil {
+		fn, err = fn(s)
+		if err != nil {
+			return err
 		}
-
-		schema, ok := sch[prefix]
-		if !ok {
-			return fmt.Errorf(`prefix "%s" not exist`, prefix)
-		}
-
-		// If we are at the last part...
-		if i == len(parts)-1 {
-			schemaField := parts[i]
-
-			field := current.FieldByName(schemaField)
-			if !field.IsValid() {
-				return fmt.Errorf("field '%s' not found in struct '%s'", schemaField, prefix)
-			}
-
-			field = deref(field)
-
-			val := reflect.ValueOf(value)
-			if !val.Type().AssignableTo(field.Type()) {
-				return fmt.Errorf("cannot assign %T to %s", value, field.Type())
-			}
-
-			field.Set(val)
-			return nil
-		}
-
-		switch schema.Kind {
-		case reflect.Slice:
-			prefix += index
-			// Do work
-
-			if len(parts) <= i+1 {
-				return fmt.Errorf("unexpected end of path after '%s' at position %d — expected index or key", parts[i], i)
-			}
-
-			field := parts[i]
-
-			i++ // Consume the index in the loop, so we don't process it again
-
-			idxPart := parts[i]
-			idx, err := strconv.Atoi(idxPart)
-			if err != nil {
-				return err
-			}
-
-			// Get the slice
-			slice := current.FieldByName(field)
-			slice = deref(slice)
-			if slice.Kind() != reflect.Slice {
-				return fmt.Errorf("field '%s' is not a slice", field)
-			}
-
-			for slice.Len() <= idx {
-				elem := reflect.New(slice.Type().Elem())
-				slice = reflect.Append(slice, elem)
-			}
-			current.FieldByName(field).Set(slice)
-			current = slice.Index(idx)
-			current = deref(current)
-
-		case reflect.Map:
-
-			prefix += key
-
-			if len(parts) <= i+1 {
-				return fmt.Errorf("unexpected end of path after '%s' at position %d — expected index or key", parts[i], i)
-			}
-			part := parts[i]
-
-			i++ // Consume the index in the loop, so we don't process the map key again
-
-			mapKey := reflect.ValueOf(parts[i]) // Example "Foo" --- prefix should be "TestNest.0.<key>"
-
-			// Get the map
-			m := current.FieldByName(part)
-			m = deref(m)
-			if m.Kind() != reflect.Map {
-				return fmt.Errorf("field '%s' is not a map", part)
-			}
-
-			val := m.MapIndex(mapKey)
-			if !val.IsValid() {
-				// Key doesn't exist — create new element
-				val = reflect.New(m.Type().Elem()).Elem()
-				m.SetMapIndex(mapKey, val)
-			}
-
-			//Move current into the map value
-			current = val
-			current = deref(current)
-
-		case reflect.Struct:
-
-			prefix += "." + parts[i]
-
-			field := current.FieldByName(parts[i])
-
-			if !field.IsValid() {
-				return fmt.Errorf("field '%s' not found in struct", parts[i])
-			}
-
-			current = deref(field)
-
-		default:
-			return fmt.Errorf("unsupported kind %s at '%s'", schema.Kind, prefix)
-
-		}
-
 	}
 
 	return nil
 
+}
+
+func handleStruct(s *configState) (configStateFunc, error) {
+	if s.index >= len(s.parts) {
+		return nil, nil
+	}
+
+	fieldName := s.parts[s.index]
+	field := s.current.FieldByName(fieldName)
+	if !field.IsValid() {
+		return nil, fmt.Errorf("field %s not found", fieldName)
+	}
+
+	// Move prefix update here
+	if s.prefix != "" {
+		s.prefix += "." + fieldName
+	} else {
+		s.prefix = fieldName
+	}
+
+	sch, ok := s.schema[s.prefix]
+	if !ok {
+		return nil, fmt.Errorf("schema missing for '%s'", s.prefix)
+	}
+
+	// Then proceed
+	s.current = deref(field)
+	s.index++
+
+	if s.index == len(s.parts) {
+		val := reflect.ValueOf(s.value)
+		if !val.Type().AssignableTo(s.current.Type()) {
+			return nil, fmt.Errorf("value of %s is not assignable to %s", val.Type(), s.current.Type())
+		}
+		s.current.Set(val)
+		return nil, nil
+	}
+
+	switch sch.Kind {
+	case reflect.Struct:
+		log.Printf("calling struct with prefix %s", s.prefix)
+		return handleStruct, nil
+	case reflect.Slice:
+		log.Printf("calling slice with prefix %s", s.prefix)
+		return handleSlice, nil
+	case reflect.Map:
+		log.Printf("struct calling map with prefix %s", s.prefix)
+		return handleMap, nil
+	default:
+		return nil, fmt.Errorf("unsupported kind: %v", sch.Kind)
+	}
+}
+
+func handleSlice(s *configState) (configStateFunc, error) {
+	// s.current is already the slice value
+	slice := deref(s.current)
+
+	if slice.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("expected slice but got %s", slice.Kind())
+	}
+
+	// Index is the next part
+	idxStr := s.parts[s.index]
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid index '%s'", idxStr)
+	}
+
+	// Grow slice if needed
+	for slice.Len() <= idx {
+		elem := reflect.New(slice.Type().Elem()).Elem()
+		slice = reflect.Append(slice, elem)
+	}
+
+	// Set back if s.current was addressable
+	if s.current.CanSet() {
+		s.current.Set(slice)
+	}
+
+	// Move to the indexed element
+	s.current = deref(slice.Index(idx))
+
+	s.prefix += ".0"
+	s.index++
+
+	if s.index == len(s.parts) {
+		val := reflect.ValueOf(s.value)
+		if !val.Type().AssignableTo(s.current.Type()) {
+			return nil, fmt.Errorf("cannot assign %T to %s", s.value, s.current.Type())
+		}
+		s.current.Set(val)
+		return nil, nil
+	}
+
+	// Now check schema at this path
+	log.Printf("prefix in slice = %s", s.prefix)
+	sch, ok := s.schema[s.prefix]
+	if !ok {
+		return nil, fmt.Errorf("schema missing for '%s'", s.prefix)
+	}
+
+	switch sch.Kind {
+	case reflect.Struct:
+		return handleStruct, nil
+	case reflect.Map:
+		log.Printf("calling map with prefix %s", s.prefix)
+		return handleMap, nil
+	default:
+		return nil, fmt.Errorf("unsupported slice element kind: %v", sch.Kind)
+	}
+}
+
+func handleMap(s *configState) (configStateFunc, error) {
+	mapKeyStr := s.parts[s.index]
+	log.Printf("mapKey = %s", mapKeyStr)
+
+	m := s.current
+	m = deref(m)
+
+	if m.Kind() != reflect.Map {
+		return nil, fmt.Errorf("current value is not a map at prefix %s", s.prefix)
+	}
+
+	mapKey := reflect.ValueOf(mapKeyStr)
+	val := m.MapIndex(mapKey)
+	log.Printf("val = %v", val)
+
+	if !val.IsValid() {
+		// Create a new zero value for the map element
+		val = reflect.New(m.Type().Elem()).Elem()
+		m.SetMapIndex(mapKey, val)
+	}
+
+	s.index++
+	s.prefix += ".<key>"
+
+	// Final path part: assign directly into map
+	if s.index == len(s.parts) {
+		newVal := reflect.ValueOf(s.value)
+		if !newVal.Type().AssignableTo(val.Type()) {
+			return nil, fmt.Errorf("cannot assign %T to %s", s.value, val.Type())
+		}
+
+		m.SetMapIndex(mapKey, newVal)
+		return nil, nil
+	}
+
+	// Not at end yet: transition into the correct handler
+	val = deref(val)
+	s.current = val
+
+	sch, ok := s.schema[s.prefix]
+	if !ok {
+		return nil, fmt.Errorf("schema missing for '%s'", s.prefix)
+	}
+
+	switch sch.Kind {
+	case reflect.Struct:
+		log.Printf("called struct with prefix %s", s.prefix)
+		return handleStruct, nil
+	case reflect.Slice:
+		log.Printf("called slice with prefix %s", s.prefix)
+		return handleSlice, nil
+	case reflect.Map:
+		log.Printf("called map with prefix %s", s.prefix)
+		return handleMap, nil
+	default:
+		return nil, fmt.Errorf("unsupported map value kind: %v", sch.Kind)
+	}
 }
 
 // For getters and setters - we only cache functions on primitives which are simple and predictable

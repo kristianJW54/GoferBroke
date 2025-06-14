@@ -99,10 +99,12 @@ func (cc *ClusterConfig) InitConfig() error {
 	if len(cc.SeedServers) == 0 {
 		return errors.New("no seed servers")
 	}
-	ss := make([]cluster.Seeds, len(cc.SeedServers))
+	ss := make([]*cluster.Seeds, len(cc.SeedServers))
 	for i, server := range cc.SeedServers {
-		ss[i].Port = server.SeedPort
-		ss[i].Host = server.SeedHost
+		ss[i] = &cluster.Seeds{
+			Host: server.SeedHost,
+			Port: server.SeedPort,
+		}
 	}
 
 	config := &cluster.GbClusterConfig{
@@ -135,7 +137,6 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 
 	gbs, err := cluster.NewServer(
 		node.Name,
-		int(node.ID),
 		config.config,
 		node.config,
 		node.Host,
