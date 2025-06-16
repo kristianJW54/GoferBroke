@@ -140,10 +140,32 @@ const (
 func parseTokenType(t tokenType) string {
 
 	switch t {
-
+	case tokenError:
+		return "error token"
+	case tokenEOF:
+		return "EOF token"
+	case tokenKey:
+		return "key token"
+	case tokenText:
+		return "text token"
+	case tokenString:
+		return "string token"
+	case tokenInteger:
+		return "integer token"
+	case tokenArrayStart:
+		return "array start token"
+	case tokenArrayEnd:
+		return "array end token"
+	case tokenMapStart:
+		return "map start token"
+	case tokenMapEnd:
+		return "map end token"
+	case tokenCommentStart:
+		return "comment start token"
+	default:
+		return "unknown token type"
 	}
 
-	return ""
 }
 
 const (
@@ -391,8 +413,8 @@ func sfTop(l *lexer) stateFunc {
 
 	if l.lookup[r]&comment != 0 {
 		fmt.Println("processing comment")
-		l.emitError("i have not implemented this yet lol")
-		return nil
+		l.push(sfTop)
+		return sfCommentStart
 	}
 
 	l.backup()
@@ -577,7 +599,6 @@ func sfValue(l *lexer) stateFunc {
 		return sfStringValue
 
 	case l.lookup[r]&digit != 0:
-		log.Printf("found digit = %s", string(r))
 		l.backup()
 		return sfDigitStart
 

@@ -204,18 +204,28 @@ func isIndexedPath(path string) bool {
 	return false
 }
 
-func BuildConfigSchema(cfg *GbClusterConfig) map[string]*ConfigSchema {
+func BuildConfigSchema(cfg any) map[string]*ConfigSchema {
+
+	val := reflect.ValueOf(cfg)
+	val = deref(val) // handles interface{} and pointer
 
 	out := make(map[string]*ConfigSchema)
-	buildSchemaRecursive(reflect.ValueOf(&cfg).Elem(), "", out)
+	buildSchemaRecursive(val, "", out)
 	return out
 
 }
 
 func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*ConfigSchema) {
 
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
+	if !v.IsValid() {
+		return
+	}
+
+	v = deref(v)
+
+	if v.Kind() != reflect.Struct {
+		log.Printf("not a struct: %s", v.Kind())
+		return
 	}
 
 	t := v.Type()
@@ -423,6 +433,13 @@ func deref(v reflect.Value) reflect.Value {
 	return v
 }
 
+type accessMode uint8
+
+const (
+	modeSet accessMode = iota
+	modeGet
+)
+
 type configState struct {
 	current reflect.Value
 	prefix  string
@@ -430,6 +447,8 @@ type configState struct {
 	parts   []string
 	schema  map[string]*ConfigSchema
 	value   any
+	mode    accessMode
+	result  any
 }
 
 type configStateFunc func(*configState) (configStateFunc, error)
@@ -454,6 +473,8 @@ func SetByPath(sch map[string]*ConfigSchema, config any, path string, value any)
 		parts:   parts,
 		schema:  sch,
 		value:   value,
+		mode:    modeSet,
+		result:  nil,
 	}
 
 	fn := handleStruct
@@ -468,6 +489,28 @@ func SetByPath(sch map[string]*ConfigSchema, config any, path string, value any)
 
 	return nil
 
+}
+
+func GetByPath(sch map[string]*ConfigSchema, config any, path string) (any, error) {
+	state := &configState{
+		schema:  sch,
+		parts:   strings.Split(path, "."),
+		current: deref(reflect.ValueOf(config)),
+		index:   0,
+		prefix:  "", // will be built up
+		mode:    modeGet,
+	}
+
+	handler := handleStruct
+	var err error
+	for handler != nil {
+		handler, err = handler(state)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return state.result, nil
 }
 
 func handleStruct(s *configState) (configStateFunc, error) {
@@ -499,10 +542,17 @@ func handleStruct(s *configState) (configStateFunc, error) {
 
 	if s.index == len(s.parts) {
 		val := reflect.ValueOf(s.value)
-		if !val.Type().AssignableTo(s.current.Type()) {
-			return nil, fmt.Errorf("value of %s is not assignable to %s", val.Type(), s.current.Type())
+		if s.mode == modeSet {
+			if !val.Type().AssignableTo(s.current.Type()) {
+				return nil, fmt.Errorf("value of %s is not assignable to %s", val.Type(), s.current.Type())
+			}
+			s.current.Set(val)
+		} else if s.mode == modeGet {
+			if !s.current.IsValid() {
+				return nil, fmt.Errorf("value is not valid at path %s", s.prefix)
+			}
+			s.result = s.current.Interface()
 		}
-		s.current.Set(val)
 		return nil, nil
 	}
 
@@ -548,17 +598,26 @@ func handleSlice(s *configState) (configStateFunc, error) {
 	}
 
 	// Move to the indexed element
-	s.current = deref(slice.Index(idx))
+	s.current = slice.Index(idx)
+	s.current = deref(s.current)
 
 	s.prefix += ".0"
 	s.index++
 
 	if s.index == len(s.parts) {
 		val := reflect.ValueOf(s.value)
-		if !val.Type().AssignableTo(s.current.Type()) {
-			return nil, fmt.Errorf("cannot assign %T to %s", s.value, s.current.Type())
+		if s.mode == modeSet {
+			if !val.Type().AssignableTo(s.current.Type()) {
+				return nil, fmt.Errorf("cannot assign %T to %s", s.value, s.current.Type())
+			}
+			s.current.Set(val)
+		} else if s.mode == modeGet {
+			if !s.current.IsValid() {
+				return nil, fmt.Errorf("value is not valid at path %s", s.prefix)
+			}
+			s.result = s.current.Interface()
 		}
-		s.current.Set(val)
+
 		return nil, nil
 	}
 
@@ -607,11 +666,19 @@ func handleMap(s *configState) (configStateFunc, error) {
 	// Final path part: assign directly into map
 	if s.index == len(s.parts) {
 		newVal := reflect.ValueOf(s.value)
-		if !newVal.Type().AssignableTo(val.Type()) {
-			return nil, fmt.Errorf("cannot assign %T to %s", s.value, val.Type())
+		if s.mode == modeSet {
+			if !newVal.Type().AssignableTo(val.Type()) {
+				return nil, fmt.Errorf("cannot assign %T to %s", s.value, val.Type())
+			}
+
+			m.SetMapIndex(mapKey, newVal)
+		} else if s.mode == modeGet {
+			if !val.IsValid() {
+				return nil, fmt.Errorf("value for key %v does not exist", mapKey)
+			}
+			s.result = val.Interface()
 		}
 
-		m.SetMapIndex(mapKey, newVal)
 		return nil, nil
 	}
 
@@ -676,9 +743,8 @@ func makeDirectGetter(fv reflect.Value) clusterConfigGetterMapFunc {
 	}
 }
 
-//TODO Now need to handle tracking our config state in deltas - (once server is live we do not reflect on config)
-// - when we change a config state, we update our delta which we then gossip
-// - if we detect a newer version delta config we change our state (need to carefully think about this)
+//TODO Need a generic Set and Get function which looks up the schema - if there are cached functions then use them
+// if not, then we use the byPath functions
 
 //=====================================================================
 

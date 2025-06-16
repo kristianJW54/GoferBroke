@@ -74,98 +74,176 @@ func TestSliceConfigSchema(t *testing.T) {
 
 }
 
-func TestComplexConfigSchema(t *testing.T) {
+func TestSetComplexConfigSchema(t *testing.T) {
 
-	cfg := InitDefaultClusterConfig()
-
-	cfg.SeedServers = append(cfg.SeedServers, &Seeds{Host: "localhost", Port: "8081"})
-
-	test1 := make(map[string]int)
-	test1["mapKey1"] = 2
-	test1["mapKey2"] = 3
-
-	test2 := make(map[string]int)
-	test2["mapKey3"] = 4
-	test2["mapKey4"] = 5
-
-	cfg.Cluster.TestNest2["alpha"] = []int{1, 2, 3}
-	cfg.Cluster.TestNest2["beta"] = []int{4, 5, 6}
-
-	cfg.Cluster.TestNest = append(cfg.Cluster.TestNest, test1)
-	cfg.Cluster.TestNest = append(cfg.Cluster.TestNest, test2)
-
-	schema := BuildConfigSchema(cfg)
-
-	if sch, ok := schema["Cluster.TestNest2.<key>"]; ok {
-		log.Printf("sch = %v", sch)
+	type complexConfig struct {
+		Name   string
+		Nested struct {
+			Numbers []int
+			Flags   map[string]bool
+		}
+		PointerField *struct {
+			Value int
+		}
+		ComplexNest struct {
+			MapTest      map[string][]int
+			ArrayMapTest []map[string]int
+		}
 	}
 
-	err := SetByPath(schema, cfg, "Cluster.TestNest.1.mapKey4", 9)
-	if err != nil {
-		t.Errorf("Error setting new name: %v", err)
+	cfg := complexConfig{
+		Name: "test-cluster",
+		Nested: struct {
+			Numbers []int
+			Flags   map[string]bool
+		}{
+			Numbers: []int{1, 2, 3},
+			Flags:   map[string]bool{"foo": true},
+		},
+		PointerField: &struct{ Value int }{Value: 1},
+		ComplexNest: struct {
+			MapTest      map[string][]int
+			ArrayMapTest []map[string]int
+		}{
+			MapTest: map[string][]int{
+				"foo": {1, 2, 3},
+				"bar": {4, 5, 6},
+			},
+			ArrayMapTest: []map[string]int{
+				{"one": 1},
+				{"two": 2},
+			},
+		},
 	}
-
-	log.Printf("new mapKey4 value = %v", cfg.Cluster.TestNest[1]["mapKey4"])
-
-	//err := SetByPath(schema, cfg, "Cluster.TestNest2.alpha.1", 2)
-	//if err != nil {
-	//	t.Errorf("Error setting new name: %v", err)
-	//}
-	//
-	//log.Printf("new alpha value at index 1 = %v", cfg.Cluster.TestNest2["alpha"][1])
-
-}
-
-func TestComplexConfigSchema2(t *testing.T) {
-	cfg := InitDefaultClusterConfig()
-
-	cfg.SeedServers = append(cfg.SeedServers, &Seeds{Host: "localhost", Port: "8081"})
-
-	test1 := map[string]int{"mapKey1": 2, "mapKey2": 3}
-	test2 := map[string]int{"mapKey3": 4, "mapKey4": 5}
-
-	cfg.Cluster.TestNest = append(cfg.Cluster.TestNest, test1, test2)
-	cfg.Cluster.TestNest2["alpha"] = []int{1, 2, 3}
-	cfg.Cluster.TestNest2["beta"] = []int{4, 5, 6}
 
 	schema := BuildConfigSchema(cfg)
 
 	// Make sure the schema was built properly for the map
-	if _, ok := schema["Cluster.TestNest2.<key>"]; !ok {
+	if _, ok := schema["ComplexNest.ArrayMapTest.0"]; !ok {
 		t.Fatalf("expected schema to contain key 'Cluster.TestNest2.<key>'")
 	}
 
 	t.Run("Set nested map inside slice", func(t *testing.T) {
-		oldVal := cfg.Cluster.TestNest[1]["mapKey4"]
-		t.Logf("Old value of mapKey4: %d", oldVal)
+		oldVal := cfg.ComplexNest.ArrayMapTest[1]["two"]
+		t.Logf("Old value of two: %d", oldVal)
 
-		err := SetByPath(schema, cfg, "Cluster.TestNest.1.mapKey4", 9)
+		err := SetByPath(schema, &cfg, "ComplexNest.ArrayMapTest.1.two", 9)
 		if err != nil {
 			t.Errorf("Error setting value: %v", err)
 		}
 
-		newVal := cfg.Cluster.TestNest[1]["mapKey4"]
-		t.Logf("New value of mapKey4: %d", newVal)
+		newVal := cfg.ComplexNest.ArrayMapTest[1]["two"]
+		t.Logf("New value of two: %d", newVal)
 
 		if newVal != 9 {
-			t.Errorf("Expected mapKey4 to be 9, got %d", newVal)
+			t.Errorf("Expected two to be 9, got %d", newVal)
 		}
 	})
 
 	t.Run("Set slice inside map value", func(t *testing.T) {
-		oldVal := cfg.Cluster.TestNest2["alpha"][1]
-		t.Logf("Old value of alpha[1]: %d", oldVal)
+		oldVal := cfg.ComplexNest.MapTest["bar"][1]
+		t.Logf("Old value of bar[1]: %d", oldVal)
 
-		err := SetByPath(schema, cfg, "Cluster.TestNest2.alpha.1", 42)
+		err := SetByPath(schema, &cfg, "ComplexNest.MapTest.bar.1", 42)
 		if err != nil {
 			t.Errorf("Error setting value: %v", err)
 		}
 
-		newVal := cfg.Cluster.TestNest2["alpha"][1]
-		t.Logf("New value of alpha[1]: %d", newVal)
+		newVal := cfg.ComplexNest.MapTest["bar"][1]
+		t.Logf("New value of bar[1]: %d", newVal)
 
 		if newVal != 42 {
-			t.Errorf("Expected alpha[1] to be 42, got %d", newVal)
+			t.Errorf("Expected bar[1] to be 42, got %d", newVal)
+		}
+	})
+}
+
+func TestGetComplexConfigSchema(t *testing.T) {
+
+	type complexConfig struct {
+		Name   string
+		Nested struct {
+			Numbers []int
+			Flags   map[string]bool
+		}
+		PointerField *struct {
+			Value int
+		}
+		ComplexNest struct {
+			MapTest      map[string][]int
+			ArrayMapTest []map[string]int
+		}
+	}
+
+	cfg := complexConfig{
+		Name: "test-cluster",
+		Nested: struct {
+			Numbers []int
+			Flags   map[string]bool
+		}{
+			Numbers: []int{1, 2, 3},
+			Flags:   map[string]bool{"foo": true},
+		},
+		PointerField: &struct{ Value int }{Value: 1},
+		ComplexNest: struct {
+			MapTest      map[string][]int
+			ArrayMapTest []map[string]int
+		}{
+			MapTest: map[string][]int{
+				"foo": {1, 2, 3},
+				"bar": {4, 5, 6},
+			},
+			ArrayMapTest: []map[string]int{
+				{"one": 1},
+				{"two": 2},
+			},
+		},
+	}
+
+	schema := BuildConfigSchema(cfg)
+
+	// Make sure the schema was built properly for the map
+	if _, ok := schema["ComplexNest.ArrayMapTest.0"]; !ok {
+		t.Fatalf("expected schema to contain key 'Cluster.TestNest2.<key>'")
+	}
+
+	t.Run("Get nested map inside slice", func(t *testing.T) {
+		valCheck := cfg.ComplexNest.ArrayMapTest[1]["two"]
+		t.Logf("Want for value of two: %d", valCheck)
+
+		val, err := GetByPath(schema, &cfg, "ComplexNest.ArrayMapTest.1.two")
+		if err != nil {
+			t.Errorf("Error getting value: %v", err)
+		}
+
+		newVal, ok := val.(int)
+		if !ok {
+			t.Errorf("Expected value to be an int, got %T", val)
+		}
+		t.Logf("Got for value of two: %d", newVal)
+
+		if newVal != valCheck {
+			t.Errorf("Expected two to be %d, got %d", valCheck, newVal)
+		}
+	})
+
+	t.Run("Get slice inside map value", func(t *testing.T) {
+		valCheck := cfg.ComplexNest.MapTest["bar"][0]
+		t.Logf("Want for value of bar[0]: %d", valCheck)
+
+		val, err := GetByPath(schema, &cfg, "ComplexNest.MapTest.bar.0")
+		if err != nil {
+			t.Errorf("Error getting value: %v", err)
+		}
+
+		newVal, ok := val.(int)
+		if !ok {
+			t.Errorf("Expected value to be an int, got %T", val)
+		}
+		t.Logf("Got for value of bar[0]: %d", newVal)
+
+		if newVal != valCheck {
+			t.Errorf("Expected bar[0] to be %d, got %d", valCheck, newVal)
 		}
 	})
 }

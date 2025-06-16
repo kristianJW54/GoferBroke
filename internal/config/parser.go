@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 )
 
@@ -178,6 +179,21 @@ func parseConfig(data string) (*RootConfig, error) {
 
 }
 
+func checkErr(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
+
+func parseConfigFromFile(filePath string) (*RootConfig, error) {
+
+	data, err := os.ReadFile(filePath)
+	checkErr(err)
+
+	return parseConfig(string(data))
+
+}
+
 func (p *parser) parseToken() (token, error) {
 
 	t := p.next()
@@ -199,13 +215,15 @@ func (p *parser) parseToken() (token, error) {
 
 	case tokenMapStart:
 
+		//tok := p.next()
+
 		obj := &ObjectNode{
 			make([]*KeyValueNode, 0, 4),
 		}
 
 		p.pushContext(ContextMap, obj, "")
 
-		err := p.parseMap(p.next())
+		err := p.parseMap(t)
 		if err != nil {
 			return t, err
 		}
@@ -218,21 +236,9 @@ func (p *parser) parseToken() (token, error) {
 
 		p.pushContext(ContextArray, list, "")
 
-		err := p.parseList(p.next())
+		err := p.parseList(t)
 		if err != nil {
 			return t, err
-		}
-
-	case tokenArrayEnd:
-
-		ctx := p.popContext()
-		if ctx.ctx != ContextArray {
-			return t, fmt.Errorf("expected ContextArray, got %T", ctx.node)
-		}
-
-		err := p.addToParent(ctx.node, ctx.key)
-		if err != nil {
-			return t, fmt.Errorf("error closing array context: %v", err)
 		}
 
 	case tokenMapEnd:
@@ -264,6 +270,7 @@ func (p *parser) parseKey(t token) error {
 		return fmt.Errorf("next token is invalid - got (%T) expected either Value, List or Map", next.typ)
 
 	case next.typ == tokenString:
+		p.next()
 		kv := &KeyValueNode{key, &StringNode{next.value}}
 		err := p.addToParent(kv, key)
 		if err != nil {
@@ -271,6 +278,7 @@ func (p *parser) parseKey(t token) error {
 		}
 
 	case next.typ == tokenInteger:
+		p.next()
 		intValue, err := strconv.Atoi(next.value)
 		if err != nil {
 			return err
@@ -282,20 +290,22 @@ func (p *parser) parseKey(t token) error {
 		}
 
 	case next.typ == tokenArrayStart:
-
-		list := &ListNode{
-			Items: make([]Node, 0, 4), // Pre-allocate to a reasonable capacity to avoid re-sizing
-		}
-
+		tok := p.next() // consume tokenArrayStart
+		list := &ListNode{Items: make([]Node, 0, 4)}
 		kv := &KeyValueNode{key, list}
-
-		p.pushContext(ContextArray, kv, key)
-		err := p.parseList(p.next())
+		p.pushContext(ContextArray, list, key)
+		err := p.parseList(tok)
+		if err != nil {
+			return err
+		}
+		err = p.addToParent(kv, key)
 		if err != nil {
 			return err
 		}
 
 	case next.typ == tokenMapStart:
+
+		tok := p.next()
 
 		obj := &ObjectNode{
 			make([]*KeyValueNode, 0, 4),
@@ -304,10 +314,18 @@ func (p *parser) parseKey(t token) error {
 		kv := &KeyValueNode{key, obj}
 
 		p.pushContext(ContextMap, kv, key)
-		err := p.parseMap(p.next())
+		err := p.parseMap(tok)
 		if err != nil {
 			return err
 		}
+
+	case next.typ == tokenMapEnd:
+		p.next()
+		ctx := p.popContext()
+		if ctx.ctx != ContextMap {
+			return fmt.Errorf("expected ContextMap, got %T", ctx.node)
+		}
+		return p.addToParent(ctx.node, ctx.key)
 
 	}
 
@@ -316,75 +334,97 @@ func (p *parser) parseKey(t token) error {
 }
 
 func (p *parser) parseList(t token) error {
-
-	next := p.peek()
-
-	switch {
-
-	case next.typ == tokenEOF || next.typ == tokenError:
-		return fmt.Errorf("error in parsing list")
-
-	case next.typ == tokenKey:
-		return fmt.Errorf("tokenKey not a valid entry in list")
-
-	case next.typ == tokenString:
-		err := p.addToParent(&StringNode{next.value}, "")
-		if err != nil {
-			return err
-		}
-		return nil
-
-	case next.typ == tokenMapStart:
-
-		// If we encounter map here it is anonymous and does not have a key
-
-		obj := &ObjectNode{
-			make([]*KeyValueNode, 0, 4),
-		}
-
-		p.pushContext(ContextMap, obj, "")
-
-		err := p.parseMap(p.next())
-		if err != nil {
-			return err
-		}
-
+	// Defensive: ensure tokenArrayStart was consumed
+	if t.typ != tokenArrayStart {
+		return fmt.Errorf("expected tokenArrayStart, got %v", t.typ)
 	}
 
-	return nil
-}
+	for {
+		next := p.peek()
 
-func (p *parser) parseMap(t token) error {
+		switch {
+		case next.typ == tokenEOF || next.typ == tokenError:
+			return fmt.Errorf("error in parsing list - line %d - position %v", t.line, t.pos)
 
-	next := p.peek()
+		case next.typ == tokenKey:
+			return fmt.Errorf("tokenKey not a valid entry in list")
 
-	key := t.value
+		case next.typ == tokenString:
+			p.next()
+			err := p.addToParent(&StringNode{next.value}, "")
+			if err != nil {
+				return err
+			}
+			continue
 
-	switch {
+		case next.typ == tokenInteger:
+			p.next()
+			intValue, err := strconv.Atoi(next.value)
+			if err != nil {
+				return err
+			}
+			err = p.addToParent(&DigitNode{intValue}, "")
+			if err != nil {
+				return err
+			}
+			continue
 
-	case next.typ == tokenKey:
-
-		err := p.parseKey(p.next())
-		if err != nil {
-			return err
-		}
-
-	case next.typ == tokenMapEnd:
-
-		if ctx := p.popContext(); ctx.ctx == ContextMap {
-			err := p.addToParent(ctx.node, key)
+		case next.typ == tokenMapStart:
+			tok := p.next()
+			obj := &ObjectNode{
+				make([]*KeyValueNode, 0, 4),
+			}
+			p.pushContext(ContextMap, obj, "")
+			err := p.parseMap(tok)
 			if err != nil {
 				return err
 			}
 
-		} else {
-			return fmt.Errorf("wrong context on the stack - expected ContextMap - got (%T)", ctx.node)
-		}
+			continue
 
-	default:
-		return fmt.Errorf("expected map key, got (%T) instead", next.typ)
+		case next.typ == tokenArrayEnd:
+			p.next()
+			ctx := p.popContext()
+			if ctx.ctx != ContextArray {
+				return fmt.Errorf("expected ContextArray, got %T", ctx.ctx)
+			}
+			return nil
+
+		default:
+			return fmt.Errorf("unexpected token %v in list", next.typ)
+		}
+	}
+}
+
+func (p *parser) parseMap(t token) error {
+	// Defensive: ensure tokenMapStart was consumed
+	if t.typ != tokenMapStart {
+		return fmt.Errorf("expected tokenMapStart, got %v", t.typ)
 	}
 
-	return nil
+	for {
+		next := p.peek()
 
+		switch {
+		case next.typ == tokenKey:
+			err := p.parseKey(p.next())
+			if err != nil {
+				return err
+			}
+
+		case next.typ == tokenMapEnd:
+			p.next()
+			ctx := p.popContext()
+			if ctx.ctx != ContextMap {
+				return fmt.Errorf("expected ContextMap, got %T", ctx.node)
+			}
+			return p.addToParent(ctx.node, ctx.key)
+
+		case next.typ == tokenEOF:
+			return fmt.Errorf("unexpected EOF while parsing map")
+
+		default:
+			return fmt.Errorf("unexpected token %v in map", next.typ)
+		}
+	}
 }

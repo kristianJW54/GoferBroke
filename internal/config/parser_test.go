@@ -31,6 +31,23 @@ func TestParserToken(t *testing.T) {
 
 }
 
+func TestParserWithFile(t *testing.T) {
+
+	filePath := "C:\\Users\\Kristian\\GolandProjects\\GoferBroke\\Configs\\cluster\\complex_test_config.conf"
+
+	cfg, err := parseConfigFromFile(filePath)
+	if err != nil {
+		t.Error(err)
+	}
+
+	log.Printf("%v number of nodes in tree", len(cfg.Nodes))
+
+	for _, node := range cfg.Nodes {
+		walkNode(node, "")
+	}
+
+}
+
 func walkNode(n Node, indent string) {
 	switch node := n.(type) {
 	case *KeyValueNode:
