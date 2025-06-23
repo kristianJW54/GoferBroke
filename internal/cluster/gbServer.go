@@ -286,6 +286,24 @@ type seedEntry struct {
 	resolved *net.TCPAddr
 }
 
+func NewServerFromConfig(nodeConfigPath, clusterConfigPath string) (*GBServer, error) {
+
+	nodeCfg := InitDefaultNodeConfig()
+	clusterCfg := InitDefaultClusterConfig()
+
+	err := BuildConfigFromFile(nodeConfigPath, nodeCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	err = BuildConfigFromFile(clusterConfigPath, clusterCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewServer(nodeCfg.Name, clusterCfg, nodeCfg, nodeCfg.Host, nodeCfg.Port, nodeCfg.ClientPort, net.ListenConfig{})
+}
+
 func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
 
 	if len([]byte(serverName)) > ServerNameMaxLength {
@@ -358,7 +376,7 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		clientStore: make(map[uint64]*gbClient),
 
 		gossip:          goss,
-		isSeed:          false,
+		isSeed:          gbNodeConfig.IsSeed,
 		canBeRendezvous: false,
 		//numNodeConnections:   0,
 		//numClientConnections: 0,
@@ -377,20 +395,14 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		debugTrack: 0,
 	}
 
-	return s, nil
-}
-
-func NewSeedServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
-
-	srv, err := NewServer(serverName, gbConfig, gbNodeConfig, nodeHost, nodePort, clientPort, lc)
-	if err != nil {
-		return nil, err
+	if s.isSeed == false && s.seedCheck() == true {
+		// If configured server is NOT seed, but we check, and it has same addr as a seed then we fail early and warn
+		return nil, fmt.Errorf("server was configured as a node but has seed address - either change node type to seed OR if node is not meant to be a seed, change address to not one of the listed seeds")
+	} else if s.isSeed == true && !s.seedCheck() == false {
+		return nil, fmt.Errorf("server was configured as a seed but does not match any of the listed seed addresses")
 	}
 
-	srv.isSeed = true
-
-	return srv, nil
-
+	return s, nil
 }
 
 func (s *GBServer) initSelf() {
@@ -432,7 +444,7 @@ func (s *GBServer) StartServer() {
 		// Add debug mode output
 		log.Printf("Server starting in test mode: %s\n", s.PrettyName())
 	} else {
-		fmt.Printf("Server starting: %s\n", s.PrettyName())
+		fmt.Printf("Server starting: %s -- Part of %s\n", s.PrettyName(), s.gbClusterConfig.Name)
 
 	}
 	//s.clusterMapLock.Lock()
@@ -453,13 +465,6 @@ func (s *GBServer) StartServer() {
 		log.Fatal(err)
 	}
 
-	if !s.isSeed {
-		//TODO Decision here: if we are not a seed - then a user has NOT started a seed server so there is intention
-		// do we want to then override this and upgrade node to a seed if we detect addr to be the same? or fail early and
-		// assume intention?
-		s.seedCheck()
-	}
-
 	// Setting go routine tracking flag to true - mainly used in testing
 	s.grTracking.trackingFlag.Store(true)
 
@@ -475,6 +480,7 @@ func (s *GBServer) StartServer() {
 	//---------------- Node Accept Loop ----------------//
 
 	// Here we attempt to dial and connect to seed
+	// TODO If we get a dial error being the same addr used on an active node then we signal shutdown immediately and send error event
 
 	s.startupSync.Add(1)
 	err = s.AcceptNodeLoop("node-test")
@@ -794,17 +800,17 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
-func (s *GBServer) seedCheck() {
+func (s *GBServer) seedCheck() bool {
 
 	if len(s.seedAddr) >= 1 {
 		for _, addr := range s.seedAddr {
 			if addr.resolved.IP.Equal(s.boundTCPAddr.IP) && addr.resolved.Port == s.boundTCPAddr.Port {
-				s.isSeed = true
+				return true
 			}
 		}
 	}
 
-	s.isSeed = false
+	return false
 
 }
 

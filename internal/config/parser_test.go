@@ -16,7 +16,7 @@ func TestParserToken(t *testing.T) {
 
 		}`
 
-	token, err := parseConfig(d2)
+	token, err := ParseConfig(d2)
 	if err != nil {
 		t.Error(err)
 	}
@@ -31,11 +31,28 @@ func TestParserToken(t *testing.T) {
 
 }
 
-func TestParserWithFile(t *testing.T) {
+func TestParserWithTestFile(t *testing.T) {
 
-	filePath := "C:\\Users\\Kristian\\GolandProjects\\GoferBroke\\Configs\\cluster\\complex_test_config.conf"
+	filePath := "../../Configs/cluster/complex_test_config.conf"
 
-	cfg, err := parseConfigFromFile(filePath)
+	cfg, err := ParseConfigFromFile(filePath)
+	if err != nil {
+		t.Error(err)
+	}
+
+	log.Printf("%v number of nodes in tree", len(cfg.Nodes))
+
+	for _, node := range cfg.Nodes {
+		walkNode(node, "")
+	}
+
+}
+
+func TestParserWithBasicFile(t *testing.T) {
+
+	filePath := "../../Configs/cluster/default_cluster_config.conf"
+
+	cfg, err := ParseConfigFromFile(filePath)
 	if err != nil {
 		t.Error(err)
 	}
@@ -57,6 +74,9 @@ func walkNode(n Node, indent string) {
 	case *StringNode:
 		log.Printf("%sString → %s", indent, node.Value)
 
+	case *BoolNode:
+		log.Printf("%sBool → %v", indent, node.Value)
+
 	case *DigitNode:
 		log.Printf("%sDigit → %d", indent, node.Value)
 
@@ -76,4 +96,24 @@ func walkNode(n Node, indent string) {
 	default:
 		log.Printf("%sUnknown node type: %T", indent, node)
 	}
+}
+
+func TestASTPathValues(t *testing.T) {
+
+	filePath := "../../Configs/cluster/complex_test_config.conf"
+
+	root, err := ParseConfigFromFile(filePath)
+	if err != nil {
+		t.Error(err)
+	}
+
+	av, err := StreamAST(root)
+	if err != nil {
+		t.Error(err)
+	}
+
+	for i, paths := range av {
+		log.Printf("%d -> path = %s", i, paths.Path)
+	}
+
 }

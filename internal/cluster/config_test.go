@@ -1,49 +1,19 @@
 package cluster
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"testing"
 )
 
-func TestBasicConfigSchema(t *testing.T) {
-
-	cfg := InitDefaultClusterConfig()
-
-	cfg.Name = "test-cluster"
-	cfg.SeedServers = append(cfg.SeedServers, &Seeds{Host: "localhost", Port: "8081"})
-	cfg.SeedServers = append(cfg.SeedServers, &Seeds{Host: "localhost", Port: "8082"})
-
-	schema := BuildConfigSchema(cfg)
-
-	newName := "big_boy_cluster"
-
-	if field, ok := schema["SeedServers.0"]; ok {
-		log.Printf("Name = %s", cfg.Name)
-		log.Printf("path - %s | field type and kind -> %s - %s", field.Path, field.Type, field.Kind)
-		log.Printf("getter is nil? %v", field.Getter == nil)
+func printConfig(cfg interface{}) {
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		fmt.Printf("error marshalling config: %v\n", err)
+		return
 	}
-
-	if field, ok := schema["Name"]; ok {
-		log.Printf("old name = %s", cfg.Name)
-		log.Printf("path - %s | field type and kind -> %s - %s", field.Path, field.Type, field.Kind)
-		err := field.Setter(newName)
-		if err != nil {
-			t.Errorf("Error setting new name: %v", err)
-		}
-	} else {
-		t.Errorf("Name not found in schema")
-	}
-
-	if field, ok := schema["Name"]; ok {
-		name := field.Getter()
-		log.Printf("new name = %s", name)
-		if name != newName {
-			t.Errorf("New name is %s, wanted %s", name, newName)
-		}
-	} else {
-		t.Errorf("Name not found in schema")
-	}
-
+	fmt.Println(string(out))
 }
 
 func TestSliceConfigSchema(t *testing.T) {
@@ -246,4 +216,63 @@ func TestGetComplexConfigSchema(t *testing.T) {
 			t.Errorf("Expected bar[0] to be %d, got %d", valCheck, newVal)
 		}
 	})
+}
+
+func TestBuildComplexConfig(t *testing.T) {
+
+	filePath := "../../Configs/cluster/complex_test_config.conf"
+
+	type complexConfig struct {
+		Name   string
+		Nested struct {
+			Numbers []int
+			Flags   map[string]bool
+		}
+		PointerField *struct {
+			Value int
+		}
+		ComplexNest struct {
+			MapTest      map[string][]int
+			ArrayMapTest []map[string]int
+		}
+	}
+
+	cfg := &complexConfig{
+		Nested: struct {
+			Numbers []int
+			Flags   map[string]bool
+		}{
+			Flags: make(map[string]bool),
+		},
+		PointerField: &struct{ Value int }{},
+		ComplexNest: struct {
+			MapTest      map[string][]int
+			ArrayMapTest []map[string]int
+		}{
+			MapTest: make(map[string][]int),
+		},
+	}
+
+	err := BuildConfigFromFile(filePath, cfg)
+	if err != nil {
+		t.Errorf("Error building complex config file: %v", err)
+	}
+
+	printConfig(cfg)
+
+}
+
+func TestNodeConfigFile(t *testing.T) {
+
+	filePath := "../../Configs/node/basic_seed_config.conf"
+
+	nodeCfg := InitDefaultNodeConfig()
+
+	err := BuildConfigFromFile(filePath, nodeCfg)
+	if err != nil {
+		t.Errorf("Error building complex config file: %v", err)
+	}
+
+	printConfig(nodeCfg)
+
 }

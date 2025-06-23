@@ -23,7 +23,6 @@ type Node struct {
 
 type NodeConfig struct {
 	Name        string
-	ID          uint32
 	Host        string
 	Port        string
 	NetworkType string
@@ -33,14 +32,13 @@ type NodeConfig struct {
 
 func (nc *NodeConfig) InitConfig() error {
 
-	netType, err := cluster.ParseNodeNetworkType(nc.NetworkType)
+	netType, err := cluster.ParseNodeNetworkTypeFromString(nc.NetworkType)
 	if err != nil {
 		return err
 	}
 
 	gbConfig := &cluster.GbNodeConfig{
 		Name:        nc.Name,
-		ID:          nc.ID,
 		Host:        nc.Host,
 		Port:        nc.Port,
 		NetworkType: netType,
@@ -91,7 +89,7 @@ type Seeds struct {
 
 func (cc *ClusterConfig) InitConfig() error {
 
-	cNet, err := cluster.ParseClusterNetworkType(cc.NetworkType)
+	cNet, err := cluster.ParseClusterNetworkTypeFromString(cc.NetworkType)
 	if err != nil {
 		return err
 	}

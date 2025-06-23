@@ -880,11 +880,12 @@ func sfStringValue(l *lexer) stateFunc {
 	if r == eof || l.lookup[r]&whitespace != 0 || r == arrayEnd || r == arrayValSep || r == mapEnd {
 
 		l.backup()
-		if l.stringState != nil {
+		if len(l.stringParts) > 0 {
 			l.emitString()
 
 			// Add other checks such as variable/bool etc
-
+		} else if l.isBool() {
+			l.emit(tokenBool)
 		} else {
 			l.emitString()
 		}

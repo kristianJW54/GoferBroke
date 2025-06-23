@@ -134,7 +134,7 @@ func (p *parser) addToParent(child Node, key string) error {
 
 }
 
-func parseConfig(data string) (*RootConfig, error) {
+func ParseConfig(data string) (*RootConfig, error) {
 
 	cfg := &RootConfig{}
 
@@ -185,12 +185,12 @@ func checkErr(e error) {
 	}
 }
 
-func parseConfigFromFile(filePath string) (*RootConfig, error) {
+func ParseConfigFromFile(filePath string) (*RootConfig, error) {
 
 	data, err := os.ReadFile(filePath)
 	checkErr(err)
 
-	return parseConfig(string(data))
+	return ParseConfig(string(data))
 
 }
 
@@ -289,6 +289,18 @@ func (p *parser) parseKey(t token) error {
 			return err
 		}
 
+	case next.typ == tokenBool:
+		p.next()
+		boolValue, err := strconv.ParseBool(next.value)
+		if err != nil {
+			return err
+		}
+		kv := &KeyValueNode{key, &BoolNode{boolValue}}
+		err = p.addToParent(kv, key)
+		if err != nil {
+			return err
+		}
+
 	case next.typ == tokenArrayStart:
 		tok := p.next() // consume tokenArrayStart
 		list := &ListNode{Items: make([]Node, 0, 4)}
@@ -364,6 +376,19 @@ func (p *parser) parseList(t token) error {
 				return err
 			}
 			err = p.addToParent(&DigitNode{intValue}, "")
+			if err != nil {
+				return err
+			}
+			continue
+
+		case next.typ == tokenBool:
+			log.Printf("-------------------parsing bool = %v", next.value)
+			p.next()
+			boolValue, err := strconv.ParseBool(next.value)
+			if err != nil {
+				return err
+			}
+			err = p.addToParent(&BoolNode{boolValue}, "")
 			if err != nil {
 				return err
 			}

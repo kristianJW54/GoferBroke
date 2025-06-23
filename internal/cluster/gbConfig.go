@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
+	cfg "github.com/kristianJW54/GoferBroke/internal/config"
 	"log"
 	"reflect"
 	"strconv"
@@ -86,8 +87,6 @@ type ClusterOptions struct {
 	LoggingURL                     string
 	MetricsURL                     string
 	ErrorsURL                      string
-	TestNest                       []map[string]int
-	TestNest2                      map[string][]int
 
 	NodeMTLSRequired   bool `default:"false"`
 	ClientMTLSRequired bool `default:"false"`
@@ -116,8 +115,6 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			ErrorsURL:                      "",
 			NodeMTLSRequired:               false,
 			ClientMTLSRequired:             false,
-			TestNest:                       make([]map[string]int, 0, 2),
-			TestNest2:                      make(map[string][]int),
 		},
 	}
 
@@ -136,10 +133,10 @@ const (
 
 type GbNodeConfig struct {
 	Name        string
-	ID          uint32
 	Host        string
 	Port        string
 	NetworkType NodeNetworkType
+	IsSeed      bool
 	ClientPort  string
 	Internal    *InternalOptions
 }
@@ -162,6 +159,30 @@ type InternalOptions struct {
 	// Need logging config also
 }
 
+func InitDefaultNodeConfig() *GbNodeConfig {
+	return &GbNodeConfig{
+		Name:        "node",
+		Host:        "",
+		Port:        "",
+		NetworkType: UNDEFINED,
+		IsSeed:      false,
+		ClientPort:  "",
+		Internal: &InternalOptions{
+			IsTestMode:                            false,
+			DisableInitialiseSelf:                 false,
+			DisableGossip:                         false,
+			GoRoutineTracking:                     true,
+			DebugMode:                             false,
+			DisableUpdateServerTimeStampOnStartup: false,
+			DisableInternalGossipSystemUpdate:     false,
+
+			CACertFilePath: "",
+			CertFilePath:   "",
+			KeyFilePath:    "",
+		},
+	}
+}
+
 //=====================================================================
 // Config Schema
 //=====================================================================
@@ -182,8 +203,6 @@ type ConfigSchema struct {
 	isMap     bool
 	isPtr     bool
 	elemType  *ConfigSchema
-	Getter    clusterConfigGetterMapFunc
-	Setter    clusterConfigSetterMapFunc
 	//Custom Encode + Decode to be included?
 }
 
@@ -243,7 +262,7 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 
 			fv := deref(fieldValue)
 
-			log.Printf("path = %s", path)
+			log.Printf("struct path = %s", path)
 
 			// Register the container node (e.g., "Cluster")
 			out[path] = &ConfigSchema{
@@ -252,8 +271,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				Kind:      fv.Kind(),
 				isIndexed: isIndexedPath(path),
 				isPtr:     fieldValue.Kind() == reflect.Ptr,
-				Setter:    makeDirectSetter(fieldValue),
-				Getter:    makeDirectGetter(fieldValue),
 			}
 
 			buildSchemaRecursive(fieldValue, path, out)
@@ -272,8 +289,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				Kind:      elemKind,
 				isIndexed: isIndexedPath(path),
 				isPtr:     true,
-				Setter:    makeDirectSetter(fieldValue),
-				Getter:    makeDirectGetter(fieldValue),
 			}
 
 			if elemKind == reflect.Struct {
@@ -294,8 +309,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				isIndexed: false,
 				isSlice:   true,
 				isPtr:     elemKind == reflect.Ptr,
-				Setter:    nil,
-				Getter:    nil,
 			}
 
 			// Ensure at least one element exists for introspection
@@ -321,8 +334,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				isIndexed: true,
 				isSlice:   true,
 				isPtr:     elemKind == reflect.Ptr,
-				Setter:    nil,
-				Getter:    nil,
 			}
 
 			// Recurse if element is a struct or map
@@ -339,8 +350,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 					Kind:      firstElem.Type().Elem().Kind(),
 					isMap:     true,
 					isIndexed: true,
-					Setter:    nil,
-					Getter:    nil,
 				}
 			}
 
@@ -352,8 +361,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				Kind:      field.Type.Kind(),
 				isIndexed: false,
 				isMap:     true,
-				Setter:    nil,
-				Getter:    nil,
 			}
 
 			keyKind := field.Type.Key().Kind()
@@ -370,8 +377,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 					Kind:      valKind,
 					isIndexed: true,
 					isMap:     true,
-					Setter:    nil,
-					Getter:    nil,
 				}
 
 				// If value is pointer to struct or struct, recurse
@@ -385,6 +390,16 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 				case reflect.Struct:
 					elem := reflect.New(valType).Elem()
 					buildSchemaRecursive(elem, mapPath, out)
+
+				case reflect.Slice:
+					indexPath := mapPath + ".0"
+					out[indexPath] = &ConfigSchema{
+						Path:      indexPath,
+						Type:      valType.Elem(),        // Type of the slice element
+						Kind:      valType.Elem().Kind(), // Kind of the slice element
+						isIndexed: true,
+						isSlice:   true,
+					}
 				}
 			}
 
@@ -396,8 +411,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 					Type:      field.Type,
 					Kind:      kind,
 					isIndexed: isIndexed,
-					Setter:    makeDirectSetter(fieldValue),
-					Getter:    makeDirectGetter(fieldValue),
 				}
 
 			} else {
@@ -406,8 +419,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 					Type:      field.Type,
 					Kind:      kind,
 					isIndexed: isIndexed,
-					Setter:    nil,
-					Getter:    nil,
 				}
 
 			}
@@ -441,14 +452,17 @@ const (
 )
 
 type configState struct {
-	current reflect.Value
-	prefix  string
-	index   int
-	parts   []string
-	schema  map[string]*ConfigSchema
-	value   any
-	mode    accessMode
-	result  any
+	current     reflect.Value
+	prefix      string
+	index       int
+	parts       []string
+	schema      map[string]*ConfigSchema
+	value       any
+	mode        accessMode
+	result      any
+	parentIsMap bool
+	mapRef      reflect.Value
+	mapKey      string
 }
 
 type configStateFunc func(*configState) (configStateFunc, error)
@@ -544,6 +558,32 @@ func handleStruct(s *configState) (configStateFunc, error) {
 		val := reflect.ValueOf(s.value)
 		if s.mode == modeSet {
 			if !val.Type().AssignableTo(s.current.Type()) {
+				switch s.current.Interface().(type) {
+				case ClusterNetworkType:
+					if _, ok := val.Interface().(string); !ok {
+						return nil, fmt.Errorf("cluster network type must be a string")
+					}
+					parsed, err := ParseClusterNetworkTypeFromString(val.String())
+					if err != nil {
+						return nil, err
+					}
+					val = reflect.ValueOf(parsed)
+					s.current.Set(val)
+					return nil, nil
+				case NodeNetworkType:
+					if _, ok := val.Interface().(string); !ok {
+						return nil, fmt.Errorf("node network type must be a string")
+					}
+					parsed, err := ParseNodeNetworkTypeFromString(val.String())
+					if err != nil {
+						return nil, err
+					}
+					val = reflect.ValueOf(parsed)
+					s.current.Set(val)
+				default:
+					log.Printf("v = %s - current = %v", val.String(), s.current.Type())
+					return nil, fmt.Errorf("invalid type for '%v'", val.Type())
+				}
 				return nil, fmt.Errorf("value of %s is not assignable to %s", val.Type(), s.current.Type())
 			}
 			s.current.Set(val)
@@ -558,13 +598,10 @@ func handleStruct(s *configState) (configStateFunc, error) {
 
 	switch sch.Kind {
 	case reflect.Struct:
-		log.Printf("calling struct with prefix %s", s.prefix)
 		return handleStruct, nil
 	case reflect.Slice:
-		log.Printf("calling slice with prefix %s", s.prefix)
 		return handleSlice, nil
 	case reflect.Map:
-		log.Printf("struct calling map with prefix %s", s.prefix)
 		return handleMap, nil
 	default:
 		return nil, fmt.Errorf("unsupported kind: %v", sch.Kind)
@@ -595,6 +632,8 @@ func handleSlice(s *configState) (configStateFunc, error) {
 	// Set back if s.current was addressable
 	if s.current.CanSet() {
 		s.current.Set(slice)
+	} else if s.parentIsMap && s.mapRef.IsValid() {
+		s.mapRef.SetMapIndex(reflect.ValueOf(s.mapKey), slice)
 	}
 
 	// Move to the indexed element
@@ -622,7 +661,6 @@ func handleSlice(s *configState) (configStateFunc, error) {
 	}
 
 	// Now check schema at this path
-	log.Printf("prefix in slice = %s", s.prefix)
 	sch, ok := s.schema[s.prefix]
 	if !ok {
 		return nil, fmt.Errorf("schema missing for '%s'", s.prefix)
@@ -632,7 +670,6 @@ func handleSlice(s *configState) (configStateFunc, error) {
 	case reflect.Struct:
 		return handleStruct, nil
 	case reflect.Map:
-		log.Printf("calling map with prefix %s", s.prefix)
 		return handleMap, nil
 	default:
 		return nil, fmt.Errorf("unsupported slice element kind: %v", sch.Kind)
@@ -641,10 +678,18 @@ func handleSlice(s *configState) (configStateFunc, error) {
 
 func handleMap(s *configState) (configStateFunc, error) {
 	mapKeyStr := s.parts[s.index]
-	log.Printf("mapKey = %s", mapKeyStr)
 
-	m := s.current
-	m = deref(m)
+	m := deref(s.current)
+
+	if m.IsNil() {
+		if s.current.CanSet() {
+			newMap := reflect.MakeMap(m.Type())
+			s.current.Set(newMap)
+			m = newMap
+		} else {
+			return nil, fmt.Errorf("cannot set map at prefix %s", s.prefix)
+		}
+	}
 
 	if m.Kind() != reflect.Map {
 		return nil, fmt.Errorf("current value is not a map at prefix %s", s.prefix)
@@ -652,37 +697,61 @@ func handleMap(s *configState) (configStateFunc, error) {
 
 	mapKey := reflect.ValueOf(mapKeyStr)
 	val := m.MapIndex(mapKey)
-	log.Printf("val = %v", val)
-
-	if !val.IsValid() {
-		// Create a new zero value for the map element
-		val = reflect.New(m.Type().Elem()).Elem()
-		m.SetMapIndex(mapKey, val)
-	}
 
 	s.index++
 	s.prefix += ".<key>"
 
+	if !val.IsValid() {
+		nextPart := ""
+		if s.index < len(s.parts) {
+			nextPart = s.parts[s.index]
+		}
+
+		elemType := m.Type().Elem()
+
+		// If we're about to index into a slice (e.g. "0"), initialize as slice
+		if _, err := strconv.Atoi(nextPart); err == nil && elemType.Kind() == reflect.Slice {
+			val = reflect.MakeSlice(elemType, 0, 1)
+			m.SetMapIndex(mapKey, val)
+
+			val = m.MapIndex(mapKey)
+		} else {
+			// Default to struct/map/etc
+			val = reflect.New(elemType).Elem()
+			m.SetMapIndex(mapKey, val)
+		}
+	}
+
 	// Final path part: assign directly into map
 	if s.index == len(s.parts) {
 		newVal := reflect.ValueOf(s.value)
+
 		if s.mode == modeSet {
-			if !newVal.Type().AssignableTo(val.Type()) {
-				return nil, fmt.Errorf("cannot assign %T to %s", s.value, val.Type())
+			// use Elem type of the map to validate type, not val.Type() (which could be invalid)
+			if !newVal.Type().AssignableTo(m.Type().Elem()) {
+				log.Printf("[SET ERROR] path=%s cannot assign value of type %s to map with elem type %s",
+					s.prefix, newVal.Type(), m.Type().Elem())
+				return nil, fmt.Errorf("cannot assign %T to %s", s.value, m.Type().Elem())
 			}
 
 			m.SetMapIndex(mapKey, newVal)
+			return nil, nil
+
 		} else if s.mode == modeGet {
 			if !val.IsValid() {
 				return nil, fmt.Errorf("value for key %v does not exist", mapKey)
 			}
 			s.result = val.Interface()
+			return nil, nil
 		}
-
-		return nil, nil
 	}
 
-	// Not at end yet: transition into the correct handler
+	// If the value doesn't exist, create a zero struct (for traversal)
+	if !val.IsValid() {
+		val = reflect.New(m.Type().Elem()).Elem()
+		m.SetMapIndex(mapKey, val)
+	}
+
 	val = deref(val)
 	s.current = val
 
@@ -693,62 +762,66 @@ func handleMap(s *configState) (configStateFunc, error) {
 
 	switch sch.Kind {
 	case reflect.Struct:
-		log.Printf("called struct with prefix %s", s.prefix)
 		return handleStruct, nil
 	case reflect.Slice:
-		log.Printf("called slice with prefix %s", s.prefix)
+		s.parentIsMap = true
+		s.mapRef = m
+		s.mapKey = mapKey.String()
 		return handleSlice, nil
 	case reflect.Map:
-		log.Printf("called map with prefix %s", s.prefix)
 		return handleMap, nil
 	default:
 		return nil, fmt.Errorf("unsupported map value kind: %v", sch.Kind)
 	}
 }
 
-// For getters and setters - we only cache functions on primitives which are simple and predictable
-// more complex types like slices/maps etc. we will use a runtime reflection which will be able to extract indexes
-// walk to the value and set
-// To do this, we will access the schema for the respective field we are trying to get/set and check the type
-// if it is a complex type we know it will not have cached function, and we can call a runtime function to handle
+func SetConfigValue(schema map[string]*ConfigSchema, cfg any, path string, value any) error {
 
-func makeDirectSetter(fv reflect.Value) clusterConfigSetterMapFunc {
-	if fv.Kind() == reflect.Ptr {
-		if fv.IsNil() {
-			fv.Set(reflect.New(fv.Type().Elem()))
-		}
-		fv = fv.Elem()
+	err := SetByPath(schema, cfg, path, value)
+	if err != nil {
+		return err
 	}
 
-	return func(value any) error {
-		val := reflect.ValueOf(value)
-		if !val.Type().AssignableTo(fv.Type()) {
-			return fmt.Errorf("cannot assign %T to %s", value, fv.Type())
-		}
-		fv.Set(val)
-		return nil
-	}
+	return nil
+
 }
 
-func makeDirectGetter(fv reflect.Value) clusterConfigGetterMapFunc {
-	if fv.Kind() == reflect.Ptr {
-		if fv.IsNil() {
-			fv.Set(reflect.New(fv.Type().Elem()))
+func BuildConfigFromFile(filePath string, config any) error {
+
+	// Parse the config from file into an ast tree
+	root, err := cfg.ParseConfigFromFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	// Build schema from the config
+	schema := BuildConfigSchema(config)
+	//for _, s := range schema {
+	//	log.Printf("schema path = %s", s.Path)
+	//}
+
+	// Use the ast tree to populate a list of path values to populate the config with
+	pathValues, err := cfg.StreamAST(root)
+	if err != nil {
+		return err
+	}
+
+	// Use the path values along with the schema to build the config
+	for _, av := range pathValues {
+
+		if err := SetConfigValue(schema, config, av.Path, av.Value); err != nil {
+			return err
 		}
-		fv = fv.Elem()
+
 	}
 
-	return func() any {
-		return fv.Interface()
-	}
+	return nil
+
 }
-
-//TODO Need a generic Set and Get function which looks up the schema - if there are cached functions then use them
-// if not, then we use the byPath functions
 
 //=====================================================================
 
-func ParseNodeNetworkType(s string) (NodeNetworkType, error) {
+func ParseNodeNetworkTypeFromString(s string) (NodeNetworkType, error) {
 
 	st := strings.TrimSpace(s)
 	st = strings.ToUpper(st)
@@ -768,7 +841,24 @@ func ParseNodeNetworkType(s string) (NodeNetworkType, error) {
 
 }
 
-func ParseClusterNetworkType(s string) (ClusterNetworkType, error) {
+func ParseNodeNetworkType(nn NodeNetworkType) (string, error) {
+
+	switch nn {
+	case UNDEFINED:
+		return "UNDEFINED", nil
+	case PRIVATE:
+		return "PRIVATE", nil
+	case PUBLIC:
+		return "PUBLIC", nil
+	case LOCAL:
+		return "LOCAL", nil
+	default:
+		return "", fmt.Errorf("invalid node network type: %d", nn)
+	}
+
+}
+
+func ParseClusterNetworkTypeFromString(s string) (ClusterNetworkType, error) {
 
 	st := strings.TrimSpace(s)
 	st = strings.ToUpper(st)
@@ -785,6 +875,25 @@ func ParseClusterNetworkType(s string) (ClusterNetworkType, error) {
 	}
 
 	return C_UNDEFINED, fmt.Errorf("invalid cluster network type: %s", st)
+
+}
+
+func ParseClusterNetworkType(cn ClusterNetworkType) (string, error) {
+
+	switch cn {
+	case C_UNDEFINED:
+		return "UNDEFINED", nil
+	case C_PRIVATE:
+		return "PRIVATE", nil
+	case C_PUBLIC:
+		return "PUBLIC", nil
+	case C_DYNAMIC:
+		return "DYNAMIC", nil
+	case C_LOCAL:
+		return "LOCAL", nil
+	default:
+		return "", fmt.Errorf("invalid cluster network type: %d", cn)
+	}
 
 }
 
