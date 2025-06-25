@@ -47,12 +47,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	seedFilePath := "../../Configs/node/basic_seed_config.conf"
 	nodeFilePath := "../../Configs/node/basic_node_config.conf"
 
-	gbs, err := NewServerFromConfig(seedFilePath, clusterPath)
+	gbs, err := NewServerFromConfigFile(seedFilePath, clusterPath)
 	if err != nil {
 		t.Errorf("%v", err)
 		return
 	}
-	gbs2, err := NewServerFromConfig(nodeFilePath, clusterPath)
+	gbs2, err := NewServerFromConfigFile(nodeFilePath, clusterPath)
 	if err != nil {
 		t.Errorf("%v", err)
 		return
@@ -61,14 +61,6 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-
-	// Current break is here
-
-	//client := gbs.tmpClientStore["1"]
-	//client2 := gbs2.tmpClientStore["1"]
-
-	//log.Printf("%s --> temp client is %s --> direction %s", gbs.ServerName, client.name, client.directionType)
-	//log.Printf("%s --> temp client is %s --> direction %s", gbs2.ServerName, client2.name, client2.directionType)
 
 	time.Sleep(10 * time.Second)
 	gbs2.Shutdown()
@@ -88,6 +80,28 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 }
 
+func TestRandomNodeSelection(t *testing.T) {
+
+	partArray := []string{
+		"part-1",
+		"part-2",
+		"part-3",
+		"part-4",
+	}
+
+	ns := 2
+
+	indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, partArray[0])
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	for _, index := range indexes {
+		log.Printf("part selected = %s", partArray[index])
+	}
+
+}
+
 func TestGossipSignal(t *testing.T) {
 
 	lc := net.ListenConfig{}
@@ -104,7 +118,8 @@ func TestGossipSignal(t *testing.T) {
 			},
 		},
 		Cluster: &ClusterOptions{
-			ClusterNetworkType: C_LOCAL,
+			ClusterNetworkType:          C_LOCAL,
+			NodeSelectionPerGossipRound: 2,
 		},
 	}
 
@@ -113,8 +128,8 @@ func TestGossipSignal(t *testing.T) {
 	}
 
 	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8083", lc)
-	gbs3, _ := NewServer("test-server", config, nodeConfig, "localhost", "8085", "8084", lc)
+	gbs2, _ := NewServer("test-server2", config, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs3, _ := NewServer("test-server3", config, nodeConfig, "localhost", "8085", "8084", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)

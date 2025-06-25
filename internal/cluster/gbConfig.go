@@ -1,14 +1,19 @@
 package cluster
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	cfg "github.com/kristianJW54/GoferBroke/internal/config"
 	"log"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // TODO
@@ -61,7 +66,7 @@ type Seeds struct {
 	Port string
 }
 
-type ClusterNetworkType int
+type ClusterNetworkType uint8
 
 const (
 	C_UNDEFINED ClusterNetworkType = iota
@@ -122,7 +127,7 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 
 //=============================================================
 
-type NodeNetworkType int
+type NodeNetworkType uint8
 
 const (
 	UNDEFINED NodeNetworkType = iota
@@ -181,6 +186,22 @@ func InitDefaultNodeConfig() *GbNodeConfig {
 			KeyFilePath:    "",
 		},
 	}
+}
+
+//=====================================================================
+// Config Checksum
+//=====================================================================
+
+func configChecksum(cfg any) (string, error) {
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum), nil
+
 }
 
 //=====================================================================
@@ -429,6 +450,58 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 
 }
 
+//=====================================================================
+// Config Type Coercion
+//=====================================================================
+
+func coerceValue(input any, targetType reflect.Type) (reflect.Value, error) {
+	inVal := reflect.ValueOf(input)
+
+	// Direct assignable
+	if inVal.Type().AssignableTo(targetType) {
+		return inVal, nil
+	}
+
+	// Handle numeric coercion
+	switch targetType.Kind() {
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
+		asInt, ok := input.(int)
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("cannot convert %T to %s", input, targetType)
+		}
+		if asInt < 0 {
+			return reflect.Value{}, fmt.Errorf("negative value cannot be converted to %s", targetType)
+		}
+		return reflect.ValueOf(uint64(asInt)).Convert(targetType), nil
+
+	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
+		asInt, ok := input.(int)
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("cannot convert %T to %s", input, targetType)
+		}
+		return reflect.ValueOf(asInt).Convert(targetType), nil
+
+	case reflect.Float32, reflect.Float64:
+		asFloat, ok := input.(float64)
+		if !ok {
+			asInt, ok := input.(int)
+			if !ok {
+				return reflect.Value{}, fmt.Errorf("cannot convert %T to float", input)
+			}
+			asFloat = float64(asInt)
+		}
+		return reflect.ValueOf(asFloat).Convert(targetType), nil
+	}
+
+	// Add enum fallback here if needed
+
+	return reflect.Value{}, fmt.Errorf("cannot coerce %T to %s", input, targetType)
+}
+
+//=====================================================================
+// Config Deref For Reflection
+//=====================================================================
+
 func deref(v reflect.Value) reflect.Value {
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
@@ -443,6 +516,10 @@ func deref(v reflect.Value) reflect.Value {
 	}
 	return v
 }
+
+//=====================================================================
+// Config Setting and Getting
+//=====================================================================
 
 type accessMode uint8
 
@@ -580,11 +657,18 @@ func handleStruct(s *configState) (configStateFunc, error) {
 					}
 					val = reflect.ValueOf(parsed)
 					s.current.Set(val)
-				default:
-					log.Printf("v = %s - current = %v", val.String(), s.current.Type())
-					return nil, fmt.Errorf("invalid type for '%v'", val.Type())
+
+					return nil, nil
+
 				}
-				return nil, fmt.Errorf("value of %s is not assignable to %s", val.Type(), s.current.Type())
+
+				// Fall back to generic coercion
+				coerced, err := coerceValue(s.value, s.current.Type())
+				if err != nil {
+					return nil, fmt.Errorf("invalid type for '%v': %v", val.Type(), err)
+				}
+				s.current.Set(coerced)
+				return nil, nil
 			}
 			s.current.Set(val)
 		} else if s.mode == modeGet {
@@ -786,12 +870,16 @@ func SetConfigValue(schema map[string]*ConfigSchema, cfg any, path string, value
 
 }
 
-func BuildConfigFromFile(filePath string, config any) error {
+//=====================================================================
+// Config Build
+//=====================================================================
+
+func BuildConfigFromFile(filePath string, config any) (map[string]*ConfigSchema, error) {
 
 	// Parse the config from file into an ast tree
 	root, err := cfg.ParseConfigFromFile(filePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Build schema from the config
@@ -803,20 +891,211 @@ func BuildConfigFromFile(filePath string, config any) error {
 	// Use the ast tree to populate a list of path values to populate the config with
 	pathValues, err := cfg.StreamAST(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Use the path values along with the schema to build the config
 	for _, av := range pathValues {
 
 		if err := SetConfigValue(schema, config, av.Path, av.Value); err != nil {
-			return err
+			return nil, err
+		}
+
+	}
+
+	return schema, nil
+
+}
+
+//=====================================================================
+// Config Generate Delta
+//=====================================================================
+
+func CollectPaths(v reflect.Value, prefix string, out *[]string) {
+	v = deref(v)
+
+	switch v.Kind() {
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			if field.PkgPath != "" { // unexported
+				continue
+			}
+			CollectPaths(v.Field(i), joinPath(prefix, field.Name), out)
+		}
+
+	case reflect.Ptr:
+		if !v.IsNil() {
+			CollectPaths(v.Elem(), prefix, out)
+		}
+
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ {
+			idxPath := fmt.Sprintf("%s.%d", prefix, i)
+			CollectPaths(v.Index(i), idxPath, out)
+		}
+
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			keyStr := fmt.Sprintf("%v", key.Interface())
+			mapPath := fmt.Sprintf("%s.%s", prefix, keyStr)
+			CollectPaths(v.MapIndex(key), mapPath, out)
+		}
+
+	default:
+		*out = append(*out, prefix)
+	}
+}
+
+func convertReflectTypeToDeltaType(t reflect.Kind) (byte, error) {
+
+	switch t {
+	case reflect.Bool:
+		return D_BOOL_TYPE, nil
+	case reflect.String:
+		return D_STRING_TYPE, nil
+	case reflect.Int:
+		return D_INT_TYPE, nil
+	case reflect.Int8:
+		return D_INT8_TYPE, nil
+	case reflect.Int16:
+		return D_INT16_TYPE, nil
+	case reflect.Int32:
+		return D_INT32_TYPE, nil
+	case reflect.Int64:
+		return D_INT64_TYPE, nil
+	case reflect.Uint8:
+		return D_UINT8_TYPE, nil
+	case reflect.Uint16:
+		return D_UINT16_TYPE, nil
+	case reflect.Uint32:
+		return D_UINT32_TYPE, nil
+	case reflect.Uint64:
+		return D_UINT64_TYPE, nil
+	case reflect.Float64:
+		return D_FLOAT64_TYPE, nil
+	default:
+		return D_BYTE_TYPE, fmt.Errorf("unsupported type: %v", t)
+	}
+}
+
+func encodeToBytes(value any) ([]byte, error) {
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return nil, errors.New("cannot encode nil value")
+	}
+	return encodeReflectValue(v)
+}
+
+func encodeReflectValue(v reflect.Value) ([]byte, error) {
+	v = deref(v)
+
+	switch v.Kind() {
+	case reflect.String:
+		return []byte(v.String()), nil
+
+	case reflect.Bool:
+		if v.Bool() {
+			return []byte{1}, nil
+		}
+		return []byte{0}, nil
+
+	case reflect.Int8:
+		return []byte{byte(v.Int())}, nil
+
+	case reflect.Uint8:
+		return []byte{byte(v.Uint())}, nil
+
+	case reflect.Int16:
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(v.Int()))
+		return buf, nil
+
+	case reflect.Uint16:
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(v.Uint()))
+		return buf, nil
+
+	case reflect.Int32:
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, uint32(v.Int()))
+		return buf, nil
+
+	case reflect.Uint32:
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, uint32(v.Uint()))
+		return buf, nil
+
+	case reflect.Int64, reflect.Int:
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(v.Int()))
+		return buf, nil
+
+	case reflect.Uint64, reflect.Uint:
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, v.Uint())
+		return buf, nil
+
+	case reflect.Float32:
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, math.Float32bits(float32(v.Float())))
+		return buf, nil
+
+	case reflect.Float64:
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, math.Float64bits(v.Float()))
+		return buf, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported kind: %s", v.Kind())
+	}
+}
+
+func GenerateConfigDeltas(schema map[string]*ConfigSchema, cfg *GbClusterConfig, part *Participant) error {
+
+	var paths []string
+	CollectPaths(reflect.ValueOf(cfg), "", &paths)
+
+	now := time.Now().Unix()
+
+	for _, path := range paths {
+
+		if sch, ok := schema[path]; ok {
+
+			val, err := GetByPath(schema, cfg, path)
+			if err != nil {
+				return err
+			}
+
+			result, err := encodeToBytes(val)
+			if err != nil {
+				return err
+			}
+
+			vType, err := convertReflectTypeToDeltaType(sch.Kind)
+			if err != nil {
+				// We return a byte value here still so may want to check it before committing to the error
+				return err
+			}
+
+			delta := &Delta{
+				KeyGroup:  CONFIG_DKG,
+				Key:       path,
+				Version:   now,
+				ValueType: vType,
+				Value:     result,
+			}
+
+			part.keyValues[MakeDeltaKey(delta.KeyGroup, delta.Key)] = delta
+
+		} else {
+			return fmt.Errorf("path - %s - not found in schema", path)
 		}
 
 	}
 
 	return nil
-
 }
 
 //=====================================================================

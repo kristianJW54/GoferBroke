@@ -342,7 +342,7 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 		return fmt.Errorf("client %s already exists in nodeConnStore: %+v", name, c.gbc)
 	}
 
-	//TODO --> use server ID without timestamp to detect whether a node as restarted if so, check addr to verify and then
+	//TODO --> use server ID without timestamp to detect whether a node has restarted if so, check addr to verify and then
 	// gossip digest to bring up to date, allow background node deleter to remove previous store when dead
 	// - ! Need to remove old version of two of the same node !
 
@@ -434,7 +434,6 @@ func (c *gbClient) readLoop() {
 		}
 
 		// Double buffer size if we reach capacity
-		// TODO Look at a more efficient way of dynamically resizing
 
 		if n >= cap(buff) && cap(buff) < MAX_BUFF_SIZE {
 			c.inbound.buffSize = cap(buff) * 2
@@ -535,7 +534,6 @@ func (c *gbClient) flushSignal() {
 func (c *gbClient) flushWriteOutbound() bool {
 
 	if c.flags.isSet(FLUSH_OUTBOUND) {
-		log.Println("flushWriteOutbound: FLUSH_OUTBOUND already set, skipping flush")
 		c.mu.Unlock()
 		runtime.Gosched()
 		c.mu.Lock()
@@ -699,8 +697,6 @@ func (c *gbClient) enqueueProto(data []byte) {
 // Node Response Handling
 //===================================================================================
 
-// TODO Create standard response errors and protocol errors to return on the channel
-
 type responsePayload struct {
 	respID uint16
 	reqID  uint16
@@ -712,20 +708,20 @@ type response struct {
 	ch      chan responsePayload
 	timeout time.Duration
 	err     chan error
+	ctx     context.Context
 }
 
 type responseHandler struct {
 	resp sync.Map
 }
 
-// Maybe resp needs to be an embedded struct of response {type, id, chan}
-
-func (c *gbClient) addResponseChannel(seqID int) *response {
+func (c *gbClient) addResponseChannel(ctx context.Context, seqID int) *response {
 
 	rsp := &response{
 		ch:  make(chan responsePayload, 1),
 		err: make(chan error, 1),
 		id:  seqID,
+		ctx: ctx,
 	}
 
 	c.rh.resp.Store(seqID, rsp) // Store safely in sync.Map
@@ -750,12 +746,12 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 
 // TODO need to make generic wait for response that a caller can use to wait
 
-func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) (responsePayload, error) {
+func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	select {
-	case <-ctx.Done():
+	case <-rsp.ctx.Done():
 		// Context canceled, return immediately
 		//log.Printf("waitForResponse - context canceled for response ID %d", rsp.id)
-		return responsePayload{}, ctx.Err()
+		return responsePayload{}, rsp.ctx.Err()
 	case writeErr := <-c.errChan:
 		return responsePayload{}, fmt.Errorf("write error: %w", writeErr)
 	case readErr := <-c.errChan:
@@ -769,11 +765,11 @@ func (c *gbClient) waitForResponse(ctx context.Context, rsp *response) (response
 	}
 }
 
-func (c *gbClient) waitForResponseAndBlock(ctx context.Context, rsp *response) (responsePayload, error) {
+func (c *gbClient) waitForResponseAndBlock(rsp *response) (responsePayload, error) {
 
 	defer c.responseCleanup(rsp, uint16(rsp.id))
 
-	resp, err := c.waitForResponse(ctx, rsp)
+	resp, err := c.waitForResponse(rsp)
 	if err != nil {
 		return responsePayload{}, err
 	}
@@ -783,14 +779,14 @@ func (c *gbClient) waitForResponseAndBlock(ctx context.Context, rsp *response) (
 }
 
 // Must defer response cleanup in callback
-func (c *gbClient) waitForResponseAsync(ctx context.Context, rsp *response, handleResponse func(responsePayload, error)) {
+func (c *gbClient) waitForResponseAsync(rsp *response, handleResponse func(responsePayload, error)) {
 
 	go func() {
 
 		// TODO May need to do later after callback is handled
 		defer c.responseCleanup(rsp, uint16(rsp.id))
 
-		resp, err := c.waitForResponse(ctx, rsp)
+		resp, err := c.waitForResponse(rsp)
 
 		handleResponse(resp, err)
 
@@ -821,8 +817,8 @@ func (c *gbClient) getResponseChannel(id uint16) (*response, error) {
 
 // Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
-func (c *gbClient) qProtoWithResponse(id uint16, proto []byte, sendNow bool) *response {
-	rsp := c.addResponseChannel(int(id)) // Create a response channel
+func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []byte, sendNow bool) *response {
+	rsp := c.addResponseChannel(ctx, int(id)) // Create a response channel
 
 	c.mu.Lock()
 	c.enqueueProto(proto) // Use the new enqueue method

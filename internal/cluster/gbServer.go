@@ -241,10 +241,8 @@ type GBServer struct {
 	gbClusterConfig *GbClusterConfig
 	gbNodeConfig    *GbNodeConfig
 	seedAddr        []*seedEntry
-
-	configFields  []string
-	configSetters map[string]clusterConfigSetterMapFunc
-	configGetters map[string]clusterConfigGetterMapFunc
+	originalCfgHash string
+	configSchema    map[string]*ConfigSchema
 
 	//Server Info for gossip
 	clusterMap ClusterMap
@@ -286,22 +284,29 @@ type seedEntry struct {
 	resolved *net.TCPAddr
 }
 
-func NewServerFromConfig(nodeConfigPath, clusterConfigPath string) (*GBServer, error) {
+func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServer, error) {
 
 	nodeCfg := InitDefaultNodeConfig()
 	clusterCfg := InitDefaultClusterConfig()
 
-	err := BuildConfigFromFile(nodeConfigPath, nodeCfg)
+	_, err := BuildConfigFromFile(nodeConfigPath, nodeCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	err = BuildConfigFromFile(clusterConfigPath, clusterCfg)
+	sch, err := BuildConfigFromFile(clusterConfigPath, clusterCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewServer(nodeCfg.Name, clusterCfg, nodeCfg, nodeCfg.Host, nodeCfg.Port, nodeCfg.ClientPort, net.ListenConfig{})
+	srv, err := NewServer(nodeCfg.Name, clusterCfg, nodeCfg, nodeCfg.Host, nodeCfg.Port, nodeCfg.ClientPort, net.ListenConfig{})
+	if err != nil {
+		return nil, err
+	}
+
+	srv.configSchema = sch
+
+	return srv, nil
 }
 
 func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
@@ -341,6 +346,10 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	srvName := uuid.String()
 
 	// Config setting
+	cfgHash, err := configChecksum(gbConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build EventDispatcher
 	ed := NewEventDispatcher()
@@ -373,6 +382,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		gbNodeConfig:    gbNodeConfig,
 		seedAddr:        make([]*seedEntry, 0, 2),
 
+		originalCfgHash: cfgHash,
+
 		clientStore: make(map[uint64]*gbClient),
 
 		gossip:          goss,
@@ -385,7 +396,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 
 		startupSync: &sync.WaitGroup{},
 
-		// TODO Create init method and point to it here on server initialisation
 		grTracking: grTracking{
 			index:       0,
 			numRoutines: 0,
@@ -660,6 +670,7 @@ func (s *GBServer) resolveConfigSeedAddr() error {
 			if err != nil {
 				return err
 			}
+			// TODO Do we need this or can we just use config struct
 			s.seedAddr = append(s.seedAddr, &seedEntry{host: value.Host, port: value.Port, resolved: tcpAddr})
 		}
 
@@ -913,6 +924,11 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 	}
 	p.keyValues[MakeDeltaKey(heartbeatDelta.KeyGroup, heartbeatDelta.Key)] = heartbeatDelta
 
+	err := GenerateConfigDeltas(s.configSchema, s.gbClusterConfig, p)
+	if err != nil {
+		return nil, err
+	}
+
 	return p, nil
 
 }
@@ -1017,18 +1033,19 @@ func (s *GBServer) AcceptNodeLoop(name string) error {
 			if err != nil {
 				log.Printf("Error connecting to seed: %v", err)
 
-				// Dispatch event here - we don't need an event here as we can just call Shutdown() but the added context and ability to handle helps
-				s.DispatchEvent(Event{
-					InternalError,
-					time.Now().Unix(),
-					&ErrorEvent{
-						ConnectToSeed,
-						Critical,
-						Errors.ConnectSeedErr,
-						"Accept Node Loop",
-					},
-					"Error in accept node loop when connecting to seed - shutting down - ensure seed server addresses are correct and live",
-				})
+				//// Dispatch event here - we don't need an event here as we can just call Shutdown() but the added context and ability to handle helps
+				//s.DispatchEvent(Event{
+				//	InternalError,
+				//	time.Now().Unix(),
+				//	&ErrorEvent{
+				//		ConnectToSeed,
+				//		Critical,
+				//		Errors.ConnectSeedErr,
+				//		"Accept Node Loop",
+				//	},
+				//	"Error in accept node loop when connecting to seed - shutting down - ensure seed server addresses are correct and live",
+				//})
+				//s.Shutdown() //??
 
 				return
 			}

@@ -82,6 +82,45 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 // Connecting to seed server
 //-------------------------------
 
+//-------------------------------
+// Cluster Config Checksum
+
+func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
+
+	ctx, cancel := context.WithTimeout(s.ServerContext, 1*time.Second)
+	defer cancel()
+
+	reqID, err := s.acquireReqID()
+	if err != nil {
+		return fmt.Errorf("acquire request ID: %v", err)
+	}
+
+	cs, err := configChecksum(s.gbClusterConfig)
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+
+	buff := make([]byte, len(cs)+2)
+	copy(buff, cs)
+	copy(buff[len(cs):], CLRF)
+
+	pay, err := prepareRequest(buff, 1, CFG_CHECK, reqID, 0)
+	if err != nil {
+		return fmt.Errorf("prepare request: %v", err)
+	}
+
+	resp := client.qProtoWithResponse(ctx, reqID, pay, true)
+
+	r, err := client.waitForResponseAndBlock(resp)
+	if err != nil {
+		return fmt.Errorf("error in response from config checksum - %v", err)
+	}
+
+	log.Printf("config response = %s", string(r.msg))
+	return nil
+
+}
+
 // connectToSeed is called by the server in a go-routine. It blocks on response to wait for the seed server to respond with a signal
 // that it has completed INFO exchange. If an error occurs through context, or response error from seed server, then connectToSeed
 // will return that error and trigger logic to either retry or exit the process
@@ -96,7 +135,7 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	if conn == nil {
-		log.Printf("seed not reachable will try again...")
+		log.Printf("seed not reachable -- should be checking error types here to determine next steps...[TODO]")
 		// TODO Maybe return a specific error which we can match on and then do a retry
 		return nil
 	}
@@ -105,25 +144,38 @@ func (s *GBServer) connectToSeed() error {
 	// If we are a seed, we must hash our config - send and compare received hash - if different then we fail early or defer to older seed
 	// If we are not a seed, we must send our information and be ready to receive a cluster config
 
+	//----------------
+	// Config check to fail early
+
+	client := s.createNodeClient(conn, "tmpClient", true, NODE)
+
+	// Assume response ok if no error
+	log.Printf("checking cluster config...")
+	err = s.sendClusterCgfChecksum(client)
+	if err != nil {
+		return err
+	}
+
+	//-----------------
+	// Send self info to onboard
+
 	reqID, err := s.acquireReqID()
 	if err != nil {
 		return fmt.Errorf("connect to seed - acquire request ID: %s", err)
 	}
 
-	// TODO Will need to change this
 	pay1, err := s.prepareSelfInfoSend(NEW_JOIN, int(reqID), 0)
 	if err != nil {
 		return err
 	}
 
-	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
+	resp := client.qProtoWithResponse(ctx, reqID, pay1, false)
 
-	resp := client.qProtoWithResponse(reqID, pay1, true)
-
-	r, err := client.waitForResponseAndBlock(ctx, resp)
+	r, err := client.waitForResponseAndBlock(resp)
 	if err != nil {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
-		return err
+		// TODO Also check the r.err channel
+		return fmt.Errorf("error waiting for self info response - %v", err)
 	}
 
 	// If we receive no error we can assume the response was received and continue
@@ -229,9 +281,9 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
 
-	resp := client.qProtoWithResponse(reqID, pay1, true)
+	resp := client.qProtoWithResponse(ctx, reqID, pay1, true)
 
-	r, err := client.waitForResponseAndBlock(ctx, resp)
+	r, err := client.waitForResponseAndBlock(resp)
 	if err != nil {
 		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
 		return fmt.Errorf("connectToNodeInMap - wait for response: %s", err)
@@ -442,9 +494,9 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 	ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 	//defer cancel()
 
-	resp := c.qProtoWithResponse(respID, self, false)
+	resp := c.qProtoWithResponse(ctx, respID, self, false)
 
-	c.waitForResponseAsync(ctx, resp, func(bytes responsePayload, err error) {
+	c.waitForResponseAsync(resp, func(bytes responsePayload, err error) {
 
 		defer cancel()
 		if err != nil {
@@ -500,6 +552,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processGossSynAck(message)
 	case GOSS_ACK:
 		c.processGossAck(message)
+	case CFG_CHECK:
+		c.processCfgCheck(message)
 	case OK:
 		c.processOK(message)
 	case OK_RESP:
@@ -524,7 +578,8 @@ func (c *gbClient) processErr(message []byte) {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		log.Printf("response channel closed or context expired for reqID %d", reqID)
 		return
 	}
 
@@ -552,7 +607,8 @@ func (c *gbClient) processErrResp(message []byte) {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		log.Printf("response channel closed or context expired for reqID %d", respID)
 		return
 	}
 
@@ -568,6 +624,50 @@ func (c *gbClient) processErrResp(message []byte) {
 		log.Printf("Warning: response channel full for respID %d", respID)
 	}
 
+}
+
+func (c *gbClient) processCfgCheck(message []byte) {
+
+	// Copy IDs early to avoid race or mutation
+	reqID := c.ph.reqID
+
+	// Message should be 64 bytes long for a checksum + 2 for CLRF
+
+	if len(message) != 66 {
+		c.sendErr(reqID, 0, "invalid configuration check message length\r\n") // TODO Change to GBError
+	}
+
+	// We need to compare against our config checksums
+	// TODO Continue::
+
+	c.srv.serverLock.Lock()
+	srv := c.srv
+	cfg := srv.gbClusterConfig
+	c.srv.serverLock.Unlock()
+
+	checksum := string(message[:64])
+
+	// First check against our current hash
+	cs, err := configChecksum(cfg)
+	if err != nil {
+		// TODO We will want an error event here as this is an internal system error
+		return
+	}
+
+	if checksum != cs {
+
+		// If checksum received is different then we must check if our cs is different from our original config checksum on server start
+		if cs != srv.originalCfgHash {
+			// Now we do a final check against the original hash - if it is different then we send an error which should result in the receiver node shutting down
+			c.sendErr(reqID, 0, "mismatch between message and checksum and receiver checksum\r\n")
+		} else {
+			// Here gossip may have changed the cluster config, so we should send our complete cluster config over the network to the receiver
+
+		}
+
+	} else {
+		c.sendOK(reqID)
+	}
 }
 
 func (c *gbClient) processNewJoinMessage(message []byte) {
@@ -632,8 +732,6 @@ func (c *gbClient) processSelfInfo(message []byte) {
 	}
 
 }
-
-// TODO We are blocking on server-2 here and not processing the response for some reason
 
 func (c *gbClient) processDiscoveryReq(message []byte) {
 
@@ -781,7 +879,8 @@ func (c *gbClient) processOK(message []byte) {
 		log.Printf("getResponseChannel failed: %v", err)
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		log.Printf("response channel closed or context expired for reqID %d", reqID)
 		return
 	}
 

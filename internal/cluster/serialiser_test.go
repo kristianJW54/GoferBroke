@@ -1,12 +1,36 @@
 package cluster
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"testing"
 )
+
+func TestSerialiseCfgChecksums(t *testing.T) {
+
+	check1 := "1e5cfe0daac33c7036b97667f6b186b7e8996fdd809f04748f67b59973346509"
+	check2 := "ab8ebae7ee0782ca5a2e90fb81ff51fe061c4019933d232f3540e1ec595a1623"
+
+	list := make([]string, 2)
+	list[0] = check1
+	list[1] = check2
+
+	cereal, err := serialiseCfgCheckSumRequest(list)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	deCereal, err := deserialiseCfgChecksumResponse(cereal)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if deCereal[0] != check1 && deCereal[1] != check2 {
+		t.Fatalf("Expected checksums to match")
+	}
+
+}
 
 func TestDiscoveryRequestSerialiser(t *testing.T) {
 	tests := []struct {
@@ -306,11 +330,11 @@ func TestSerialiseDigest(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
 	keyValues := map[string]*Delta{
-		"key6":  {ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  {ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-		"key8":  {ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  {ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
-		"key10": {ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
+		"key6":  {ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {ValueType: D_STRING_TYPE, Version: 1640995205, Value: []byte("A")},
+		"key8":  {ValueType: D_STRING_TYPE, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {ValueType: D_STRING_TYPE, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"key10": {ValueType: D_STRING_TYPE, Version: 1640995208, Value: []byte("Another simple string.")},
 	}
 
 	// Mock server setup
@@ -370,11 +394,11 @@ func TestSerialiseDigest(t *testing.T) {
 func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 
 	keyValues := map[string]*Delta{
-		"key6":  {ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  {ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-		"key8":  {ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  {ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
-		"key10": {ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
+		"key6":  {ValueType: D_STRING_TYPE, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"key7":  {ValueType: D_STRING_TYPE, Version: 1640995205, Value: []byte("A")},
+		"key8":  {ValueType: D_STRING_TYPE, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"key9":  {ValueType: D_STRING_TYPE, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"key10": {ValueType: D_STRING_TYPE, Version: 1640995208, Value: []byte("Another simple string.")},
 	}
 
 	// Mock server setup
@@ -451,35 +475,6 @@ func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 		log.Printf("%v:%v", value.nodeName, value.maxVersion)
 	}
 
-}
-
-func BenchmarkJSONSerialization(b *testing.B) {
-	keyValues := map[string]*Delta{
-		"key1":  &Delta{ValueType: INTERNAL_D, Version: 1640995200, Value: []byte("hello world")},
-		"key2":  &Delta{ValueType: INTERNAL_D, Version: 1640995200, Value: []byte("I've known adventures, seen places you people will never see, I've been Offworld and back... frontiers!")},
-		"key3":  &Delta{ValueType: INTERNAL_D, Version: 1640995201, Value: []byte("short")},
-		"key4":  &Delta{ValueType: INTERNAL_D, Version: 1640995202, Value: []byte("This is a slightly longer string to test serialization.")},
-		"key5":  &Delta{ValueType: INTERNAL_D, Version: 1640995203, Value: []byte("1234567890")},
-		"key6":  &Delta{ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"key7":  &Delta{ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-		"key8":  &Delta{ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"key9":  &Delta{ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
-		"key10": &Delta{ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
-		"key11": &Delta{ValueType: INTERNAL_D, Version: 1640995209, Value: []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
-		"key12": &Delta{ValueType: INTERNAL_D, Version: 1640995210, Value: []byte("abcdefghijklmnopqrstuvwxyz")},
-		"key13": &Delta{ValueType: INTERNAL_D, Version: 1640995211, Value: []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")},
-		"key14": &Delta{ValueType: INTERNAL_D, Version: 1640995212, Value: []byte("Yet another string, this one a bit longer than the previous.")},
-		"key15": &Delta{ValueType: INTERNAL_D, Version: 1640995213, Value: []byte("Small string.")},
-		"key16": &Delta{ValueType: INTERNAL_D, Version: 1640995214, Value: []byte("A moderately sized string for testing.")},
-		"key17": &Delta{ValueType: INTERNAL_D, Version: 1640995215, Value: []byte("Let's see how this performs with multiple keys and varying sizes.")},
-		"key18": &Delta{ValueType: INTERNAL_D, Version: 1640995216, Value: []byte("This is one of the longest strings in this set, specifically designed to test the serialization performance and buffer handling.")},
-		"key19": &Delta{ValueType: INTERNAL_D, Version: 1640995217, Value: []byte("Medium length string for benchmarking purposes.")},
-		"key20": &Delta{ValueType: INTERNAL_D, Version: 1640995218, Value: []byte("Final key-value pair.")},
-	}
-
-	for i := 0; i < b.N; i++ {
-		_, _ = json.Marshal(keyValues)
-	}
 }
 
 func TestGSASerialisation(t *testing.T) {

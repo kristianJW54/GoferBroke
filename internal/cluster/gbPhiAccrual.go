@@ -400,8 +400,8 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 				threshold = 10 // TODO make config - warmUp Threshold -- Maybe want this high because this is warming up and may have skewed numbers
 			}
 
-			log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s | th = %d",
-				s.ServerName, phi, delta, s.ServerName, participant.name, threshold)
+			//log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s | th = %d",
+			//	s.ServerName, phi, delta, s.ServerName, participant.name, threshold)
 
 			if phi > float64(threshold) {
 				participant.paDetection.dead = true

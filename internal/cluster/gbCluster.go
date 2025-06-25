@@ -704,9 +704,9 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		return nil, fmt.Errorf("%w, %w", Errors.DiscoveryReqErr, err)
 	}
 
-	resp := conn.qProtoWithResponse(reqId, pay, false)
+	resp := conn.qProtoWithResponse(ctx, reqId, pay, false)
 
-	r, err := conn.waitForResponseAndBlock(ctx, resp)
+	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
 		return nil, Errors.WrapGBError(Errors.DiscoveryReqErr, err)
 	}
@@ -905,9 +905,9 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 	}
 
 	// Send the digest and wait for a response
-	resp := conn.qProtoWithResponse(reqID, cereal, false)
+	resp := conn.qProtoWithResponse(ctx, reqID, cereal, false)
 
-	r, err := conn.waitForResponseAndBlock(ctx, resp)
+	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
 		return responsePayload{}, err
 	}
@@ -1035,6 +1035,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			size := DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(delta.Value)
 
 			if size+sizeOfDelta > remaining {
+				log.Printf("BROKE SIZE -- %d", size+sizeOfDelta)
 				break
 			}
 
@@ -1043,6 +1044,8 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			deltaList = append(deltaList, delta)
 
 		}
+
+		log.Printf("SIZE OF DELTA ------------> -- %d - remaining = %d", sizeOfDelta, remaining)
 
 		if len(deltaList) > 0 {
 			selectedDeltas[participant.name] = deltaList
@@ -1131,9 +1134,9 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 5*time.Second)
 
-	resp := c.qProtoWithResponse(respID, pay, false)
+	resp := c.qProtoWithResponse(ctx, respID, pay, false)
 
-	c.waitForResponseAsync(ctx, resp, func(delta responsePayload, err error) {
+	c.waitForResponseAsync(resp, func(delta responsePayload, err error) {
 
 		defer cancel()
 		if err != nil {
@@ -1213,6 +1216,36 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 //========================================================================================
 // GOSSIP
 //========================================================================================
+
+//-----------------
+// Random node selector
+
+func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, excludeID string) ([]int, error) {
+	partLenArray := len(partArray)
+	if partLenArray <= 0 || numOfNodeSelection <= 0 {
+		return nil, fmt.Errorf("invalid participant array or selection count")
+	}
+
+	// Build list of candidate indexes, excluding self
+	candidates := make([]int, 0, partLenArray-1)
+	for i, id := range partArray {
+		if id != excludeID {
+			candidates = append(candidates, i)
+		}
+	}
+
+	if numOfNodeSelection > len(candidates) {
+		return nil, fmt.Errorf("not enough participants to select %d (excluding self)", numOfNodeSelection)
+	}
+
+	// Partial Fisher-Yates shuffle to pick numOfNodeSelection indexes
+	for i := 0; i < numOfNodeSelection; i++ {
+		j := i + rand.Intn(len(candidates)-i)
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	}
+
+	return candidates[:numOfNodeSelection], nil
+}
 
 //=======================================================
 // Gossip Signalling + Process
@@ -1480,14 +1513,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	defer s.endGossip() // Ensure gossip state is reset when the process ends
 	defer s.clearGossipingWithMap()
 
-	ns := s.gossip.nodeSelection // TODO Switch this to node config
-	pl := len(s.clusterMap.participantArray) - 1
-
-	if int(ns) > pl {
-		log.Printf("OH NOOOOOOOO")
-		return
-	}
-
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	if s.discoveryPhase {
 		//	// TODO Need a better load seed mechanism
@@ -1522,20 +1547,34 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		return
 	}
 
-	// Channel to signal when individual gossip tasks complete
-	done := make(chan struct{}, pl)
 	// Channels aren't like files; you don't usually need to close them.
 	// Closing is only necessary when the receiver must be told there are no more values coming, such as to terminate a range loop.
 	// https://go.dev/tour/concurrency/4#:~:text=Note%3A%20Only%20the%20sender%20should,to%20terminate%20a%20range%20loop.
 
 	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
 
-	for i := 0; i < int(ns); i++ {
+	ns := 2 // TODO Switch this to node config
+	pl := len(s.clusterMap.participantArray) - 1
+
+	// Channel to signal when individual gossip tasks complete
+	done := make(chan struct{}, pl)
+
+	if int(ns) > pl {
+		ns = 1 // Fallback for now, we can scale once we have enough participants to do multiple node gossip
+	}
+
+	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, ns, s.ServerName)
+	if err != nil {
+		log.Printf("Error generating random participant indexes: %v", err)
+		// TODO Need to add error event as its internal system error
+		return
+	}
+
+	for i, index := range indexes {
 
 		s.clusterMapLock.RLock()
 
-		num := rand.Intn(pl) + 1
-		selectedNode := s.clusterMap.participantArray[num]
+		selectedNode := s.clusterMap.participantArray[index]
 		if s.clusterMap.participants[selectedNode].paDetection.dead {
 			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.PrettyName(), selectedNode)
 
@@ -1552,6 +1591,9 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 		// TODO We need to collect the errors and make a decision on what to do with them based on the error itself
 		s.startGoRoutine(s.PrettyName(), fmt.Sprintf("gossip-round-%v", i), func() {
+			// Do we need a sub context here?
+			subCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+			defer cancel()
 			defer func() {
 				done <- struct{}{}
 
@@ -1564,8 +1606,8 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 				})
 
 			}()
-
-			s.gossipWithNode(ctx, selectedNode)
+			log.Printf("%s - about to gossip with %s round %v", s.PrettyName(), selectedNode, i)
+			s.gossipWithNode(subCtx, selectedNode)
 		})
 
 	}
@@ -1578,7 +1620,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 			return
 		case <-done:
 			//log.Printf("%s - Node gossip task completed", s.ServerName)
-			return
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"testing"
 )
 
@@ -14,6 +15,61 @@ func printConfig(cfg interface{}) {
 		return
 	}
 	fmt.Println(string(out))
+}
+
+func TestKeyPathFlatten(t *testing.T) {
+
+	filePath := "../../Configs/cluster/default_cluster_config.conf"
+	cfg := InitDefaultClusterConfig()
+
+	sch, err := BuildConfigFromFile(filePath, cfg)
+	if err != nil {
+		t.Errorf("Error building complex config file: %v", err)
+	}
+
+	printConfig(cfg)
+
+	var paths []string
+	CollectPaths(reflect.ValueOf(cfg), "", &paths)
+
+	for _, path := range paths {
+		fmt.Println(path)
+	}
+
+	result, err := GetByPath(sch, cfg, paths[1])
+	if err != nil {
+		t.Errorf("Error getting by path: %v", err)
+	}
+
+	log.Println(result)
+
+}
+
+func TestGenerateConfigDeltas(t *testing.T) {
+
+	filePath := "../../Configs/cluster/default_cluster_config.conf"
+	cfg := InitDefaultClusterConfig()
+
+	sch, err := BuildConfigFromFile(filePath, cfg)
+	if err != nil {
+		t.Errorf("Error building complex config file: %v", err)
+	}
+
+	printConfig(cfg)
+
+	part := &Participant{
+		keyValues: make(map[string]*Delta, 4),
+	}
+
+	err = GenerateConfigDeltas(sch, cfg, part)
+	if err != nil {
+		t.Errorf("Error generating deltas: %v", err)
+	}
+
+	for k, v := range part.keyValues {
+		log.Printf("Key: %s, Value: %v", k, v.Value)
+	}
+
 }
 
 func TestSliceConfigSchema(t *testing.T) {
@@ -253,7 +309,7 @@ func TestBuildComplexConfig(t *testing.T) {
 		},
 	}
 
-	err := BuildConfigFromFile(filePath, cfg)
+	_, err := BuildConfigFromFile(filePath, cfg)
 	if err != nil {
 		t.Errorf("Error building complex config file: %v", err)
 	}
@@ -268,11 +324,42 @@ func TestNodeConfigFile(t *testing.T) {
 
 	nodeCfg := InitDefaultNodeConfig()
 
-	err := BuildConfigFromFile(filePath, nodeCfg)
+	_, err := BuildConfigFromFile(filePath, nodeCfg)
 	if err != nil {
 		t.Errorf("Error building complex config file: %v", err)
 	}
 
 	printConfig(nodeCfg)
+
+}
+
+func TestConfigCheckSum(t *testing.T) {
+
+	filePath := "../../Configs/node/basic_seed_config.conf"
+
+	nodeCfg := InitDefaultNodeConfig()
+	nodeCfg2 := InitDefaultNodeConfig()
+
+	_, err := BuildConfigFromFile(filePath, nodeCfg)
+	if err != nil {
+		t.Errorf("Error building complex config file: %v", err)
+	}
+
+	cs, err := configChecksum(nodeCfg)
+	if err != nil {
+		t.Errorf("Error getting config checksum: %v", err)
+	}
+
+	cs2, err := configChecksum(nodeCfg2)
+	if err != nil {
+		t.Errorf("Error getting config checksum: %v", err)
+	}
+
+	if cs == cs2 {
+		t.Errorf("Config checksums should be different")
+	}
+
+	log.Printf("cs --> %s", cs)
+	log.Printf("cs2 --> %s", cs2)
 
 }

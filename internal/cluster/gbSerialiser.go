@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
+	"log"
 	"time"
 )
 
@@ -45,12 +46,15 @@ const (
 	DRES // Discovery Response - list of participants with mapped addresses
 )
 
+// TODO Remove these and use actual value type const we made --> D__XXX_TYPE
 const (
 	CONFIG_D = iota
 	STATE_D
 	INTERNAL_D
 	CLIENT_D
 )
+
+type cfgCheckSumResponseArray []string
 
 // Discovery for initial connection phase of a node
 type discoveryValues struct {
@@ -85,7 +89,83 @@ type clusterDelta struct {
 }
 
 //=========================================================
-// Serialise based on digest received and populate queues
+// Deserialise Config Checksum
+//=========================================================
+
+func serialiseCfgCheckSumRequest(checks []string) ([]byte, error) {
+
+	// Payload length - uint16
+	// List element size - uint8
+	// Payload
+
+	switch l := len(checks); l {
+	case 1:
+		log.Printf("DID THIS")
+		length := uint16(2 + 1 + len(checks[0]))
+		offset := 0
+		buff := make([]byte, length)
+		binary.BigEndian.PutUint16(buff, length)
+		offset += 2
+		buff[offset] = byte(l)
+		offset++
+		copy(buff[offset:], checks[0])
+		return buff, nil
+	case 2:
+		length := uint16(2 + 1 + len(checks[0]) + len(checks[1]))
+		offset := 0
+		buff := make([]byte, length)
+		binary.BigEndian.PutUint16(buff, length)
+		offset += 2
+		buff[offset] = byte(l)
+		offset++
+		copy(buff[offset:], checks[0])
+		offset += len(checks[0])
+		copy(buff[offset:], checks[1])
+		return buff, nil
+	default:
+		return nil, fmt.Errorf("checks must not exceed length two")
+	}
+
+}
+
+func deserialiseCfgChecksumResponse(data []byte) ([]string, error) {
+
+	// Length of Payload
+	// Size if checks list
+
+	length := binary.BigEndian.Uint16(data[0:2])
+	size := data[2]
+
+	used := uint16(3)
+
+	switch size {
+	case uint8(1):
+		list := make([]string, 1)
+		list[0] = string(data[used : used+64])
+		used += uint16(len(list[0]))
+		if length != used {
+			return nil, fmt.Errorf("mismatch in length of data and what was used in the buffer - %v - %v", length, used)
+		}
+		return list, nil
+	case uint8(2):
+		list := make([]string, 2)
+		list[0] = string(data[used : used+64])
+		offset := used + 64
+		used += uint16(len(list[0]))
+		list[1] = string(data[offset : offset+64])
+		used += uint16(len(list[1]))
+		if length != used {
+			return nil, fmt.Errorf("mismtach in length of data and what was used in the buffer - %v - %v", length, used)
+		}
+		return list, nil
+	default:
+		return nil, fmt.Errorf("checksum response size must be < 2")
+	}
+
+}
+
+//=========================================================
+// Serialise Self Info for new joiners to the cluster
 //=========================================================
 
 func (s *GBServer) serialiseSelfInfo(participant *Participant) ([]byte, error) {
