@@ -12,130 +12,200 @@ import (
 	"time"
 )
 
-// Test discovery by test config and turning off gossip
+func makeTestDeltas(t *testing.T, numberOfDeltas int, versionBaseline int64, numberOfOutdated int, overLoadBaseline, numberOfOverloaded int) map[string]*Delta {
 
-func TestParticipantHeap(t *testing.T) {
+	t.Helper()
 
-	gbs := GenerateDefaultTestServer("main-server", keyValues1, 5)
+	d := make(map[string]*Delta, numberOfDeltas)
+	keyGroup := "TEST"
+	key := "key"
 
-	participant := gbs.clusterMap.participants[gbs.name]
+	outdatedLeft := numberOfOutdated
+	overloadedLeft := numberOfOverloaded
 
-	ph := make(participantHeap, 0, 5)
+	for i := 0; i < numberOfDeltas; i++ {
 
-	heap.Push(&ph, &participantQueue{
-		name:            gbs.name,
-		availableDeltas: 0,
-		maxVersion:      participant.maxVersion,
-	})
-
-	for i := 1; i <= 4; i++ {
-
-		partName := fmt.Sprintf("node%d", i)
-
-		p := &Participant{
-			name:       partName,
-			keyValues:  participant.keyValues,
-			maxVersion: participant.maxVersion,
+		var version int64
+		if outdatedLeft > 0 {
+			version = (versionBaseline - int64(numberOfDeltas)) - 1
+			outdatedLeft--
+		} else {
+			version = versionBaseline - int64(i) // ascending unique versions
 		}
 
-		mv := participant.maxVersion
+		var buff []byte
+		if overloadedLeft > 0 {
+			buff = make([]byte, overLoadBaseline+10) // deliberately over sized
+			overloadedLeft--
+		} else {
+			buff = []byte{} // empty
+		}
 
-		gbs.clusterMap.participants[partName] = p
+		currKey := fmt.Sprintf("%s%d", key, i)
 
-		heap.Push(&ph, &participantQueue{
-			name:            partName,
-			availableDeltas: 0,
-			maxVersion:      mv,
-		})
+		d[MakeDeltaKey(keyGroup, currKey)] = &Delta{
+			KeyGroup:  keyGroup,
+			Key:       currKey,
+			Version:   version,
+			ValueType: D_BYTE_TYPE,
+			Value:     buff,
+		}
 
 	}
 
-	heap.Init(&ph)
+	return d
 
-	assertion := participant.maxVersion
+}
 
-	versionCheck := heap.Pop(&ph).(*participantQueue).maxVersion
+// Test discovery by test config and turning off gossip
 
-	log.Printf("Version check: %v --> assertion: %v", versionCheck, assertion)
+func TestParticipantHeapDepthFirst(t *testing.T) {
 
-	if versionCheck != assertion {
-		t.Errorf("Version check failed. Expected %d, got %d", assertion, versionCheck)
+	heapM1 := makeTestDeltas(t, 4, 1640995213, 0, 0, 0)
+	heapM2 := makeTestDeltas(t, 15, 1640995213, 0, 0, 0)
+
+	// Generate test server
+
+	gbs := &GBServer{
+		ServerName: "test-server-1",
+		clusterMap: ClusterMap{
+			participants:     make(map[string]*Participant, 3),
+			participantArray: make([]string, 3),
+		},
+	}
+
+	gbs.clusterMap.participants[gbs.ServerName] = &Participant{
+		name:       gbs.ServerName,
+		keyValues:  heapM2,
+		maxVersion: 1640995213,
+	}
+	gbs.clusterMap.participantArray[0] = gbs.ServerName
+
+	// Now need to create a fake second node
+
+	gbs.clusterMap.participants["second-node"] = &Participant{
+		name:       "second-node",
+		keyValues:  heapM1,
+		maxVersion: 1640995213,
+	}
+	gbs.clusterMap.participantArray[1] = "second-node"
+
+	// Now need to create a fake third node
+
+	gbs.clusterMap.participants["third-node"] = &Participant{
+		name:       "third-node",
+		keyValues:  heapM2,
+		maxVersion: 1640995213,
+	}
+	gbs.clusterMap.participantArray[2] = "third-node"
+
+	// Generate a fake digest received from second node
+
+	d := &fullDigest{
+
+		"second-node": &digest{
+			"second-node",
+			0,
+		},
+		"third-node": &digest{
+			"third-node",
+			1640995208,
+		},
+		gbs.name: &digest{
+			gbs.ServerName,
+			0,
+		},
+	}
+
+	// Main node receives a digest with 3 nodes including itself - ALL are outdated. Meaning it will have to prioritise
+	// Participants with the most available deltas it has in its map in this case -> third-node
+
+	ph, err := gbs.generateParticipantHeap(gbs.ServerName, d)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println(ph[0].name)
+
+	if ph[0].name != "third-node" {
+		t.Fatalf("participant heap should have prioritised third-node - got %s instead", ph[0].name)
 	}
 
 }
 
-func TestBuildDelta(t *testing.T) {
+func TestBuildDeltaOutdatedOnly(t *testing.T) {
 
-	// Gen 3 test servers
-	// Main has newest deltas
-	// Other two have old
-	// Gen participant heap
-	// Build delta
+	// We are testing that only outdated deltas are including in the build delta list
 
-	var keyValues1 = map[string]*Delta{
-		"TEST:key6": {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"TEST:key7": {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-		"TEST:key8": {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"TEST:key9": {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
-		//"TEST:key10": {keyGroup: "TEST", key: "key10", valueType: INTERNAL_D, version: 1640995208, value: []byte("Another simple string.")},
-		//"TEST:key11": {keyGroup: "TEST", key: "key11", valueType: INTERNAL_D, version: 1640995209, value: []byte("This is test entry number eleven.")},
-		//"TEST:key12": {keyGroup: "TEST", key: "key12", valueType: INTERNAL_D, version: 1640995210, value: []byte("Entry twelve includes a longer message to check proper handling.")},
-		//"TEST:key13": {keyGroup: "TEST", key: "key13", valueType: INTERNAL_D, version: 1640995211, value: []byte("Testing entry for key 13, which is designed to be unique.")},
-		//"TEST:key14": {keyGroup: "TEST", key: "key14", valueType: INTERNAL_D, version: 1640995212, value: []byte("Another example message for the fourteenth key.")},
-		//"TEST:key15": {keyGroup: "TEST", key: "key15", valueType: INTERNAL_D, version: 1640995213, value: []byte("The fifteenth key's entry demonstrates variety in test data.")},
-		//"TEST:key16": {keyGroup: "TEST", key: "key16", valueType: INTERNAL_D, version: 1640995214, value: []byte("Testing with key16. Another sample text here.")},
-		//"TEST:key17": {keyGroup: "TEST", key: "key17", valueType: INTERNAL_D, version: 1640995215, value: []byte("Key 17: A different message string to showcase the test entry.")},
-		//"TEST:key18": {keyGroup: "TEST", key: "key18", valueType: INTERNAL_D, version: 1640995216, value: []byte("Eighteenth key value: a blend of letters and numbers: 1234567890.")},
-		//"TEST:key19": {keyGroup: "TEST", key: "key19", valueType: INTERNAL_D, version: 1640995217, value: []byte("Entry number 19 uses special characters: !@#$%^&*()")},
-		//"TEST:key20": {keyGroup: "TEST", key: "key20", valueType: INTERNAL_D, version: 1640995218, value: []byte("The final test key entry, providing closure for our sample.")},
+	version := int64(1640995213)
+	nod := 4
+
+	normalKV := makeTestDeltas(t, nod, version, 0, 0, 0)
+
+	gbs := &GBServer{
+		ServerName: "test-server-1",
+		clusterMap: ClusterMap{
+			participants:     make(map[string]*Participant, 2),
+			participantArray: make([]string, 2),
+		},
+		gbClusterConfig: &GbClusterConfig{
+			Name: "test-cluster",
+			Cluster: &ClusterOptions{
+				MaxDeltaSize: 256,
+			},
+		},
 	}
 
-	var keyValues1Outdated = map[string]*Delta{
-		"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995203, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995204, Value: []byte("A")},
-		"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("😃 Emoji support test.")},
-		"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("Another simple string.")},
-		"TEST:key11": {KeyGroup: "TEST", Key: "key11", ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("This is test entry number eleven.")},
-		"TEST:key12": {KeyGroup: "TEST", Key: "key12", ValueType: INTERNAL_D, Version: 1640995209, Value: []byte("Entry twelve includes a longer message to check proper handling.")},
-		"TEST:key13": {KeyGroup: "TEST", Key: "key13", ValueType: INTERNAL_D, Version: 1640995210, Value: []byte("Testing entry for key 13, which is designed to be unique.")},
-		"TEST:key14": {KeyGroup: "TEST", Key: "key14", ValueType: INTERNAL_D, Version: 1640995211, Value: []byte("Another example message for the fourteenth key.")},
-		"TEST:key15": {KeyGroup: "TEST", Key: "key15", ValueType: INTERNAL_D, Version: 1640995212, Value: []byte("The fifteenth key's entry demonstrates variety in test data.")},
-		"TEST:key16": {KeyGroup: "TEST", Key: "key16", ValueType: INTERNAL_D, Version: 1640995213, Value: []byte("Testing with key16. Another sample text here.")},
-		"TEST:key17": {KeyGroup: "TEST", Key: "key17", ValueType: INTERNAL_D, Version: 1640995214, Value: []byte("Key 17: A different message string to showcase the test entry.")},
-		"TEST:key18": {KeyGroup: "TEST", Key: "key18", ValueType: INTERNAL_D, Version: 1640995215, Value: []byte("Eighteenth key value: a blend of letters and numbers: 1234567890.")},
-		"TEST:key19": {KeyGroup: "TEST", Key: "key19", ValueType: INTERNAL_D, Version: 1640995216, Value: []byte("Entry number 19 uses special characters: !@#$%^&*()")},
-		"TEST:key20": {KeyGroup: "TEST", Key: "key20", ValueType: INTERNAL_D, Version: 1640995217, Value: []byte("The final test key entry, providing closure for our sample.")},
+	gbs.clusterMap.participants[gbs.ServerName] = &Participant{
+		name:       gbs.ServerName,
+		keyValues:  normalKV,
+		maxVersion: version,
+	}
+	gbs.clusterMap.participantArray[0] = gbs.ServerName
+
+	// Now make fake second node
+
+	gbs.clusterMap.participants["second-node"] = &Participant{
+		name:       "second-node",
+		keyValues:  normalKV,
+		maxVersion: version,
+	}
+	gbs.clusterMap.participantArray[1] = "second-node"
+
+	// Main node will have 3 newer deltas than the other node
+	// Both will have 5 deltas
+	// Delta list should only have 3 deltas
+
+	// We build a fake digest to say that the second node has an outdated map of the main node
+
+	d := &fullDigest{
+
+		"second-node": &digest{
+			"second-node",
+			version,
+		},
+		gbs.ServerName: &digest{
+			gbs.ServerName,
+			version - 2,
+		},
 	}
 
-	gbs := GenerateDefaultTestServer("server-1", keyValues1, 10)
-	gbs2 := GenerateDefaultTestServer("server-2", keyValues1Outdated, 2)
-
-	d, size, err := gbs2.generateDigest()
+	ph, err := gbs.generateParticipantHeap("second-node", d)
 	if err != nil {
-		t.Errorf("Error generating digest: %v", err)
+		log.Fatal(err)
 	}
 
-	remaining := int(DEFAULT_MAX_GSA) - size
+	log.Printf("ph = %s - max version %v - peerMaxVersion %v", ph[0].name, ph[0].maxVersion, ph[0].peerMaxVersion)
 
-	_, fd, err := deSerialiseDigest(d)
+	dl, _, err := gbs.buildDelta(&ph, 1000)
 	if err != nil {
-		t.Errorf("Error de-serialising digest: %v", err)
+		log.Fatal(err)
 	}
 
-	ph, err := gbs.generateParticipantHeap(gbs2.ServerName, fd)
+	log.Printf("length of dl - %v", len(dl[gbs.ServerName]))
 
-	delta, size, err := gbs.buildDelta(&ph, remaining)
-	if err != nil {
-		t.Errorf("Error building delta: %v", err)
-	}
-
-	if size > int(DEFAULT_MAX_GSA) {
-		t.Errorf("size is greater than max delta size - got %v, expected to be less then --> %v", size, DEFAULT_MAX_GSA)
-	}
-
-	if len(delta) == 0 {
-		t.Errorf("expected delta to have length greater than 0 - got %v", len(delta))
+	if len(dl[gbs.ServerName]) != 2 {
+		t.Errorf("expected to get deltas list of 2 but got %v", len(dl[gbs.ServerName]))
 	}
 
 }

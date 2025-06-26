@@ -234,6 +234,7 @@ type participantQueue struct {
 	name            string
 	availableDeltas int
 	maxVersion      int64
+	peerMaxVersion  int64
 }
 
 type participantHeap []*participantQueue
@@ -249,7 +250,10 @@ func (ph participantHeap) Len() int {
 
 //goland:noinspection GoMixedReceiverTypes
 func (ph participantHeap) Less(i, j int) bool {
-	return ph[i].maxVersion > ph[j].maxVersion
+	if ph[i].availableDeltas == ph[j].availableDeltas {
+		return ph[i].maxVersion > ph[j].maxVersion
+	}
+	return ph[i].availableDeltas > ph[j].availableDeltas
 }
 
 //goland:noinspection GoMixedReceiverTypes
@@ -934,34 +938,35 @@ func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (p
 	partQueue := make(participantHeap, 0, len(cm.participants))
 
 	for name, participant := range cm.participants {
-
 		available := 0
+		var peerMaxVersion int64 = 0 // default if not found
 
-		// First check if we have a higher max version than the digest received + if we have a participant they do not
-		if peerDigest, exists := (*digest)[name]; exists {
-
-			if peerDigest.nodeName == sender {
-				continue
-			}
-
-			// If the participant is included in the digest then we to check the versions
-			// We must compare int here and not int64 as I found out after hours of headaches
-			if int(participant.maxVersion) > int(peerDigest.maxVersion) {
-				available += len(participant.keyValues)
-			}
-		} else if name != sender {
-			available += len(participant.keyValues)
+		// Skip self (sender)
+		if name == sender {
+			continue
 		}
 
+		if peerDigest, exists := (*digest)[name]; exists {
+			peerMaxVersion = peerDigest.maxVersion
+		}
+
+		// Count only outdated deltas
+		for _, delta := range participant.keyValues {
+			if delta.Version > peerMaxVersion {
+				available++
+			}
+		}
+
+		log.Printf("available deltas for %s = %v (peerMaxVersion: %d)", name, available, peerMaxVersion)
+
 		if available > 0 {
-			// We add the participant to the participant heap
 			heap.Push(&partQueue, &participantQueue{
 				name:            name,
 				availableDeltas: available,
 				maxVersion:      participant.maxVersion,
+				peerMaxVersion:  peerMaxVersion,
 			})
 		}
-
 	}
 	// Initialise the heap here will order participants by most outdated and then by available deltas
 	heap.Init(&partQueue)
@@ -1001,21 +1006,16 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		dh := make(deltaHeap, 0, len(participant.keyValues))
 		for _, delta := range participant.keyValues {
 
-			// TODO We also want to track and trace overloaded delta to see and monitor
-
-			overloaded := len(delta.Value) > int(DEFAULT_MAX_DELTA_SIZE)
-
-			// Overloaded check and trace here (only if they are gossiped?)
-
-			heap.Push(&dh, &deltaQueue{
-				keyGroup: delta.KeyGroup,
-				key:      delta.Key,
-				version:  delta.Version,
-				overload: overloaded,
-			})
-
+			if delta.Version > phEntry.peerMaxVersion {
+				heap.Push(&dh, &deltaQueue{
+					keyGroup: delta.KeyGroup,
+					key:      delta.Key,
+					version:  delta.Version,
+					overload: len(delta.Value) > int(s.gbClusterConfig.Cluster.MaxDeltaSize),
+				})
+			}
 		}
-		heap.Init(&dh) // Initialise the heap, so we can pop most outdated version and process
+		heap.Init(&dh)
 
 		// We are to send the highest version deltas, and we fit as many deltas in based on remaining space.
 
@@ -1045,7 +1045,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 		}
 
-		log.Printf("SIZE OF DELTA ------------> -- %d - remaining = %d", sizeOfDelta, remaining)
+		log.Printf("participant=%s  selected=%d", participant.name, len(deltaList))
 
 		if len(deltaList) > 0 {
 			selectedDeltas[participant.name] = deltaList
