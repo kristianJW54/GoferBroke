@@ -8,6 +8,18 @@
 
 > *Turn any app into a distributed system.*
 
+<p align="center">
+  <a href="https://goreportcard.com/report/github.com/kristianJW54/GoferBroke">
+    <img src="https://goreportcard.com/badge/github.com/kristianJW54/GoferBroke" alt="Go Report Card" />
+  </a>
+  <a href="https://pkg.go.dev/github.com/kristianJW54/GoferBroke">
+    <img src="https://pkg.go.dev/badge/github.com/kristianJW54/GoferBroke.svg" alt="Go Reference" />
+  </a>
+  <a href="https://github.com/kristianJW54/GoferBroke/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/kristianJW54/GoferBroke.svg?style=flat-square" alt="License" />
+  </a>
+</p>
+
 ## Overview
 
 GoferBroke is a minimal, high-performance gossip protocol designed for embedding decentralized, eventually-consistent state into your application instances. Built on TCP with custom framing and no external dependencies, it allows every node to gossip deltas (state changes) and reconcile with others through a compact, version-aware protocol.
