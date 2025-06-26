@@ -210,6 +210,8 @@ func TestBuildDeltaOutdatedOnly(t *testing.T) {
 
 }
 
+// TODO Finish fulling testing build delta for all cases
+
 func TestDeltaHeap(t *testing.T) {
 
 	// Create keyValues with PBDelta messages

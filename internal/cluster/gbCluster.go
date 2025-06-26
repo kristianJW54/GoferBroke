@@ -402,6 +402,10 @@ func (p *Participant) Update(group, key string, d *Delta, update func(toBeUpdate
 		update(delta, d)
 		p.pm.Unlock()
 
+		if d.Version > p.maxVersion {
+			p.maxVersion = d.Version
+		}
+
 		return nil
 
 	} else {
@@ -1557,24 +1561,36 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	pl := len(s.clusterMap.participantArray) - 1
 
 	// Channel to signal when individual gossip tasks complete
-	done := make(chan struct{}, pl)
+	//done := make(chan struct{}, pl)
 
 	if int(ns) > pl {
 		ns = 1 // Fallback for now, we can scale once we have enough participants to do multiple node gossip
 	}
 
-	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, ns, s.ServerName)
+	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, ns, s.String())
 	if err != nil {
 		log.Printf("Error generating random participant indexes: %v", err)
 		// TODO Need to add error event as its internal system error
 		return
 	}
 
+	var wg sync.WaitGroup
+
 	for i, index := range indexes {
 
 		s.clusterMapLock.RLock()
 
+		wg.Add(1)
+
 		selectedNode := s.clusterMap.participantArray[index]
+
+		log.Printf("[DEBUG] Index %d selected participant %s (self: %s)", index, selectedNode, s.ServerName)
+
+		if selectedNode == s.String() {
+			log.Printf("[ERROR] Self selected for gossip! Check filtering logic.")
+		}
+
+		log.Printf("SELECTED =========================== %s", s.clusterMap.participants[selectedNode].keyValues["system:node_name"].Value)
 		if s.clusterMap.participants[selectedNode].paDetection.dead {
 			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.PrettyName(), selectedNode)
 
@@ -1589,13 +1605,14 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		}
 		s.clusterMapLock.RUnlock()
 
+		nodeCtx, nodeCancel := context.WithTimeout(ctx, 2*time.Second) // or some other value
+
 		// TODO We need to collect the errors and make a decision on what to do with them based on the error itself
 		s.startGoRoutine(s.PrettyName(), fmt.Sprintf("gossip-round-%v", i), func() {
-			// Do we need a sub context here?
-			subCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
-			defer cancel()
 			defer func() {
-				done <- struct{}{}
+				//done <- struct{}{}
+				defer wg.Done()
+				defer nodeCancel()
 
 				s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
 					err := updateHeartBeat(participant, timeOfUpdate)
@@ -1607,20 +1624,23 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 			}()
 			log.Printf("%s - about to gossip with %s round %v", s.PrettyName(), selectedNode, i)
-			s.gossipWithNode(subCtx, selectedNode)
+			s.gossipWithNode(nodeCtx, selectedNode)
 		})
 
 	}
 
-	// Wait for all tasks or context cancellation
-	for i := 0; i < int(ns); i++ {
-		select {
-		case <-ctx.Done():
-			log.Printf("%s - Gossip round canceled: %v", s.PrettyName(), ctx.Err())
-			return
-		case <-done:
-			//log.Printf("%s - Node gossip task completed", s.ServerName)
-		}
+	// Wait for completion or timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Printf("%s - Gossip round canceled: %v", s.PrettyName(), ctx.Err())
+	case <-done:
+		// Completed successfully
 	}
 
 	return

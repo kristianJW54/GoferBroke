@@ -426,6 +426,7 @@ func (s *GBServer) initSelf() {
 		return
 	}
 	selfInfo.paDetection = s.initPhiAccrual()
+	log.Printf("whats ===== %s", s.ServerName)
 	s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
 
 }
@@ -924,10 +925,10 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 	}
 	p.keyValues[MakeDeltaKey(heartbeatDelta.KeyGroup, heartbeatDelta.Key)] = heartbeatDelta
 
-	err := GenerateConfigDeltas(s.configSchema, s.gbClusterConfig, p)
-	if err != nil {
-		return nil, err
-	}
+	//err := GenerateConfigDeltas(s.configSchema, s.gbClusterConfig, p)
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	return p, nil
 

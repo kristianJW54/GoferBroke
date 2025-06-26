@@ -23,7 +23,6 @@ func main() {
 	// In production this would be dynamically loaded from environment variables or such to ensure unique instances
 	node1Config := &gossip.NodeConfig{
 		Name:        "node",
-		ID:          1,
 		Host:        "localhost",
 		Port:        "8081",
 		NetworkType: "LOCAL",
@@ -71,7 +70,6 @@ func main() {
 
 	node2Config := &gossip.NodeConfig{
 		Name:        "node",
-		ID:          2,
 		Host:        "localhost",
 		Port:        "8082",
 		NetworkType: "LOCAL",

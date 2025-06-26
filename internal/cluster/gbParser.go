@@ -116,7 +116,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 
 				// Do a check here as we may encounter a situation where a command of [10] is encountered and misinterpreted as '\n'
 				// Quick check of the previous byte will tell us
-				if packet[i-1] != '\r' {
+				if i == 0 || packet[i-1] != '\r' {
 					continue
 				}
 
@@ -125,6 +125,13 @@ func (c *gbClient) ParsePacket(packet []byte) {
 					header = c.argBuf
 					c.argBuf = nil
 				} else {
+					if c.position > i-c.drop {
+						log.Printf("invalid header range: position=%d, i=%d, drop=%d", c.position, i, c.drop)
+						c.state = Start
+						c.argBuf = nil
+						c.drop = 0
+						continue
+					}
 					header = packet[c.position : i-c.drop]
 				}
 
