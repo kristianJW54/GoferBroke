@@ -14,7 +14,7 @@ GoferBroke is a minimal, high-performance gossip protocol designed for embedding
 
 **No brokers. No databases. No event streams. Just peers sharing state.**
 
-## 💡 Key Concept
+## Key Concept
 
 > **Every application instance becomes a node in a decentralized system.**
 
@@ -28,20 +28,20 @@ Each node:
 
 ---
 
-## ✨ Features
+## Features
 
-- 🔁 **Efficient delta-based reconciliation**
-- 📦 **Custom binary protocol over TCP** (supports partial packets)
-- 🌐 **Decentralized cluster** with seed-based bootstrapping
-- ⚡ **No external dependencies** — runs as a CLI or embeds in any Go app
-- 🧠 **User-defined deltas** for complete flexibility
-- 📉 **Flow control with overload logging**
-- 🔍 **Built-in phi-accrual failure detection**
-- 🧩 **Hookable event system** for specifiying custom logic on events
+- **Efficient delta-based reconciliation**
+- **Custom binary protocol over TCP** (supports partial packets)
+- **Decentralized cluster** with seed-based bootstrapping
+- **No external dependencies** — runs as a CLI or embeds in any Go app
+- **User-defined deltas** for complete flexibility
+- **Flow control with overload logging**
+- **Built-in phi-accrual failure detection**
+- **Hookable event system** for specifiying custom logic on events
 
 ---
 
-## 🧠 Real-World Use Cases
+## Real-World Use Cases
 
 ### 1. **Live Cluster Awareness for Stateless Services**
 Auto-discover and track peer nodes, readiness, zones, and versions.
@@ -63,7 +63,7 @@ Sync object/player/entity data in real-time between peers.
 
 ---
 
-## ✅ Why Use GoferBroke?
+## Why Use GoferBroke?
 
 - You want **decentralized state** without infra.
 - You want to **embed a fast, robust sync layer** into your Go app.
@@ -89,9 +89,9 @@ Sync object/player/entity data in real-time between peers.
 
 - Cloud Platform Testing ✅
 
-- Go SDK
+- Go SDK ✅
 
-- Custom Configuration Parsing
+- Custom Configuration Parsing ✅
 
 - CLI Tool
 
@@ -103,7 +103,7 @@ Sync object/player/entity data in real-time between peers.
 
 - Flow Control For High Load Gossip
 
-## 📦 Getting Started
+## Getting Started
 
 ### Examples
 
@@ -185,7 +185,7 @@ Ensure changes are backward-compatible where possible.
 Get in Touch
 If you’re unsure where to start or have questions, feel free to open a discussion or create an issue. I'm happy to help :)
 
-## 📚 Papers & Foundations
+## Papers & Foundations
 
 ### [Efficient Reconciliation and Flow Control for Anti-Entropy Protocols (FlowGossip)](https://www.cs.cornell.edu/home/rvr/papers/flowgossip.pdf)
 A foundational paper by van Renesse et al. describing anti-entropy protocols, reconciliation strategies, and flow control for scalable, fault-tolerant state replication.
