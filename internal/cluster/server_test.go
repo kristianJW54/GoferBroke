@@ -47,6 +47,26 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	seedFilePath := "../../Configs/node/basic_seed_config.conf"
 	nodeFilePath := "../../Configs/node/basic_node_config.conf"
 
+	node3Cfg := `
+			Name = "node-3"
+			Host = "localhost"
+			Port = "8083"
+			IsSeed = False`
+
+	cfg := `Name = "default-local-cluster"
+SeedServers = [
+    {Host: "localhost", Port: "8081"},
+]
+Cluster {
+    ClusterNetworkType = "LOCAL"
+    NodeSelectionPerGossipRound = 1
+}`
+
+	gbs3, err := NewServerFromConfigString(node3Cfg, cfg)
+	if err != nil {
+		t.Error(err)
+	}
+
 	gbs, err := NewServerFromConfigFile(seedFilePath, clusterPath)
 	if err != nil {
 		t.Errorf("%v", err)
@@ -61,10 +81,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
+	go gbs3.StartServer()
 
 	time.Sleep(5 * time.Second)
 
 	gbs2.Shutdown()
+	gbs3.Shutdown()
 	//time.Sleep(1 * time.Second)
 	gbs.Shutdown()
 	time.Sleep(1 * time.Second)
@@ -78,6 +100,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
+	gbs3.logActiveGoRoutines()
 
 }
 

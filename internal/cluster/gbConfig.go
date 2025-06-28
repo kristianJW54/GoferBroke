@@ -1137,17 +1137,12 @@ func GenerateConfigDeltas(schema map[string]*ConfigSchema, cfg *GbClusterConfig,
 func (cfg *GbClusterConfig) getNodeSelection() uint8 {
 	cfg.lock.RLock()
 	defer cfg.lock.RUnlock()
+
+	if cfg.Cluster.NodeSelectionPerGossipRound == 0 {
+		return 1
+	}
+
 	return cfg.Cluster.NodeSelectionPerGossipRound
-}
-
-//=====================================================================
-// Config Reconciliation for initial bootstrap
-//=====================================================================
-
-func (cfg *GbClusterConfig) generateConfigDigest() ([]byte, error) {
-
-	return nil, nil
-
 }
 
 //=====================================================================

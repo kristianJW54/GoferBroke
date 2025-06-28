@@ -401,14 +401,14 @@ func (s *GBServer) serialiseDiscoveryAddrs(addrKeyMap map[string][]string) ([]by
 func deserialiseDiscovery(data []byte) (*discovery, error) {
 
 	if data[0] != byte(DREQ) {
-		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x --> %w", data[0], byte(DRES), Errors.DeserialiseTypeErr)
+		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x", data[0], byte(DRES))
 	}
 
 	length := len(data)
 	metaLength := binary.BigEndian.Uint32(data[1:5])
 
 	if length != int(metaLength) {
-		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, Errors.DeserialiseLengthErr)
+		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v", metaLength, length)
 	}
 
 	size := binary.BigEndian.Uint16(data[5:7])
@@ -485,7 +485,7 @@ func deserialiseDiscovery(data []byte) (*discovery, error) {
 	return addrMap, nil
 }
 
-func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSize int) ([]byte, error) {
+func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]Delta, deltaSize int) ([]byte, error) {
 
 	// Type = Data - 1 byte Uint8
 	// Length of payload - 4 byte uint32
@@ -534,7 +534,6 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSiz
 
 		for _, v := range value {
 
-			// TODO Want to add a key group e.g. [LOG], [DB], [SYSTEM], [MY_BOOK]
 			deltaBuf[offset] = uint8(len(v.KeyGroup))
 			offset++
 			copy(deltaBuf[offset:], v.KeyGroup)
@@ -578,14 +577,14 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]*Delta, deltaSiz
 func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 	if delta[0] != byte(DELTA_TYPE) {
-		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x --> %w", delta[0], byte(DELTA_TYPE), Errors.DeserialiseTypeErr)
+		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x", delta[0], byte(DELTA_TYPE))
 	}
 
 	length := len(delta)
 	metaLength := binary.BigEndian.Uint32(delta[1:5])
 
 	if length != int(metaLength) {
-		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, Errors.DeserialiseLengthErr)
+		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v", metaLength, length)
 	}
 
 	// Use header to allocate cluster map capacity
@@ -687,14 +686,14 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 
 	if delta[0] != byte(DELTA_TYPE) {
-		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x --> %w", delta[0], byte(DELTA_TYPE), Errors.DeserialiseTypeErr)
+		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x", delta[0], byte(DELTA_TYPE))
 	}
 
 	length := len(delta)
 	metaLength := binary.BigEndian.Uint32(delta[1:5])
 
 	if length != int(metaLength) {
-		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v --> %w", metaLength, length, Errors.DeserialiseLengthErr)
+		return nil, fmt.Errorf("meta length does not match desired length: [GOT] %v - [EXPECT] %v", metaLength, length)
 	}
 
 	// Use header to allocate cluster map capacity
@@ -1004,7 +1003,7 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err
 	return string(sender), &digestMap, nil
 }
 
-func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]*Delta, deltaSize int) ([]byte, error) {
+func (s *GBServer) serialiseGSA(digest []byte, delta map[string][]Delta, deltaSize int) ([]byte, error) {
 
 	digestLen := int(binary.BigEndian.Uint32(digest[1:5]))
 	if digestLen != len(digest) {

@@ -697,6 +697,8 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 		return nil, fmt.Errorf("discoveryRequest - getKnownAddressNodes failed: %s", err)
 	}
 
+	log.Printf("known node = %+s", knownNodes)
+
 	dreq, err := s.serialiseKnownAddressNodes(knownNodes)
 	if err != nil {
 		// TODO Need to error handle serialisers
@@ -705,26 +707,43 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 
 	reqId, err := s.acquireReqID()
 	if err != nil {
-		return nil, Errors.WrapGBError(Errors.DiscoveryReqErr, err)
+		return nil, Errors.ChainGBErrorf(
+			Errors.DiscoveryReqErr,
+			err,
+			"failed to acquire request ID",
+		)
 	}
 
 	pay, err := prepareRequest(dreq, 1, DISCOVERY_REQ, reqId, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%w, %w", Errors.DiscoveryReqErr, err)
+		return nil, Errors.ChainGBErrorf(
+			Errors.DiscoveryReqErr,
+			err,
+			"failed to prepare discovery request payload with ID %d", reqId,
+		)
 	}
+
+	// TODO Fix discovery request - payload seems to be ok so check Process discovery request and then see what we get also check our response (doesn't seem to be response right now)
+
+	log.Printf("pay = %v", pay)
 
 	resp := conn.qProtoWithResponse(ctx, reqId, pay, false)
 
 	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
+		log.Printf("GOT A DISCOVERY ERROR = %s", err.Error())
 		return nil, Errors.WrapGBError(Errors.DiscoveryReqErr, err)
 	}
+
+	log.Printf("response =============== %v", r)
 
 	return r.msg, nil
 
 }
 
 func (s *GBServer) conductDiscovery(ctx context.Context, conn *gbClient) error {
+
+	log.Printf("%s conducting discovery", s.name)
 
 	resp, err := s.discoveryRequest(ctx, conn)
 	if err != nil {
@@ -962,7 +981,7 @@ func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (p
 			}
 		}
 
-		log.Printf("available deltas for %s = %v (peerMaxVersion: %d)", name, available, peerMaxVersion)
+		//log.Printf("available deltas for %s = %v (peerMaxVersion: %d)", name, available, peerMaxVersion)
 
 		if available > 0 {
 			heap.Push(&partQueue, &participantQueue{
@@ -984,7 +1003,7 @@ func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (p
 
 }
 
-func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta map[string][]*Delta, size int, err error) {
+func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta map[string][]Delta, size int, err error) {
 
 	// Need to go through each participant in the heap - add each delta to a heap order it - pop each delta
 	// and get it's size + node + metadata if within bounds, we can either serialise here OR
@@ -998,7 +1017,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 	sizeOfDelta := 0
 
 	// TODO Would prefer to pre-allocate if there is a way -- need to think about this here
-	selectedDeltas := make(map[string][]*Delta)
+	selectedDeltas := make(map[string][]Delta)
 
 	// TODO This is should have a set ceiling to avoid open ended loops running away from us
 	for ph.Len() > 0 && sizeOfDelta < remaining {
@@ -1027,7 +1046,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		// First add the participant size to the sizeOfDelta
 		sizeOfDelta += 1 + len(participant.name) + 2 // 1 byte for name length + name + size of delta key-values
 
-		deltaList := make([]*Delta, 0, 10)
+		deltaList := make([]Delta, 0, 10)
 
 		// Make selected delta list here and populate
 
@@ -1046,11 +1065,9 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			sizeOfDelta += size
 
-			deltaList = append(deltaList, delta)
+			deltaList = append(deltaList, *delta)
 
 		}
-
-		log.Printf("participant=%s  selected=%d", participant.name, len(deltaList))
 
 		if len(deltaList) > 0 {
 			selectedDeltas[participant.name] = deltaList
@@ -1489,6 +1506,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	defer s.clearGossipingWithMap()
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
+	log.Printf("are we in a discovery phase ====== %v", s.discoveryPhase)
 	if s.discoveryPhase {
 
 		// This is ok for now - we go back to the first seed we bootstrapped with - if it doesn't work we may need to fall back
@@ -1499,29 +1517,26 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 			return
 		}
 
+		err = s.conductDiscovery(s.ServerContext, seed)
 		if err != nil {
-			err := s.conductDiscovery(s.ServerContext, seed)
-			if err != nil {
-				handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
-
-					if len(gbError) > 1 {
-						log.Printf("gb error = %v", gbError[2])
-						return gbError[2]
-					}
-					return err
-				})
-
-				if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
-					log.Printf("%s - exiting discovery phase", s.PrettyName())
-					s.discoveryPhase = false
-				} else {
-					log.Printf("Discovery failed: %v", err)
+			handledErr := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
+				for _, ge := range gbErrors {
+					log.Printf("gb error = %v", ge)
 				}
+				// Return the most informative one
+				return gbErrors[len(gbErrors)-1]
+			})
 
+			if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
+				log.Printf("%s - exiting discovery phase", s.PrettyName())
+				s.discoveryPhase = false
+			} else {
+				log.Printf("Discovery failed: %v", err)
 			}
-			return
+
 		}
 		return
+
 	}
 
 	ns := s.gbClusterConfig.getNodeSelection()
@@ -1551,7 +1566,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 		s.clusterMapLock.RUnlock()
 
-		log.Printf("SELECTED =========================== %s", s.clusterMap.participants[selectedNode].keyValues["system:node_name"].Value)
 		if selectedParticipant.paDetection.dead {
 			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.PrettyName(), selectedNode)
 
@@ -1683,8 +1697,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	ack, err := s.prepareACK(sender, fdValue)
 	if err != nil || ack == nil {
-		log.Printf("prepareACK failed: %v", err)
-		conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Error())
+		conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Net())
 		return
 	}
 

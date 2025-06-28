@@ -43,19 +43,59 @@ func (e *GBError) getErrLevelTag() string {
 
 // Implement `error` interface
 func (e *GBError) Error() string {
-	switch e.ErrLevel {
-	case NETWORK_ERR_LEVEL:
-		return fmt.Sprintf("[%s] %d: %s -x\r\n", e.getErrLevelTag(), e.Code, e.ErrMsg)
-	case INTERNAL_ERR_LEVEL:
-		return fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
-	case SYSTEM_ERR_LEVEL:
-		return fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
+	base := fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
+
+	var nested *GBError
+	if errors.As(e.Err, &nested) {
+		return base + " " + nested.trimmedError()
 	}
+	return base
+}
+
+func (e *GBError) trimmedError() string {
+	// Like Error(), but omits \r\n for nested NETWORK_ERR_LEVEL
 	return fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
 }
 
-func WrapGBError(wrapperErr error, err error) error {
-	return fmt.Errorf("%w %w", wrapperErr, err)
+// ChainGBErrorf creates a new GBError using a base GBError as template,
+// applies formatted message, and wraps the given cause (can be nil).
+func ChainGBErrorf(template *GBError, cause error, format string, args ...any) *GBError {
+	formatted := fmt.Sprintf(format, args...)
+	return &GBError{
+		Code:     template.Code,
+		ErrLevel: template.ErrLevel,
+		ErrMsg:   fmt.Sprintf("%s — %s", template.ErrMsg, formatted), // <-- prepend base message
+		Err:      cause,
+	}
+}
+
+func (e *GBError) Withf(format string, args ...any) *GBError {
+	e.ErrMsg = fmt.Sprintf(format, args...)
+	return e
+}
+
+func (e *GBError) Cause(err error) *GBError {
+	e.Err = err
+	return e
+}
+
+func (e *GBError) Net() string {
+	return e.Error() + "\r\n"
+}
+
+func WrapGBError(wrapperErr error, cause error) error {
+	var g *GBError
+	if errors.As(wrapperErr, &g) {
+		// Create a new GBError that wraps the cause and preserves correct formatting
+		return &GBError{
+			Code:     g.Code,
+			ErrLevel: g.ErrLevel,
+			ErrMsg:   fmt.Sprintf("%s | %v", g.ErrMsg, cause),
+			Err:      cause,
+		}
+	}
+	// Fallback: just wrap if the base isn't a GBError
+	return fmt.Errorf("%w: %v", wrapperErr, cause)
 }
 
 func UnwrapGBErrors(errStr []string) []*GBError {
@@ -119,65 +159,24 @@ func BytesToError(errMsg []byte) error {
 		return nil
 	}
 
+	// Convert and trim input
 	strMsg := strings.TrimSpace(string(errMsg))
-	var code int
-	var msg string
-	var errLevel int
 
-	// Check if it's a network error format: "11 -x- Message -x-"
-	if strings.Contains(strMsg, "[N]") {
-		parts := strings.SplitN(strMsg, ": ", 2)
-		if len(parts) < 2 {
-			return errors.New("invalid network error format")
-		}
-
-		c, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(parts[0], "[N]")))
-		if err != nil {
-			return errors.New("invalid network error code format")
-		}
-
-		code = c
-		msg = strings.TrimSpace(parts[1])
-		errLevel = NETWORK_ERR_LEVEL
-
-	} else if strings.Contains(strMsg, "[I]") { // Internal error format: "51: Message"
-		parts := strings.SplitN(strMsg, ": ", 2)
-		if len(parts) < 2 {
-			return errors.New("invalid internal error format")
-		}
-
-		c, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(parts[0], "[I]")))
-		if err != nil {
-			return errors.New("invalid internal error code format")
-		}
-
-		code = c
-		msg = strings.TrimSpace(parts[1])
-		errLevel = INTERNAL_ERR_LEVEL
-
-	} else {
-		// If no match, classify it as a SYSTEM ERROR
-		errLevel = SYSTEM_ERR_LEVEL
-		code = -1
-		msg = strMsg
+	// Extract all GBError strings from message
+	gbStrings := ExtractGBErrors(errors.New(strMsg))
+	if len(gbStrings) == 0 {
+		// If not structured, fallback to wrapping raw
+		return WrapSystemError(errors.New(strMsg))
 	}
 
-	switch errLevel {
-	case NETWORK_ERR_LEVEL:
-		if knownErr, exists := KnownNetworkErrors[code]; exists {
-			return knownErr
-		}
-	case INTERNAL_ERR_LEVEL:
-		if knownErr, exists := KnownInternalErrors[code]; exists {
-			return knownErr
-		}
-	case SYSTEM_ERR_LEVEL:
-		// Wrap unexpected errors
-		return WrapSystemError(errors.New(msg))
+	// Unwrap all GBErrors
+	gbErrs := UnwrapGBErrors(gbStrings)
+	if len(gbErrs) == 0 {
+		return WrapSystemError(errors.New(strMsg)) // parsing failed
 	}
 
-	// If no match, return a generic error
-	return &GBError{Code: code, ErrLevel: SYSTEM_ERR_LEVEL, ErrMsg: msg}
+	// Return the most recent / deepest GBError
+	return gbErrs[len(gbErrs)-1]
 }
 
 func WrapSystemError(err error) *GBError {
@@ -280,21 +279,29 @@ func ParseGBError(err string) (*GBError, error) {
 
 type GBErrorHandlerFunc func(gbErr *GBError)
 
-func HandleError(err error, callback func(gbError []*GBError) error) error {
-
+func HandleError(err error, callback func(gbErrors []*GBError) error) error {
 	if err == nil {
 		return nil
 	}
 
-	errStr := ExtractGBErrors(err)
-
-	gbErrs := UnwrapGBErrors(errStr)
-
-	callBackErr := callback(gbErrs)
-	if callBackErr != nil {
-		return callBackErr
+	// Extract structured GBErrors from the formatted string
+	rawErrors := ExtractGBErrors(err)
+	if len(rawErrors) == 0 {
+		// Nothing to unwrap — treat as a system-level fallback
+		return err
 	}
-	return err
+
+	gbErrors := UnwrapGBErrors(rawErrors)
+
+	// Let caller pick one to return or inspect
+	if callback != nil {
+		if cbErr := callback(gbErrors); cbErr != nil {
+			return cbErr
+		}
+	}
+
+	// Default: return the most severe or last one
+	return gbErrors[len(gbErrors)-1]
 }
 
 func RecoverFromPanic() error {
@@ -310,12 +317,16 @@ func RecoverFromPanic() error {
 // Network Error codes
 
 const (
-	GOSSIP_DEFERRED_CODE      = 11
-	GOSSIP_TIMEOUT_CODE       = 12
-	DESERIALISE_TYPE_CODE     = 13
-	DESERIALISE_LENGTH_CODE   = 14
-	CONDUCTING_DISCOVERY_CODE = 15
-	NO_DIGEST_CODE            = 16
+	GOSSIP_DEFERRED_CODE              = 11
+	GOSSIP_TIMEOUT_CODE               = 12
+	DESERIALISE_TYPE_CODE             = 13
+	DESERIALISE_LENGTH_CODE           = 14
+	CONDUCTING_DISCOVERY_CODE         = 15
+	NO_DIGEST_CODE                    = 16
+	DESERIALISE_DIGEST_CODE           = 17
+	NIL_DIGEST_CODE                   = 18
+	NAME_NOT_FOUND_IN_FULLDIGEST_CODE = 19
+	CONFIG_CHECKSUM_FAIL_CODE         = 20
 )
 
 // Internal Error codes
@@ -342,18 +353,24 @@ const (
 	DIAL_SEED_CODE                    = 69
 	INTERNAL_ERROR_HANDLER_CODE       = 70
 	CONNECT_TO_SEED_CODE              = 71
+	GET_CONFIG_DELTAS_FOR_RECON_CODE  = 72
+	SERIALISE_DELTA_CODE              = 73
 )
 
 var KnownNetworkErrors = map[int]*GBError{
-	GOSSIP_DEFERRED_CODE:      &GBError{Code: GOSSIP_DEFERRED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip deferred"},
-	GOSSIP_TIMEOUT_CODE:       &GBError{Code: GOSSIP_TIMEOUT_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip timeout"},
-	INVALID_ERROR_FORMAT:      &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid format"},
-	INVALID_ERROR_CODE:        &GBError{Code: INVALID_ERROR_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid error code"},
-	DESERIALISE_TYPE_CODE:     &GBError{Code: DESERIALISE_TYPE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "wrong type received by deserialise"},
-	DESERIALISE_LENGTH_CODE:   &GBError{Code: DESERIALISE_LENGTH_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "mismatch in data length received by deserialise"},
-	EMPTY_ADDR_MAP_CODE:       &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "address map is empty"},
-	CONDUCTING_DISCOVERY_CODE: &GBError{Code: CONDUCTING_DISCOVERY_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "conducting discovery"},
-	NO_DIGEST_CODE:            &GBError{Code: NO_DIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "no digest to send"},
+	GOSSIP_DEFERRED_CODE:              &GBError{Code: GOSSIP_DEFERRED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip deferred"},
+	GOSSIP_TIMEOUT_CODE:               &GBError{Code: GOSSIP_TIMEOUT_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "Gossip timeout"},
+	INVALID_ERROR_FORMAT:              &GBError{Code: INVALID_ERROR_FORMAT, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid format"},
+	INVALID_ERROR_CODE:                &GBError{Code: INVALID_ERROR_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid error code"},
+	DESERIALISE_TYPE_CODE:             &GBError{Code: DESERIALISE_TYPE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "wrong type received by deserialise"},
+	DESERIALISE_LENGTH_CODE:           &GBError{Code: DESERIALISE_LENGTH_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "mismatch in data length received by deserialise"},
+	EMPTY_ADDR_MAP_CODE:               &GBError{Code: EMPTY_ADDR_MAP_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "address map is empty"},
+	CONDUCTING_DISCOVERY_CODE:         &GBError{Code: CONDUCTING_DISCOVERY_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "conducting discovery"},
+	NO_DIGEST_CODE:                    &GBError{Code: NO_DIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "no digest to send"},
+	DESERIALISE_DIGEST_CODE:           &GBError{Code: DESERIALISE_DIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "failed to deserialise digest"},
+	NIL_DIGEST_CODE:                   &GBError{Code: NIL_DIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "full digest returned is a nil reference/pointer"},
+	NAME_NOT_FOUND_IN_FULLDIGEST_CODE: &GBError{Code: NAME_NOT_FOUND_IN_FULLDIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "full digest map entry not found"},
+	CONFIG_CHECKSUM_FAIL_CODE:         &GBError{Code: CONFIG_CHECKSUM_FAIL_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "config checksum does not match"},
 }
 
 var KnownInternalErrors = map[int]*GBError{
@@ -378,6 +395,8 @@ var KnownInternalErrors = map[int]*GBError{
 	DIAL_SEED_CODE:                    &GBError{Code: DIAL_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "dial seed failed"},
 	INTERNAL_ERROR_HANDLER_CODE:       &GBError{Code: INTERNAL_ERROR_HANDLER_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "internal error handler error"},
 	CONNECT_TO_SEED_CODE:              &GBError{Code: CONNECT_TO_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "connecting to seed error"},
+	GET_CONFIG_DELTAS_FOR_RECON_CODE:  &GBError{Code: GET_CONFIG_DELTAS_FOR_RECON_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error finding config deltas above version"},
+	SERIALISE_DELTA_CODE:              &GBError{Code: SERIALISE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "serialise delta failed"},
 }
 
 var (
@@ -396,6 +415,8 @@ var (
 	DialSeedErr             = KnownInternalErrors[DIAL_SEED_CODE]
 	InternalErrorHandlerErr = KnownInternalErrors[INTERNAL_ERROR_HANDLER_CODE]
 	ConnectSeedErr          = KnownInternalErrors[CONNECT_TO_SEED_CODE]
+	ConfigDeltaVersionErr   = KnownInternalErrors[GET_CONFIG_DELTAS_FOR_RECON_CODE]
+	SerialiseDeltaErr       = KnownInternalErrors[SERIALISE_DELTA_CODE]
 )
 
 var (
@@ -407,4 +428,8 @@ var (
 	EmptyAddrMapNetworkErr = KnownNetworkErrors[EMPTY_ADDR_MAP_CODE]
 	ConductingDiscoveryErr = KnownNetworkErrors[CONDUCTING_DISCOVERY_CODE]
 	NoDigestErr            = KnownNetworkErrors[NO_DIGEST_CODE]
+	DeserialiseDigestErr   = KnownNetworkErrors[DESERIALISE_DIGEST_CODE]
+	NilDigestErr           = KnownNetworkErrors[NIL_DIGEST_CODE]
+	FullDigestMapEntryErr  = KnownNetworkErrors[NAME_NOT_FOUND_IN_FULLDIGEST_CODE]
+	ConfigChecksumFailErr  = KnownNetworkErrors[CONFIG_CHECKSUM_FAIL_CODE]
 )

@@ -497,13 +497,13 @@ func TestGSASerialisation(t *testing.T) {
 	gbs := GenerateDefaultTestServer("main-server", keyValues1, 5)
 
 	sizeOfDelta := 0
-	selectedDeltas := make(map[string][]*Delta)
+	selectedDeltas := make(map[string][]Delta)
 
 	for _, value := range gbs.clusterMap.participants {
 
 		sizeOfDelta += 1 + len(value.name) + 2
 
-		deltaList := make([]*Delta, 0)
+		deltaList := make([]Delta, 0)
 
 		// Only want to add 2 deltas each participant
 		i := 0
@@ -516,7 +516,7 @@ func TestGSASerialisation(t *testing.T) {
 			size := DELTA_META_SIZE + len(v.KeyGroup) + len(v.Key) + len(v.Value)
 			sizeOfDelta += size
 
-			deltaList = append(deltaList, v)
+			deltaList = append(deltaList, *v)
 
 			i++
 

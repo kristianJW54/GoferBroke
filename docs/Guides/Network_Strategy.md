@@ -53,8 +53,8 @@ Once the initial checks are made - the seed node and cluster can accept node con
 
 Node Start:
 
-    -nodeIP="xxx" -nodePort="xxx" -nodeNetworkType=PUBLIC
-    -nodeIP="xxx" -nodePort="xxx" -nodeNetworkType=PRIVATE
+    -nodeAddr="156.XXX.XXX:8000" -nodeNetworkType=PUBLIC
+    -nodeAddr="210.XXX.XXX:8000" -nodeNetworkType=PRIVATE
 
 On starting a new node, the node will determine it's initial Network Type based on the IP provided and the network type if specified
 - Loopback

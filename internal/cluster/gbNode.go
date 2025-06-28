@@ -117,6 +117,11 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 		return fmt.Errorf("error in response from config checksum - %v", err)
 	}
 
+	// IF we get a response err of new checksum available then we need to send a digest
+	// IF we get a response err of checksum mismatch then we fail early and shutdown
+
+	// IF we get an ok response we return and continue
+
 	log.Printf("config response = %s", string(r.msg))
 	return nil
 
@@ -342,6 +347,89 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 }
 
+//=====================================================================
+// Config Reconciliation for initial bootstrap
+//=====================================================================
+
+func (s *GBServer) getConfigDeltasAboveVersion(version int64) (map[string][]Delta, int, error) {
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	sizeOfDelta := 0
+
+	cd := make(map[string][]Delta)
+
+	for key, value := range cm.participants[s.ServerName].keyValues {
+
+		sizeOfDelta += 1 + len(s.ServerName) + 2 // 1 byte for name length + name + size of delta key-values
+
+		if value.Version > version {
+			cd[key] = append(cd[key], *value)
+			sizeOfDelta += DELTA_META_SIZE + len(value.KeyGroup) + len(value.Key) + len(value.Value)
+		}
+
+	}
+
+	if len(cd) == 0 {
+		return cd, 0, fmt.Errorf("no config deltas found of higher version than: %d", version)
+	}
+
+	return cd, sizeOfDelta, nil
+
+}
+
+func (s *GBServer) reconcileClusterConfig() error {
+
+	//digestToSend, _, err := s.serialiseClusterDigestConfigOnly()
+	//if err != nil {
+	//	return err
+	//}
+
+	return nil
+
+}
+
+func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
+
+	c.mu.Lock()
+	srv := c.srv
+	c.mu.Unlock()
+
+	if fd == nil {
+		return fmt.Errorf("fulld digest is nil")
+	}
+
+	entry, ok := (*fd)[sender]
+	if !ok || entry == nil {
+		return fmt.Errorf("%s not found in full difest map", sender)
+	}
+
+	// Build method with this in it
+	configDeltas, size, err := srv.getConfigDeltasAboveVersion(entry.maxVersion)
+	if err != nil {
+		return err
+	}
+
+	cereal, err := srv.serialiseACKDelta(configDeltas, size)
+	if err != nil {
+		return fmt.Errorf("sendClusterConfigDelta - serialising configDeltas: %s", err)
+	}
+
+	pay, err := prepareRequest(cereal, 1, CFG_RECON, c.ph.respID, uint16(0))
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.enqueueProto(pay)
+	c.mu.Unlock()
+
+	return nil
+
+}
+
 //------------------------------------------
 // Handling Self Info - Thread safe and for high concurrency
 
@@ -520,7 +608,6 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 			log.Printf("MoveToConnected failed in process info message: %v", err)
 		}
 
-		// TODO Monitor the server lock here and be mindful
 		c.srv.incrementNodeConnCount()
 
 	})
@@ -675,6 +762,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processGossAck(message)
 	case CFG_CHECK:
 		c.processCfgCheck(message)
+	case CFG_RECON:
+		c.processCfgRecon(message)
 	case OK:
 		c.processOK(message)
 	case OK_RESP:
@@ -705,6 +794,8 @@ func (c *gbClient) processErr(message []byte) {
 	}
 
 	msgErr := Errors.BytesToError(message)
+
+	log.Printf("msg err ==== %s", msgErr)
 
 	msg := make([]byte, len(message))
 	copy(msg, message)
@@ -780,15 +871,35 @@ func (c *gbClient) processCfgCheck(message []byte) {
 		// If checksum received is different then we must check if our cs is different from our original config checksum on server start
 		if cs != srv.originalCfgHash {
 			// Now we do a final check against the original hash - if it is different then we send an error which should result in the receiver node shutting down
-			c.sendErr(reqID, 0, "mismatch between message and checksum and receiver checksum\r\n")
+
 		} else {
 			// Here gossip may have changed the cluster config, so we should send our complete cluster config over the network to the receiver
+			err := Errors.ChainGBErrorf(
+				Errors.ConfigChecksumFailErr,
+				nil, // no inner cause here
+				"checksum should be: [%s] or: [%s] -- got: [%s]",
+				cs, srv.originalCfgHash, checksum,
+			)
+
+			c.sendErr(reqID, 0, err.Net())
 
 		}
 
 	} else {
 		c.sendOK(reqID)
 	}
+}
+
+func (c *gbClient) processCfgRecon(message []byte) {
+
+	//name, fd, err := deSerialiseDigest(message)
+	//if err != nil {
+	//	c.sendErr(c.ph.reqID, 0, err.Error())
+	//	return
+	//}
+
+	return
+
 }
 
 func (c *gbClient) processNewJoinMessage(message []byte) {
@@ -1052,7 +1163,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	reqID := c.ph.reqID
 
 	if c.srv.discoveryPhase {
-		c.sendErr(reqID, uint16(0), Errors.ConductingDiscoveryErr.Error())
+		c.sendErr(reqID, uint16(0), Errors.ConductingDiscoveryErr.Net())
 		return
 	}
 
@@ -1077,7 +1188,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	}
 
 	if deferGossip {
-		c.sendErr(c.ph.reqID, uint16(0), Errors.GossipDeferredErr.Error())
+		c.sendErr(c.ph.reqID, uint16(0), Errors.GossipDeferredErr.Net())
 		return
 	}
 

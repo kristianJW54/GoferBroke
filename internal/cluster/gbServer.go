@@ -43,7 +43,12 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	if nodeFileConfig == "" {
 		// Load default config file from internal
 		nodeConfig = &GbNodeConfig{
-			Internal: &InternalOptions{},
+			Name:        name,
+			Host:        nodeIP,
+			Port:        nodePort,
+			NetworkType: UNDEFINED,
+			IsSeed:      mode == "seed",
+			Internal:    &InternalOptions{},
 		}
 	}
 
@@ -443,9 +448,11 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 	}
 
 	isSeedAddr := s.seedCheck()
+	log.Printf("are we a really a seed %v", s.isSeed)
 
 	switch {
 	case !s.isSeed && isSeedAddr:
+		log.Printf("are we a seed = %v", s.isSeed)
 		return nil, fmt.Errorf("server is NOT configured as a seed, but matches a listed seed address — change config to mark it as a seed OR use a different address")
 
 	case s.isSeed && !isSeedAddr:
@@ -520,6 +527,9 @@ func (s *GBServer) StartServer() {
 		// Debug logs here
 		s.startupSync.Add(1)
 		s.initSelf()
+		if !s.isSeed {
+			s.discoveryPhase = true
+		}
 	}
 
 	//-----------------------------------------------
@@ -712,6 +722,7 @@ func resolveConfigSeedAddr(cfg *GbClusterConfig) ([]*seedEntry, error) {
 		if err != nil {
 			return nil, err
 		}
+		log.Printf("adding seed addr = %s", tcpAddr.String())
 		seedAddr = append(seedAddr, &seedEntry{
 			host:     value.Host,
 			port:     value.Port,
@@ -864,7 +875,11 @@ func (s *GBServer) seedCheck() bool {
 
 	if len(s.seedAddr) >= 1 {
 		for _, addr := range s.seedAddr {
-			if addr.resolved.IP.Equal(s.boundTCPAddr.IP) && addr.resolved.Port == s.boundTCPAddr.Port {
+			//if addr.resolved.IP.Equal(s.advertiseAddress.IP) && addr.resolved.Port == s.advertiseAddress.Port {
+			//	return true
+			//}
+			log.Printf("Checking seed %s - against us %s", addr.resolved.String(), s.boundTCPAddr.String())
+			if addr.resolved.String() == s.boundTCPAddr.String() {
 				return true
 			}
 		}

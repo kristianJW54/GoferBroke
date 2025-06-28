@@ -1,39 +1,65 @@
 package cluster
 
 import (
-	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"testing"
 )
 
 func TestGBErrors(t *testing.T) {
+	// Step 1: Create deepest GBError
+	base := Errors.GossipDeferredErr
 
-	gbErr := Errors.WrapGBError(Errors.ResponseErr, Errors.GossipDeferredErr)
+	// Step 3: Chain a formatted GBError on top (ConfigChecksumFailErr)
+	top := Errors.ChainGBErrorf(
+		base,
+		base,
+		"testing errors to unwrap",
+	)
 
-	err := fmt.Errorf("testing error string to unwrap - %w", gbErr)
+	// Step 4: Print result
+	log.Println(top.Error())
 
-	errs := Errors.ExtractGBErrors(err)
-
+	// Step 5: Extract and parse
+	errs := Errors.ExtractGBErrors(top)
 	gbErrs := Errors.UnwrapGBErrors(errs)
-	log.Println(gbErrs[1])
 
+	for i, g := range gbErrs {
+		log.Printf("Parsed %d: %+v", i, g)
+	}
 }
 
 func TestGBErrorSandwichWrap(t *testing.T) {
+	err := Errors.ChainGBErrorf(Errors.ResponseErr, Errors.GossipDeferredErr, "response failed after %d retries", 3)
+	err2 := Errors.ChainGBErrorf(Errors.DiscoveryReqErr, err, "discovery request to %s failed", "node-5")
 
-	err := fmt.Errorf("testing error string to unwrap - %w", Errors.GossipDeferredErr)
+	log.Println("Full Error Output:\n", err2)
 
-	err2 := Errors.WrapGBError(Errors.ResponseErr, err)
+	errs := Errors.ExtractGBErrors(err2)
+	if len(errs) != 3 {
+		t.Fatalf("expected 3 GBErrors, got %d", len(errs))
+	}
 
-	err3 := fmt.Errorf("big boi nesting - %w", err2)
+	for i, e := range errs {
+		log.Printf("Match %d: %q", i+1, e)
+	}
+}
 
-	err4 := Errors.WrapGBError(Errors.DiscoveryReqErr, err3)
+func TestWrappedErrorConfigExample(t *testing.T) {
+	checksum1 := "1234"
+	checksum2 := "4321"
+	checksum3 := "9999"
 
-	log.Println(err4)
+	// This is the formatted message
+	message := "checksum should be: [%s] or: [%s] -- got: [%s]"
 
-	errs := Errors.ExtractGBErrors(err4)
+	// Create a structured GBError with formatting
+	testErr := Errors.ChainGBErrorf(
+		Errors.ConfigChecksumFailErr,
+		nil, // no inner error, just a formatted message
+		message,
+		checksum1, checksum2, checksum3,
+	)
 
-	log.Println(errs[2])
-
+	log.Println(testErr.Error())
 }
