@@ -107,7 +107,7 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	}
 
 	// Create and start the server
-	gbs, err := NewServer(name, config, nodeConfig, nodeIP, nodePort, "5000", lc)
+	gbs, err := NewServer(name, config, nil, nodeConfig, nodeIP, nodePort, "5000", lc)
 	if err != nil {
 		return err
 	}
@@ -203,6 +203,10 @@ func (sf *ServerID) updateTime(time uint64) {
 	sf.timeUnix = time
 }
 
+//===================================================
+// Main Server
+//===================================================
+
 // GBServer is the main server struct
 type GBServer struct {
 	//Server Info - can add separate info struct later
@@ -267,7 +271,6 @@ type GBServer struct {
 	// Locks
 	serverLock     sync.RWMutex
 	clusterMapLock sync.RWMutex
-	configLock     sync.RWMutex
 
 	//serverWg *sync.WaitGroup
 	startupSync *sync.WaitGroup
@@ -282,6 +285,7 @@ type seedEntry struct {
 	host     string
 	port     string
 	resolved *net.TCPAddr
+	nodeID   string // This should be set when we make connection which will enable us to access the node conn in store and cluster map
 }
 
 func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServer, error) {
@@ -299,17 +303,38 @@ func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServe
 		return nil, err
 	}
 
-	srv, err := NewServer(nodeCfg.Name, clusterCfg, nodeCfg, nodeCfg.Host, nodeCfg.Port, nodeCfg.ClientPort, net.ListenConfig{})
+	srv, err := NewServer(nodeCfg.Name, clusterCfg, sch, nodeCfg, nodeCfg.Host, nodeCfg.Port, nodeCfg.ClientPort, net.ListenConfig{})
 	if err != nil {
 		return nil, err
 	}
 
-	srv.configSchema = sch
+	return srv, nil
+}
+
+func NewServerFromConfigString(nodeConfigData, clusterConfigData string) (*GBServer, error) {
+
+	nodeCfg := InitDefaultNodeConfig()
+	clusterCfg := InitDefaultClusterConfig()
+
+	_, err := BuildConfigFromString(nodeConfigData, nodeCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	sch, err := BuildConfigFromString(clusterConfigData, clusterCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	srv, err := NewServer(nodeCfg.Name, clusterCfg, sch, nodeCfg, nodeCfg.Host, nodeCfg.Port, nodeCfg.ClientPort, net.ListenConfig{})
+	if err != nil {
+		return nil, err
+	}
 
 	return srv, nil
 }
 
-func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
+func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*ConfigSchema, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
 
 	if len([]byte(serverName)) > ServerNameMaxLength {
 		return nil, fmt.Errorf("server name length exceeds %d", ServerNameMaxLength)
@@ -343,10 +368,21 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	uuid := uuid2.New()
 	serverID := NewServerID(serverName, uuid.String())
 	// Joins the object to a string name
-	srvName := uuid.String()
+	srvName := serverID.String()
 
 	// Config setting
 	cfgHash, err := configChecksum(gbConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	cfgSchema := schema
+	if cfgSchema == nil {
+		cfgSchema = BuildConfigSchema(gbConfig)
+	}
+
+	// Add seed addresses to seedAddr
+	seedAddr, err := resolveConfigSeedAddr(gbConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -362,15 +398,16 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &GBServer{
-		ServerID:      *serverID,
-		ServerName:    srvName,
-		initialised:   uint64(serverID.timeUnix),
-		host:          nodeHost,
-		port:          nodePort,
-		addr:          addr,
-		boundTCPAddr:  nodeTCPAddr,
-		clientTCPAddr: clientAddr,
-		reachability:  1, // TODO : Yet to implement
+		ServerID:         *serverID,
+		ServerName:       srvName,
+		initialised:      uint64(serverID.timeUnix),
+		host:             nodeHost,
+		port:             nodePort,
+		addr:             addr,
+		boundTCPAddr:     nodeTCPAddr,
+		advertiseAddress: nodeTCPAddr, //Temp set which will be updated once we dial a connection
+		clientTCPAddr:    clientAddr,
+		reachability:     1, // TODO : Yet to implement
 
 		event: ed,
 
@@ -380,8 +417,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 
 		gbClusterConfig: gbConfig,
 		gbNodeConfig:    gbNodeConfig,
-		seedAddr:        make([]*seedEntry, 0, 2),
-
+		seedAddr:        seedAddr,
+		configSchema:    cfgSchema,
 		originalCfgHash: cfgHash,
 
 		clientStore: make(map[uint64]*gbClient),
@@ -405,11 +442,14 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, gbNodeConfig *GbNod
 		debugTrack: 0,
 	}
 
-	if s.isSeed == false && s.seedCheck() == true {
-		// If configured server is NOT seed, but we check, and it has same addr as a seed then we fail early and warn
-		return nil, fmt.Errorf("server was configured as a node but has seed address - either change node type to seed OR if node is not meant to be a seed, change address to not one of the listed seeds")
-	} else if s.isSeed == true && !s.seedCheck() == false {
-		return nil, fmt.Errorf("server was configured as a seed but does not match any of the listed seed addresses")
+	isSeedAddr := s.seedCheck()
+
+	switch {
+	case !s.isSeed && isSeedAddr:
+		return nil, fmt.Errorf("server is NOT configured as a seed, but matches a listed seed address — change config to mark it as a seed OR use a different address")
+
+	case s.isSeed && !isSeedAddr:
+		return nil, fmt.Errorf("server IS configured as a seed, but does not match any listed seed addresses — check seed list and address config")
 	}
 
 	return s, nil
@@ -419,15 +459,30 @@ func (s *GBServer) initSelf() {
 
 	defer s.startupSync.Done()
 
+	// First init phi control
 	s.phi = *s.initPhiControl()
+
+	// Then we initialise our info into a participant struct
 	selfInfo, err := s.initSelfParticipant()
 	if err != nil {
 		log.Printf("error in init participant %v", err)
 		return
 	}
+
+	// Then we set up the mechanism to calculate phi score (controlled by phi control)
 	selfInfo.paDetection = s.initPhiAccrual()
-	log.Printf("whats ===== %s", s.ServerName)
+
+	// Now we initialise our cluster map and add our own info to it
 	s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
+
+	// Once we have that, if we are a seed - we should include our ID into the seedAddr list, so we don't contact or access ourselves
+	if s.isSeed {
+		for _, seed := range s.seedAddr {
+			if seed.host == s.host && seed.port == s.port {
+				seed.nodeID = s.String()
+			}
+		}
+	}
 
 }
 
@@ -470,12 +525,6 @@ func (s *GBServer) StartServer() {
 	//-----------------------------------------------
 	//Checks and other start up here
 
-	//Resolve config seed addr
-	err := s.resolveConfigSeedAddr()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// Setting go routine tracking flag to true - mainly used in testing
 	s.grTracking.trackingFlag.Store(true)
 
@@ -483,7 +532,7 @@ func (s *GBServer) StartServer() {
 
 	s.startupSync.Add(1)
 	// We need to spin up event handlers here to catch any error during start up processes
-	err = s.registerAndStartInternalHandlers()
+	err := s.registerAndStartInternalHandlers()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -629,10 +678,6 @@ func (s *GBServer) Shutdown() {
 
 			log.Printf("participant --> %s", p)
 
-			for k, _ := range s.clusterMap.participants[p].keyValues {
-				log.Printf("key = %s", k)
-			}
-
 		}
 
 	}
@@ -658,25 +703,22 @@ func (s *GBServer) resetContext() {
 	s.serverContextCancel = cancel
 }
 
-func (s *GBServer) resolveConfigSeedAddr() error {
+func resolveConfigSeedAddr(cfg *GbClusterConfig) ([]*seedEntry, error) {
+	seedAddr := make([]*seedEntry, 0, len(cfg.SeedServers))
 
-	if len(s.gbClusterConfig.SeedServers) >= 1 {
-
-		s.serverLock.Lock()
-		defer s.serverLock.Unlock()
-
-		for _, value := range s.gbClusterConfig.SeedServers {
-			addr := net.JoinHostPort(value.Host, value.Port)
-			tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
-			if err != nil {
-				return err
-			}
-			// TODO Do we need this or can we just use config struct
-			s.seedAddr = append(s.seedAddr, &seedEntry{host: value.Host, port: value.Port, resolved: tcpAddr})
+	for _, value := range cfg.SeedServers {
+		addr := net.JoinHostPort(value.Host, value.Port)
+		tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+		if err != nil {
+			return nil, err
 		}
-
+		seedAddr = append(seedAddr, &seedEntry{
+			host:     value.Host,
+			port:     value.Port,
+			resolved: tcpAddr,
+		})
 	}
-	return nil
+	return seedAddr, nil
 }
 
 func (s *GBServer) tryReconnectToSeed(connIndex int) (net.Conn, error) {
@@ -719,7 +761,7 @@ func (s *GBServer) ComputeAdvertiseAddr(conn net.Conn) error {
 		return nil
 	}
 
-	// If we bound to a specific IP and, it's not loopback, use that - if we in a local cluster network it is fine also
+	// If we bound to a specific IP and, it's not loopback, use that - if we are in a local cluster network it is fine also
 	if bound != nil && !bound.IP.IsUnspecified() && (s.gbClusterConfig.Cluster.ClusterNetworkType == C_LOCAL || !bound.IP.IsLoopback()) {
 		s.serverLock.Lock()
 		s.advertiseAddress = &net.TCPAddr{IP: bound.IP, Port: bound.Port}
@@ -752,63 +794,69 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 	seeds := s.seedAddr
 	s.serverLock.RUnlock()
 
-	if len(seeds) <= 1 {
-
-		if seeds[0].resolved.IP.Equal(s.boundTCPAddr.IP) && seeds[0].resolved.Port == s.boundTCPAddr.Port {
-			log.Printf("I am the only seed - returning...")
-			return nil, nil
-		} else {
-
-			conn, err := net.Dial("tcp", seeds[0].resolved.String())
-			if err != nil {
-				// TODO Need to check the error because if it is an already made connection then we can just return
-				log.Printf("Failed to dial seed %s: %v -- trying reconnect...", seeds[0].host, err)
-				conn, err = s.tryReconnectToSeed(0)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			// Connection succeeded, check if we need to update local advertise address
-			err = s.ComputeAdvertiseAddr(conn)
-			if err != nil {
-				return conn, Errors.WrapGBError(Errors.DialSeedErr, err)
-			}
-
-			return conn, nil
-
-		}
-
+	if len(seeds) == 0 {
+		return nil, fmt.Errorf("no seeds configured")
 	}
 
-	for i, addr := range seeds {
+	// Special case: single seed
+	if len(seeds) == 1 {
+		seed := seeds[0]
 
-		if addr.resolved.IP.Equal(s.boundTCPAddr.IP) && addr.resolved.Port == s.boundTCPAddr.Port {
-			log.Printf("skipping same seed addr")
-			continue
+		if seed.resolved.IP.Equal(s.boundTCPAddr.IP) && seed.resolved.Port == s.boundTCPAddr.Port {
+			log.Printf("I am the only seed — skipping dial")
+			return nil, nil
 		}
 
-		// TODO Need a connection check here so we don't redial and already made connection
+		// Check if already connected
+		if conn, ok := s.nodeConnStore.Load(seed.nodeID); ok {
+			log.Printf("Reusing existing connection to seed %s", seed.nodeID)
+			return conn.(net.Conn), nil
+		}
 
-		conn, err := net.Dial("tcp", addr.resolved.String())
+		// Try to connect
+		conn, err := net.Dial("tcp", seed.resolved.String())
 		if err != nil {
-			log.Printf("Failed to dial seed %s: %v -- trying reconnect...", addr.host, err)
-			conn, err = s.tryReconnectToSeed(i)
-			if err != nil {
-				continue
-			}
+			return nil, fmt.Errorf("failed to dial single seed %s: %w", seed.nodeID, err)
 		}
 
-		// Connection succeeded, check if we need to update local advertise address
-		err = s.ComputeAdvertiseAddr(conn)
-		if err != nil {
-			return conn, Errors.WrapGBError(Errors.DialSeedErr, err)
+		if err := s.ComputeAdvertiseAddr(conn); err != nil {
+			conn.Close()
+			return nil, Errors.WrapGBError(Errors.DialSeedErr, err)
 		}
 
+		//s.nodeConnStore.Store(seed.nodeID, conn) // TODO Make sure we are storing elsewhere
 		return conn, nil
 	}
 
-	return nil, nil
+	// Multiple seed retry logic
+	retries := 3 // TODO: from config
+	for i := 0; i < retries; i++ {
+		addr, err := s.getRandomSeedToDial()
+		if err != nil {
+			return nil, fmt.Errorf("failed to select a seed: %w", err)
+		}
+
+		if conn, ok := s.nodeConnStore.Load(addr.nodeID); ok {
+			log.Printf("Reusing connection to seed %s", addr.resolved.String())
+			return conn.(net.Conn), nil
+		}
+
+		conn, err := net.Dial("tcp", addr.resolved.String())
+		if err != nil {
+			log.Printf("Failed to dial seed %s: %v", addr.resolved.String(), err)
+			continue
+		}
+
+		if err := s.ComputeAdvertiseAddr(conn); err != nil {
+			conn.Close()
+			return nil, Errors.WrapGBError(Errors.DialSeedErr, err)
+		}
+
+		//s.nodeConnStore.Store(addr.String(), conn) // TODO Make sure we are storing elsewhere
+		return conn, nil
+	}
+
+	return nil, fmt.Errorf("failed to dial any seed after %d attempts", retries)
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
@@ -925,10 +973,10 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 	}
 	p.keyValues[MakeDeltaKey(heartbeatDelta.KeyGroup, heartbeatDelta.Key)] = heartbeatDelta
 
-	//err := GenerateConfigDeltas(s.configSchema, s.gbClusterConfig, p)
-	//if err != nil {
-	//	return nil, err
-	//}
+	err := GenerateConfigDeltas(s.configSchema, s.gbClusterConfig, p)
+	if err != nil {
+		return nil, err
+	}
 
 	return p, nil
 
@@ -1238,6 +1286,34 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 		}
 		return gbc, true, nil
 	}
+}
+
+//---------------
+// Add ID to seedAddr list
+
+func (s *GBServer) addIDToSeedAddrList(id string, addr net.Addr) error {
+
+	s.serverLock.Lock()
+	defer s.serverLock.Unlock()
+
+	seeds := s.seedAddr
+
+	for _, seed := range seeds {
+
+		resolvedAddr, err := net.ResolveTCPAddr("tcp", addr.String())
+		if err != nil {
+			return fmt.Errorf("failed to resolve address: %w", err)
+		}
+
+		if seed.resolved.IP.Equal(resolvedAddr.IP) && seed.resolved.Port == resolvedAddr.Port {
+			seed.nodeID = id
+			return nil
+		}
+
+	}
+
+	return fmt.Errorf("found no seed addresses in the list - looking for %s - for node %s", addr.String(), id)
+
 }
 
 //==================================================

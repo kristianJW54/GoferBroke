@@ -213,11 +213,12 @@ type deltaHeap []*deltaQueue
 type Participant struct {
 	name string
 	// Will be changing to delta store interface
-	keyValues   map[string]*Delta // composite key - flattened -> group:key
-	connection  *connectionMetaData
-	paDetection *phiAccrual
-	maxVersion  int64
-	pm          sync.RWMutex
+	keyValues        map[string]*Delta // composite key - flattened -> group:key
+	connection       *connectionMetaData
+	paDetection      *phiAccrual
+	maxVersion       int64
+	configMaxVersion int64
+	pm               sync.RWMutex
 }
 
 type ClusterMap struct {
@@ -350,7 +351,7 @@ func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
 }
 
 //=======================================================
-// Delta Handling
+// Delta Handling - Internal Delta API
 //=======================================================
 
 func MakeDeltaKey(group, key string) string {
@@ -1221,36 +1222,6 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 // GOSSIP
 //========================================================================================
 
-//-----------------
-// Random node selector
-
-func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, excludeID string) ([]int, error) {
-	partLenArray := len(partArray)
-	if partLenArray <= 0 || numOfNodeSelection <= 0 {
-		return nil, fmt.Errorf("invalid participant array or selection count")
-	}
-
-	// Build list of candidate indexes, excluding self
-	candidates := make([]int, 0, partLenArray-1)
-	for i, id := range partArray {
-		if id != excludeID {
-			candidates = append(candidates, i)
-		}
-	}
-
-	if numOfNodeSelection > len(candidates) {
-		return nil, fmt.Errorf("not enough participants to select %d (excluding self)", numOfNodeSelection)
-	}
-
-	// Partial Fisher-Yates shuffle to pick numOfNodeSelection indexes
-	for i := 0; i < numOfNodeSelection; i++ {
-		j := i + rand.Intn(len(candidates)-i)
-		candidates[i], candidates[j] = candidates[j], candidates[i]
-	}
-
-	return candidates[:numOfNodeSelection], nil
-}
-
 //=======================================================
 // Gossip Signalling + Process
 //=======================================================
@@ -1519,14 +1490,16 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	if s.discoveryPhase {
-		//	// TODO Need a better load seed mechanism
-		conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1])
-		if !ok {
-			log.Printf("No connection to discover addresses in the map")
+
+		// This is ok for now - we go back to the first seed we bootstrapped with - if it doesn't work we may need to fall back
+		// to the seed addr list and then try and find the conn from one of these?
+		seed, err := s.retrieveASeedConn(false)
+		if err != nil {
+			log.Printf("%s - Cannot retrieve a connection to gossip round", s.PrettyName())
+			return
 		}
 
-		seed, ok := conn.(*gbClient)
-		if ok {
+		if err != nil {
 			err := s.conductDiscovery(s.ServerContext, seed)
 			if err != nil {
 				handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
@@ -1551,23 +1524,14 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		return
 	}
 
-	// Channels aren't like files; you don't usually need to close them.
-	// Closing is only necessary when the receiver must be told there are no more values coming, such as to terminate a range loop.
-	// https://go.dev/tour/concurrency/4#:~:text=Note%3A%20Only%20the%20sender%20should,to%20terminate%20a%20range%20loop.
-
-	//defer close(done) // Either defer close here and have: v, ok := <-done check before signalling or don't close
-
-	ns := 2 // TODO Switch this to node config
+	ns := s.gbClusterConfig.getNodeSelection()
 	pl := len(s.clusterMap.participantArray) - 1
-
-	// Channel to signal when individual gossip tasks complete
-	//done := make(chan struct{}, pl)
 
 	if int(ns) > pl {
 		ns = 1 // Fallback for now, we can scale once we have enough participants to do multiple node gossip
 	}
 
-	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, ns, s.String())
+	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, int(ns), s.String())
 	if err != nil {
 		log.Printf("Error generating random participant indexes: %v", err)
 		// TODO Need to add error event as its internal system error
@@ -1583,27 +1547,19 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		wg.Add(1)
 
 		selectedNode := s.clusterMap.participantArray[index]
+		selectedParticipant := s.clusterMap.participants[selectedNode]
 
-		log.Printf("[DEBUG] Index %d selected participant %s (self: %s)", index, selectedNode, s.ServerName)
-
-		if selectedNode == s.String() {
-			log.Printf("[ERROR] Self selected for gossip! Check filtering logic.")
-		}
+		s.clusterMapLock.RUnlock()
 
 		log.Printf("SELECTED =========================== %s", s.clusterMap.participants[selectedNode].keyValues["system:node_name"].Value)
-		if s.clusterMap.participants[selectedNode].paDetection.dead {
+		if selectedParticipant.paDetection.dead {
 			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.PrettyName(), selectedNode)
 
-			//TODO Once we have a dead node we need to move it to a deadNodeStore either after some time for garbage collection
-			// Or we move straight away and garbage collect after some time and after we have tried to revive a few times
-			// 		This may not matter as much as we are accessing from the cluster map - so we may need to keep a timer of
-			//		How long we have not successfully gossiped with a node or something which will allow us to stop or tombstone the map
-			//		So we can pause gossip and not spin
-
-			s.clusterMapLock.RUnlock()
-			return
+			//TODO Handle --- could move to a dead node store with last contact time
+			// Background process can check how long it's been or how many rounds it's missed and close connection on policy
+			// If we elsewhere we get gossip from it then we update it's time in the store and let background process remove it from store?
+			continue
 		}
-		s.clusterMapLock.RUnlock()
 
 		nodeCtx, nodeCancel := context.WithTimeout(ctx, 2*time.Second) // or some other value
 
@@ -1623,7 +1579,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 				})
 
 			}()
-			log.Printf("%s - about to gossip with %s round %v", s.PrettyName(), selectedNode, i)
 			s.gossipWithNode(nodeCtx, selectedNode)
 		})
 

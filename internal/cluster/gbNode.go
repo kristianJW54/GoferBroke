@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
+	"math/rand"
 	"net"
 	"slices"
 	"strings"
@@ -196,6 +197,14 @@ func (s *GBServer) connectToSeed() error {
 			if err != nil {
 				return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
 			}
+
+			// We also need to the ID to the seed addr list
+			log.Printf("adding id -- %s to seed addr list with addr --> %s", name, conn.RemoteAddr().String())
+			err = s.addIDToSeedAddrList(name, conn.RemoteAddr())
+			if err != nil {
+				return fmt.Errorf("connect to seed - adding seed id to addr list - %v", err)
+			}
+
 		}
 		continue
 	}
@@ -518,6 +527,118 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 	return nil
 
+}
+
+//=======================================================
+// Retrieving Connections or Nodes
+//=======================================================
+
+//-----------------
+// Retrieve a random seed to dial
+
+func (s *GBServer) getRandomSeedToDial() (*seedEntry, error) {
+
+	var candidates []*seedEntry
+
+	if s.isSeed {
+		// Exclude self from list
+		for _, seed := range s.seedAddr {
+			if seed.resolved.String() != s.advertiseAddress.String() {
+				candidates = append(candidates, seed)
+			}
+		}
+	} else {
+		for _, seed := range s.seedAddr {
+			candidates = append(candidates, seed)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no available seed candidates to connect to")
+	}
+
+	return candidates[rand.Intn(len(candidates))], nil
+
+}
+
+//-----------------
+// Retrieve a seed conn
+
+func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
+	// First try the original seed node connection (usually second in participantArray)
+	if conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1]); ok && !random {
+		return conn.(*gbClient), nil
+	}
+
+	log.Printf("No connection to original seed. Falling back to other seeds...")
+
+	var candidates []string
+
+	log.Printf("name = %s", s.String())
+
+	if s.isSeed {
+		// Exclude self from candidate list
+		for _, seed := range s.seedAddr {
+			if seed.nodeID != s.String() {
+				candidates = append(candidates, seed.nodeID)
+			}
+		}
+	} else {
+		// Include all seeds (we're a seed ourselves)
+		for _, seed := range s.seedAddr {
+			candidates = append(candidates, seed.nodeID)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no available seed candidates to connect to")
+	}
+
+	// Pick a seed candidate (random or first)
+	var selected string
+	if random {
+		selected = candidates[rand.Intn(len(candidates))]
+	} else {
+		selected = candidates[0]
+	}
+
+	conn, ok := s.nodeConnStore.Load(selected)
+	if !ok {
+		return nil, fmt.Errorf("no connection found for selected seed: %s", selected)
+	}
+
+	return conn.(*gbClient), nil
+}
+
+//-----------------
+// Random node selector
+
+// Lock should be held on entry
+func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, excludeID string) ([]int, error) {
+	partLenArray := len(partArray)
+	if partLenArray <= 0 || numOfNodeSelection <= 0 {
+		return nil, fmt.Errorf("invalid participant array or selection count")
+	}
+
+	// Build list of candidate indexes, excluding self
+	candidates := make([]int, 0, partLenArray-1)
+	for i, id := range partArray {
+		if id != excludeID {
+			candidates = append(candidates, i)
+		}
+	}
+
+	if numOfNodeSelection > len(candidates) {
+		return nil, fmt.Errorf("not enough participants to select %d (excluding self)", numOfNodeSelection)
+	}
+
+	// Partial Fisher-Yates shuffle to pick numOfNodeSelection indexes
+	for i := 0; i < numOfNodeSelection; i++ {
+		j := i + rand.Intn(len(candidates)-i)
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	}
+
+	return candidates[:numOfNodeSelection], nil
 }
 
 //===================================================================================

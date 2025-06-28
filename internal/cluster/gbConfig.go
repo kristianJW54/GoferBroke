@@ -13,7 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
+	"sync"
 )
 
 // TODO
@@ -59,6 +59,7 @@ type GbClusterConfig struct {
 	Name        string
 	SeedServers []*Seeds
 	Cluster     *ClusterOptions
+	lock        sync.RWMutex
 }
 
 type Seeds struct {
@@ -92,12 +93,18 @@ type ClusterOptions struct {
 	LoggingURL                     string
 	MetricsURL                     string
 	ErrorsURL                      string
+	// TODO Think if we need a URL map that users can specify for their own endpoints
+	EndpointsURLMap map[string]string
 
 	NodeMTLSRequired   bool `default:"false"`
 	ClientMTLSRequired bool `default:"false"`
 }
 
 func InitDefaultClusterConfig() *GbClusterConfig {
+
+	ep := make(map[string]string)
+
+	ep["test"] = "hello"
 
 	return &GbClusterConfig{
 		Name:        "",
@@ -118,6 +125,7 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			LoggingURL:                     "",
 			MetricsURL:                     "",
 			ErrorsURL:                      "",
+			EndpointsURLMap:                ep,
 			NodeMTLSRequired:               false,
 			ClientMTLSRequired:             false,
 		},
@@ -282,8 +290,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 		case reflect.Struct:
 
 			fv := deref(fieldValue)
-
-			log.Printf("struct path = %s", path)
 
 			// Register the container node (e.g., "Cluster")
 			out[path] = &ConfigSchema{
@@ -582,7 +588,7 @@ func SetByPath(sch map[string]*ConfigSchema, config any, path string, value any)
 
 }
 
-func GetByPath(sch map[string]*ConfigSchema, config any, path string) (any, error) {
+func GetByPath(sch map[string]*ConfigSchema, config any, path string) (any, *ConfigSchema, error) {
 	state := &configState{
 		schema:  sch,
 		parts:   strings.Split(path, "."),
@@ -597,11 +603,11 @@ func GetByPath(sch map[string]*ConfigSchema, config any, path string) (any, erro
 	for handler != nil {
 		handler, err = handler(state)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return state.result, nil
+	return state.result, state.schema[state.prefix], nil
 }
 
 func handleStruct(s *configState) (configStateFunc, error) {
@@ -907,6 +913,39 @@ func BuildConfigFromFile(filePath string, config any) (map[string]*ConfigSchema,
 
 }
 
+func BuildConfigFromString(data string, config any) (map[string]*ConfigSchema, error) {
+
+	// Parse the config from file into an ast tree
+	root, err := cfg.ParseConfig(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build schema from the config
+	schema := BuildConfigSchema(config)
+	//for _, s := range schema {
+	//	log.Printf("schema path = %s", s.Path)
+	//}
+
+	// Use the ast tree to populate a list of path values to populate the config with
+	pathValues, err := cfg.StreamAST(root)
+	if err != nil {
+		return nil, err
+	}
+
+	// Use the path values along with the schema to build the config
+	for _, av := range pathValues {
+
+		if err := SetConfigValue(schema, config, av.Path, av.Value); err != nil {
+			return nil, err
+		}
+
+	}
+
+	return schema, nil
+
+}
+
 //=====================================================================
 // Config Generate Delta
 //=====================================================================
@@ -1057,45 +1096,58 @@ func GenerateConfigDeltas(schema map[string]*ConfigSchema, cfg *GbClusterConfig,
 	var paths []string
 	CollectPaths(reflect.ValueOf(cfg), "", &paths)
 
-	now := time.Now().Unix()
-
 	for _, path := range paths {
 
-		if sch, ok := schema[path]; ok {
-
-			val, err := GetByPath(schema, cfg, path)
-			if err != nil {
-				return err
-			}
-
-			result, err := encodeToBytes(val)
-			if err != nil {
-				return err
-			}
-
-			vType, err := convertReflectTypeToDeltaType(sch.Kind)
-			if err != nil {
-				// We return a byte value here still so may want to check it before committing to the error
-				return err
-			}
-
-			delta := &Delta{
-				KeyGroup:  CONFIG_DKG,
-				Key:       path,
-				Version:   now,
-				ValueType: vType,
-				Value:     result,
-			}
-
-			part.keyValues[MakeDeltaKey(delta.KeyGroup, delta.Key)] = delta
-
-		} else {
-			return fmt.Errorf("path - %s - not found in schema", path)
+		val, sch, err := GetByPath(schema, cfg, path)
+		if err != nil {
+			return err
 		}
+
+		result, err := encodeToBytes(val)
+		if err != nil {
+			return err
+		}
+
+		vType, err := convertReflectTypeToDeltaType(sch.Kind)
+		if err != nil {
+			// We return a byte value here still so may want to check it before committing to the error
+			return err
+		}
+
+		delta := &Delta{
+			KeyGroup:  CONFIG_DKG,
+			Key:       path,
+			Version:   0, // We initialise zero here because if we must reconcile state we won't seem to have newer versions than in flight config state from others
+			ValueType: vType,
+			Value:     result,
+		}
+
+		part.keyValues[MakeDeltaKey(delta.KeyGroup, delta.Key)] = delta
+		part.configMaxVersion = 0
 
 	}
 
 	return nil
+}
+
+//=====================================================================
+// Config Internal API
+//=====================================================================
+
+func (cfg *GbClusterConfig) getNodeSelection() uint8 {
+	cfg.lock.RLock()
+	defer cfg.lock.RUnlock()
+	return cfg.Cluster.NodeSelectionPerGossipRound
+}
+
+//=====================================================================
+// Config Reconciliation for initial bootstrap
+//=====================================================================
+
+func (cfg *GbClusterConfig) generateConfigDigest() ([]byte, error) {
+
+	return nil, nil
+
 }
 
 //=====================================================================

@@ -5,32 +5,8 @@ import (
 	"log"
 	"math/rand"
 	"testing"
+	"time"
 )
-
-func TestSerialiseCfgChecksums(t *testing.T) {
-
-	check1 := "1e5cfe0daac33c7036b97667f6b186b7e8996fdd809f04748f67b59973346509"
-	check2 := "ab8ebae7ee0782ca5a2e90fb81ff51fe061c4019933d232f3540e1ec595a1623"
-
-	list := make([]string, 2)
-	list[0] = check1
-	list[1] = check2
-
-	cereal, err := serialiseCfgCheckSumRequest(list)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	deCereal, err := deserialiseCfgChecksumResponse(cereal)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if deCereal[0] != check1 && deCereal[1] != check2 {
-		t.Fatalf("Expected checksums to match")
-	}
-
-}
 
 func TestDiscoveryRequestSerialiser(t *testing.T) {
 	tests := []struct {
@@ -325,6 +301,45 @@ func TestDiscoveryResponseTable(t *testing.T) {
 	}
 
 }
+
+func TestSerialiseConfigDigest(t *testing.T) {
+
+	cfg := "../../Configs/cluster/default_cluster_config.conf"
+	nodeCfg := "../../Configs/node/basic_test_seed_config.conf"
+
+	gbs, err := NewServerFromConfigFile(nodeCfg, cfg)
+	if err != nil {
+		t.Fatalf("Error creating server: %v", err)
+	}
+
+	gbs.StartServer()
+	time.Sleep(1 * time.Second)
+
+	d, _, err := gbs.serialiseClusterDigestConfigOnly()
+	if err != nil {
+		t.Fatalf("Error serialising config: %v", err)
+	}
+
+	_, fd, err := deSerialiseDigest(d)
+	if err != nil {
+		t.Fatalf("Error serialising config: %v", err)
+	}
+
+	entry, ok := (*fd)[gbs.ServerName]
+	if !ok || entry == nil {
+		t.Fatalf("Digest for server %s not found or is nil", gbs.ServerName)
+	}
+
+	if entry.nodeName != gbs.ServerName {
+		t.Fatalf("Error serialising config digest: expected %s, got %s", gbs.ServerName, entry.nodeName)
+	}
+
+	time.Sleep(1 * time.Second)
+	gbs.Shutdown()
+
+}
+
+// TODO ALL TESTS BELOW NEED TO HAVE ASSERTIONS AND REMOVE LOGS
 
 func TestSerialiseDigest(t *testing.T) {
 

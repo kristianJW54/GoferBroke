@@ -31,7 +31,7 @@ func TestServerNameLengthError(t *testing.T) {
 		Internal: &InternalOptions{},
 	}
 
-	_, err := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
+	_, err := NewServer("test-server", config, nil, nodeConfig, "localhost", "8081", "8080", lc)
 	if err == nil {
 		t.Errorf("TestServerNameLengthError should have returned an error")
 	}
@@ -128,9 +128,9 @@ func TestGossipSignal(t *testing.T) {
 		Internal: &InternalOptions{},
 	}
 
-	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server2", config, nodeConfig, "localhost", "8082", "8083", lc)
-	gbs3, _ := NewServer("test-server3", config, nodeConfig, "localhost", "8085", "8084", lc)
+	gbs, _ := NewServer("test-server", config, nil, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server2", config, nil, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs3, _ := NewServer("test-server3", config, nil, nodeConfig, "localhost", "8085", "8084", lc)
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
@@ -194,8 +194,8 @@ func TestGossipDifferentStates(t *testing.T) {
 		Internal: testConfig,
 	}
 
-	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8080", lc)
+	gbs, _ := NewServer("test-server", config, nil, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs2, _ := NewServer("test-server", config, nil, nodeConfig, "localhost", "8082", "8080", lc)
 
 	UpdateServerNameAndTime(t, gbs, 1735988400)
 	UpdateServerNameAndTime(t, gbs2, 1735988401)

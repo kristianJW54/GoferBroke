@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
-	"log"
 	"time"
 )
 
@@ -86,82 +85,6 @@ type tmpParticipant struct {
 type clusterDelta struct {
 	sender string
 	delta  map[string]*tmpParticipant
-}
-
-//=========================================================
-// Deserialise Config Checksum
-//=========================================================
-
-func serialiseCfgCheckSumRequest(checks []string) ([]byte, error) {
-
-	// Payload length - uint16
-	// List element size - uint8
-	// Payload
-
-	switch l := len(checks); l {
-	case 1:
-		log.Printf("DID THIS")
-		length := uint16(2 + 1 + len(checks[0]))
-		offset := 0
-		buff := make([]byte, length)
-		binary.BigEndian.PutUint16(buff, length)
-		offset += 2
-		buff[offset] = byte(l)
-		offset++
-		copy(buff[offset:], checks[0])
-		return buff, nil
-	case 2:
-		length := uint16(2 + 1 + len(checks[0]) + len(checks[1]))
-		offset := 0
-		buff := make([]byte, length)
-		binary.BigEndian.PutUint16(buff, length)
-		offset += 2
-		buff[offset] = byte(l)
-		offset++
-		copy(buff[offset:], checks[0])
-		offset += len(checks[0])
-		copy(buff[offset:], checks[1])
-		return buff, nil
-	default:
-		return nil, fmt.Errorf("checks must not exceed length two")
-	}
-
-}
-
-func deserialiseCfgChecksumResponse(data []byte) ([]string, error) {
-
-	// Length of Payload
-	// Size if checks list
-
-	length := binary.BigEndian.Uint16(data[0:2])
-	size := data[2]
-
-	used := uint16(3)
-
-	switch size {
-	case uint8(1):
-		list := make([]string, 1)
-		list[0] = string(data[used : used+64])
-		used += uint16(len(list[0]))
-		if length != used {
-			return nil, fmt.Errorf("mismatch in length of data and what was used in the buffer - %v - %v", length, used)
-		}
-		return list, nil
-	case uint8(2):
-		list := make([]string, 2)
-		list[0] = string(data[used : used+64])
-		offset := used + 64
-		used += uint16(len(list[0]))
-		list[1] = string(data[offset : offset+64])
-		used += uint16(len(list[1]))
-		if length != used {
-			return nil, fmt.Errorf("mismtach in length of data and what was used in the buffer - %v - %v", length, used)
-		}
-		return list, nil
-	default:
-		return nil, fmt.Errorf("checksum response size must be < 2")
-	}
-
 }
 
 //=========================================================
@@ -910,6 +833,57 @@ func (s *GBServer) serialiseClusterDigest() ([]byte, int, error) {
 		offset += 8 //
 
 	}
+
+	copy(digestBuf[offset:], CLRF)
+	offset += len(CLRF)
+
+	return digestBuf, length, nil
+
+}
+
+func (s *GBServer) serialiseClusterDigestConfigOnly() ([]byte, int, error) {
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	length := 7 + 2 //Including CLRF at the end
+
+	// Include sender's name
+	length += 1
+	length += len(s.ServerName)
+
+	// This seems like a duplication - but the same deserialise delta method will be used to deconstruct into a tmpClusterDelta
+	// For that a sender name field is populated and a tmpParticipant
+	length += 1 + len(s.ServerName) + 8 // 1 byte for name length + name length + size of version
+
+	digestBuf := make([]byte, length)
+
+	offset := 0
+
+	digestBuf[0] = DIGEST_TYPE
+	offset++
+	binary.BigEndian.PutUint32(digestBuf[offset:], uint32(length))
+	offset += 4
+	binary.BigEndian.PutUint16(digestBuf[offset:], uint16(1)) // Just including our self
+	offset += 2
+
+	digestBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(digestBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	self := cm.participants[s.ServerName]
+
+	nameLen := len(self.name)
+	digestBuf[offset] = uint8(nameLen)
+	offset++
+	copy(digestBuf[offset:], self.name)
+	offset += nameLen
+
+	binary.BigEndian.PutUint64(digestBuf[offset:], uint64(self.configMaxVersion))
+
+	offset += 8 //
 
 	copy(digestBuf[offset:], CLRF)
 	offset += len(CLRF)

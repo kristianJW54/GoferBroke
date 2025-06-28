@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
-	"net"
 	"sync"
 	"testing"
 	"time"
@@ -706,88 +705,6 @@ func TestAddGSADeltaToMap(t *testing.T) {
 	}
 
 	//log.Printf("keyCheck: version %v - value %s", keyCheck.Version, keyCheck.Value)
-
-}
-
-// Test Add GSA To Map error handling
-
-func TestLiveGossip(t *testing.T) {
-
-	//now := time.Now().Unix()
-
-	lc := net.ListenConfig{}
-
-	ip := "127.0.0.1" // Use the full IP address
-	port := "8081"
-
-	// Initialize config with the seed server address
-	config := &GbClusterConfig{
-		SeedServers: []*Seeds{
-			{
-				Host: ip,
-				Port: port,
-			},
-		},
-		Cluster: &ClusterOptions{},
-	}
-
-	nodeConfig := &GbNodeConfig{}
-
-	gbs, _ := NewServer("test-server", config, nodeConfig, "localhost", "8081", "8080", lc)
-	gbs2, _ := NewServer("test-server", config, nodeConfig, "localhost", "8082", "8083", lc)
-	gbs3, _ := NewServer("test-server", config, nodeConfig, "localhost", "8085", "8084", lc)
-
-	go gbs.StartServer()
-	time.Sleep(1 * time.Second)
-
-	//testKV := map[string]*Delta{
-	//	"test:TEST":        &Delta{keyGroup: TEST_DKG, key: "TEST", valueType: STRING_V, version: now, value: []byte("Hey - I am going to be the first string to be gossiped in GoferBroke :)")},
-	//	"test:SECOND_TEST": &Delta{keyGroup: TEST_DKG, key: "SECOND_TEST", valueType: STRING_V, version: now, value: []byte("And I am the Second! Although no one will remember me :(")},
-	//}
-
-	go gbs2.StartServer()
-	time.Sleep(1 * time.Second)
-
-	//gbs2.clusterMapLock.Lock()
-	//gbs2.clusterMap.participants[gbs2.ServerName].keyValues["SECOND_TEST"] = testKV["SECOND_TEST"]
-	//gbs2.clusterMapLock.Unlock()
-
-	go gbs3.StartServer()
-	time.Sleep(1 * time.Second)
-
-	//gbs.clusterMapLock.Lock()
-	//gbs.clusterMap.participants[gbs.ServerName].keyValues["test:TEST"] = testKV["test:TEST"]
-	//gbs.clusterMap.participants[gbs.ServerName].keyValues["test:SECOND_TEST"] = testKV["test:SECOND_TEST"]
-	//gbs.clusterMapLock.Unlock()
-
-	time.Sleep(6 * time.Second)
-
-	gbs2.ServerContext.Done()
-	gbs3.ServerContext.Done()
-	gbs.ServerContext.Done()
-
-	go gbs2.Shutdown()
-	go gbs3.Shutdown()
-	go gbs.Shutdown()
-
-	time.Sleep(1 * time.Second)
-
-	gbs.logActiveGoRoutines()
-	gbs2.logActiveGoRoutines()
-	gbs3.logActiveGoRoutines()
-
-	time.Sleep(2 * time.Second)
-
-	if value, exists := gbs3.clusterMap.participants[gbs.ServerName].keyValues["test:TEST"]; exists {
-		log.Printf("%s - value: %s", gbs3.ServerName, string(value.Value))
-	} else {
-		log.Printf("no value :(")
-	}
-	if value, exists := gbs3.clusterMap.participants[gbs.ServerName].keyValues["test:SECOND_TEST"]; exists {
-		log.Printf("%s - value: %s", gbs3.ServerName, string(value.Value))
-	} else {
-		log.Printf("no value :(")
-	}
 
 }
 

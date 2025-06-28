@@ -36,7 +36,7 @@ func TestKeyPathFlatten(t *testing.T) {
 		fmt.Println(path)
 	}
 
-	result, err := GetByPath(sch, cfg, paths[1])
+	result, _, err := GetByPath(sch, cfg, paths[1])
 	if err != nil {
 		t.Errorf("Error getting by path: %v", err)
 	}
@@ -64,10 +64,6 @@ func TestGenerateConfigDeltas(t *testing.T) {
 	err = GenerateConfigDeltas(sch, cfg, part)
 	if err != nil {
 		t.Errorf("Error generating deltas: %v", err)
-	}
-
-	for k, v := range part.keyValues {
-		log.Printf("Key: %s, Value: %v", k, v.Value)
 	}
 
 }
@@ -237,7 +233,7 @@ func TestGetComplexConfigSchema(t *testing.T) {
 		valCheck := cfg.ComplexNest.ArrayMapTest[1]["two"]
 		t.Logf("Want for value of two: %d", valCheck)
 
-		val, err := GetByPath(schema, &cfg, "ComplexNest.ArrayMapTest.1.two")
+		val, _, err := GetByPath(schema, &cfg, "ComplexNest.ArrayMapTest.1.two")
 		if err != nil {
 			t.Errorf("Error getting value: %v", err)
 		}
@@ -257,7 +253,7 @@ func TestGetComplexConfigSchema(t *testing.T) {
 		valCheck := cfg.ComplexNest.MapTest["bar"][0]
 		t.Logf("Want for value of bar[0]: %d", valCheck)
 
-		val, err := GetByPath(schema, &cfg, "ComplexNest.MapTest.bar.0")
+		val, _, err := GetByPath(schema, &cfg, "ComplexNest.MapTest.bar.0")
 		if err != nil {
 			t.Errorf("Error getting value: %v", err)
 		}
