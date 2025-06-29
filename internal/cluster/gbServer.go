@@ -527,9 +527,9 @@ func (s *GBServer) StartServer() {
 		// Debug logs here
 		s.startupSync.Add(1)
 		s.initSelf()
-		if !s.isSeed {
-			s.discoveryPhase = true
-		}
+		//if !s.isSeed {
+		//	s.discoveryPhase = true
+		//}
 	}
 
 	//-----------------------------------------------

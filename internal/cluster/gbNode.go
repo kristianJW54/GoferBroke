@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
@@ -114,7 +115,24 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
 	r, err := client.waitForResponseAndBlock(resp)
 	if err != nil {
-		return fmt.Errorf("error in response from config checksum - %v", err)
+		handledErr := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
+
+			// Loop through and check if we have our expected error
+			for _, ge := range gbErrors {
+				if errors.Is(ge, Errors.ConfigChecksumFailErr) {
+					// Handle here...
+					// TODO Now we send a config delta digest and wait for a response
+				}
+			}
+
+			// Do we handle inside callback?
+
+			return err
+
+		})
+
+		return handledErr
+
 	}
 
 	// IF we get a response err of new checksum available then we need to send a digest
@@ -123,6 +141,7 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 	// IF we get an ok response we return and continue
 
 	log.Printf("config response = %s", string(r.msg))
+
 	return nil
 
 }
@@ -981,7 +1000,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	// TODO Use handle error function here
 	if err != nil && cereal == nil {
 		// TODO Need to check what the error is first
-		c.sendErr(c.ph.reqID, uint16(0), Errors.EmptyAddrMapNetworkErr.Error())
+		c.sendErr(c.ph.reqID, uint16(0), Errors.EmptyAddrMapNetworkErr.Net())
 		return
 
 	}

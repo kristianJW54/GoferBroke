@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"errors"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"testing"
@@ -62,4 +63,32 @@ func TestWrappedErrorConfigExample(t *testing.T) {
 	)
 
 	log.Println(testErr.Error())
+
+	errs := Errors.ExtractGBErrors(testErr)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 GBError, got %d", len(errs))
+	}
+
+	log.Printf("error extracted = %v", errs[0])
+
+	finalErr := Errors.UnwrapGBErrors(errs)
+
+	log.Println(finalErr[0])
+
+	handledErr := Errors.HandleError(testErr, func(gbErrors []*Errors.GBError) error {
+
+		for _, gbError := range gbErrors {
+			if errors.Is(gbError, Errors.ConfigChecksumFailErr) {
+				log.Printf("found the error I was looking for :)")
+				// Do something
+				return gbError
+			}
+		}
+
+		return nil
+
+	})
+
+	log.Println(handledErr)
+
 }

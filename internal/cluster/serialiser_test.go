@@ -26,7 +26,9 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 						keyValues:  make(map[string]*Delta, 1),
 						maxVersion: 0,
 					}
-					part.keyValues[_ADDRESS_] = &Delta{
+					key := MakeDeltaKey(ADDR_DKG, _ADDRESS_)
+					part.keyValues[key] = &Delta{
+						KeyGroup:  ADDR_DKG,
 						Key:       _ADDRESS_,
 						Version:   0,
 						ValueType: D_STRING_TYPE,
@@ -51,15 +53,18 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 						maxVersion: 0,
 					}
 					if i == 2 {
-						part.keyValues[_NODE_CONNS_] = &Delta{
+						key := MakeDeltaKey(SYSTEM_DKG, _ADDRESS_)
+						part.keyValues[key] = &Delta{
+							KeyGroup:  SYSTEM_DKG,
 							Key:       _NODE_CONNS_,
 							Version:   0,
 							ValueType: D_INT_TYPE,
 							Value:     []byte{0},
 						}
 					} else {
-						part.keyValues[_ADDRESS_] = &Delta{
-							Key:       _ADDRESS_,
+						key := MakeDeltaKey(ADDR_DKG, _ADDRESS_)
+						part.keyValues[key] = &Delta{
+							KeyGroup:  ADDR_DKG,
 							Version:   0,
 							ValueType: D_STRING_TYPE,
 							Value:     []byte("127.0.0.1"),
@@ -83,7 +88,9 @@ func TestDiscoveryRequestSerialiser(t *testing.T) {
 						keyValues:  make(map[string]*Delta, 1),
 						maxVersion: 0,
 					}
-					part.keyValues[_NODE_CONNS_] = &Delta{
+					key := MakeDeltaKey(SYSTEM_DKG, _ADDRESS_)
+					part.keyValues[key] = &Delta{
+						KeyGroup:  SYSTEM_DKG,
 						Key:       _NODE_CONNS_,
 						Version:   0,
 						ValueType: D_INT_TYPE,
@@ -179,8 +186,8 @@ func TestDiscoveryResponse(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		name := gbs.clusterMap.participantArray[i]
 		knownAddr[name] = make([]string, 2)
-		knownAddr[name][0] = gbs.clusterMap.participants[name].keyValues[_ADDRESS_].Key
-		knownAddr[name][1] = gbs.clusterMap.participants[name].keyValues["CLOUD"].Key
+		knownAddr[name][0] = gbs.clusterMap.participants[name].keyValues[MakeDeltaKey(ADDR_DKG, _ADDRESS_)].Key
+		knownAddr[name][1] = gbs.clusterMap.participants[name].keyValues[MakeDeltaKey(ADDR_DKG, "CLOUD")].Key
 	}
 
 	log.Printf("data = %+s", knownAddr)

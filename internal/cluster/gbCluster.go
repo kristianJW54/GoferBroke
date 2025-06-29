@@ -686,6 +686,35 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 // Discovery Phase
 //=======================================================
 
+func (s *GBServer) runDiscovery(ctx context.Context) error {
+
+	seed, err := s.retrieveASeedConn(false) // We only retrieve a random seed if there is a lot of cluster load
+	if err != nil {
+		return err
+	}
+
+	err = s.conductDiscovery(ctx, seed)
+	if err != nil {
+		handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
+			for _, ge := range gbError {
+				log.Printf("gb error = %v", ge)
+			}
+			return gbError[len(gbError)-1]
+		})
+
+		if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
+			log.Printf("%s - exiting discovery phase", s.PrettyName())
+			s.discoveryPhase = false
+		} else {
+			log.Printf("discovery phase failed")
+		}
+	}
+
+	log.Printf("discovery phase active - aborting gossip round")
+	return nil
+
+}
+
 // Discovery Request for node during discovery phase - will take the gossip rounds context and timeout
 // TODO - Should this be in the node file as only nodes will be making requests - responses are then general to the cluster ? OR keep it together?
 func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte, error) {
@@ -1463,20 +1492,10 @@ func (s *GBServer) startGossipProcess() bool {
 				continue
 			}
 
-			// Create a context for the gossip round
 			ctx, cancel := context.WithTimeout(s.ServerContext, 4*time.Second)
-
-			// go s.runPhiCheck()
-
-			// Start a new gossip round
 			s.gossip.gossWg.Add(1)
-			s.startGoRoutine(s.ServerName, "main-gossip-round", func() {
-				defer s.gossip.gossWg.Done()
-				defer cancel()
-
-				s.startGossipRound(ctx)
-
-			})
+			s.startGossipRound(ctx)
+			cancel()
 
 		case gossipState := <-s.gossip.gossipControlChannel:
 			if !gossipState {
@@ -1497,53 +1516,31 @@ func (s *GBServer) startGossipProcess() bool {
 
 func (s *GBServer) startGossipRound(ctx context.Context) {
 
-	if s.flags.isSet(SHUTTING_DOWN) {
-		log.Printf("server shutting down - exiting gossip round")
-		return
-	}
-
-	defer s.endGossip() // Ensure gossip state is reset when the process ends
-	defer s.clearGossipingWithMap()
+	start := time.Now()
+	defer func() {
+		log.Printf("Gossip round took: %.3fms", float64(time.Since(start))/1e6)
+		s.endGossip()
+		s.clearGossipingWithMap()
+		s.gossip.gossWg.Done()
+	}()
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
-	log.Printf("are we in a discovery phase ====== %v", s.discoveryPhase)
+	//log.Printf("are we in a discovery phase ====== %v", s.discoveryPhase)
 	if s.discoveryPhase {
-
-		// This is ok for now - we go back to the first seed we bootstrapped with - if it doesn't work we may need to fall back
-		// to the seed addr list and then try and find the conn from one of these?
-		seed, err := s.retrieveASeedConn(false)
-		if err != nil {
-			log.Printf("%s - Cannot retrieve a connection to gossip round", s.PrettyName())
-			return
-		}
-
-		err = s.conductDiscovery(s.ServerContext, seed)
-		if err != nil {
-			handledErr := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
-				for _, ge := range gbErrors {
-					log.Printf("gb error = %v", ge)
-				}
-				// Return the most informative one
-				return gbErrors[len(gbErrors)-1]
-			})
-
-			if errors.Is(handledErr, Errors.EmptyAddrMapNetworkErr) {
-				log.Printf("%s - exiting discovery phase", s.PrettyName())
-				s.discoveryPhase = false
-			} else {
-				log.Printf("Discovery failed: %v", err)
+		go func() {
+			err := s.runDiscovery(ctx)
+			if err != nil {
+				log.Printf("%s - Gossip discovery failed: %v", s.PrettyName(), err)
 			}
-
-		}
-		return
-
+		}()
 	}
 
 	ns := s.gbClusterConfig.getNodeSelection()
-	pl := len(s.clusterMap.participantArray) - 1
-
-	if int(ns) > pl {
-		ns = 1 // Fallback for now, we can scale once we have enough participants to do multiple node gossip
+	s.clusterMapLock.RLock()
+	pl := len(s.clusterMap.participantArray)
+	s.clusterMapLock.RUnlock()
+	if int(ns) > pl-1 {
+		ns = 1
 	}
 
 	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, int(ns), s.String())
@@ -1554,48 +1551,31 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	}
 
 	var wg sync.WaitGroup
+	// We could add a semaphore channel for maximum amount of nodes allowed to be selected limiting the potential for lots of node gossip round spawns
 
-	for i, index := range indexes {
-
+	for _, idx := range indexes {
 		s.clusterMapLock.RLock()
-
-		wg.Add(1)
-
-		selectedNode := s.clusterMap.participantArray[index]
-		selectedParticipant := s.clusterMap.participants[selectedNode]
-
+		nodeID := s.clusterMap.participantArray[idx]
+		participant := s.clusterMap.participants[nodeID]
 		s.clusterMapLock.RUnlock()
 
-		if selectedParticipant.paDetection.dead {
-			log.Printf("%s - node %s is suspected dead - NOT GOSSIPING", s.PrettyName(), selectedNode)
-
-			//TODO Handle --- could move to a dead node store with last contact time
-			// Background process can check how long it's been or how many rounds it's missed and close connection on policy
-			// If we elsewhere we get gossip from it then we update it's time in the store and let background process remove it from store?
+		if participant.paDetection.dead {
+			// Add event here and also handle with background task
 			continue
 		}
 
-		nodeCtx, nodeCancel := context.WithTimeout(ctx, 2*time.Second) // or some other value
+		wg.Add(1)
+		go func(node string) {
+			defer wg.Done()
+			nodeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
 
-		// TODO We need to collect the errors and make a decision on what to do with them based on the error itself
-		s.startGoRoutine(s.PrettyName(), fmt.Sprintf("gossip-round-%v", i), func() {
-			defer func() {
-				//done <- struct{}{}
-				defer wg.Done()
-				defer nodeCancel()
+			s.updateSelfInfo(time.Now().Unix(), func(p *Participant, t int64) error {
+				return updateHeartBeat(p, t)
+			})
 
-				s.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
-					err := updateHeartBeat(participant, timeOfUpdate)
-					if err != nil {
-						log.Printf("Error updating heartbeat: %v", err)
-					}
-					return nil
-				})
-
-			}()
-			s.gossipWithNode(nodeCtx, selectedNode)
-		})
-
+			s.gossipWithNode(nodeCtx, node)
+		}(nodeID)
 	}
 
 	// Wait for completion or timeout
@@ -1620,40 +1600,30 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
-	defer func() {
-		s.endGossip()
-		s.clearGossipingWithMap()
-	}()
-
 	if s.flags.isSet(SHUTTING_DOWN) {
-		log.Printf("pulled from gossip with node")
 		return
 	}
 
 	//------------- Dial Check -------------//
 
-	//s.serverLock.Lock()
 	conn, exists, err := s.getNodeConnFromStore(node)
-	// We unlock here and let the dial methods re-acquire the lock if needed - we don't assume we will need it
-	//s.serverLock.Unlock()
-	// TODO Fix nil pointer deference here
 	if err == nil && !exists {
-		log.Printf("DIALLING")
-		err := s.connectToNodeInMap(ctx, node)
-		if err != nil {
-			log.Printf("error in gossip with node %s ----> %v", node, err)
-			return
-		}
-		return
-	} else if err != nil {
-		log.Printf("error in gossip with node %s ----> %v", node, err)
+		go func() {
+			dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			err := s.connectToNodeInMap(dialCtx, node)
+			if err != nil {
+				// TODO Need to make GBError and add to an error event
+				log.Printf("%s - dial node in map failed: %v", s.PrettyName(), err)
+			}
+		}()
 		return
 	}
-
-	err = s.storeGossipingWith(node)
 	if err != nil {
 		return
 	}
+
+	_ = s.storeGossipingWith(node)
 
 	var stage int
 
@@ -1667,12 +1637,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			log.Printf("%s - Gossip round canceled at stage %d: %v", s.PrettyName(), stage, err)
-		} else {
-			log.Printf("Error in gossip round (stage %d): %v", stage, err)
-			return
-		}
 		return
 	}
 
@@ -1680,16 +1644,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	stage = 2
 
 	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
-	if err != nil {
-		log.Printf("deserialise GSA failed: %v", err)
-	}
-
-	// Use CD Value to add to process and add to out map
-	if cdValue != nil {
-		err = s.addGSADeltaToMap(cdValue)
-		if err != nil {
-			log.Printf("addGSADeltaToMap failed: %v", err)
-		}
+	if err == nil && cdValue != nil {
+		_ = s.addGSADeltaToMap(cdValue)
 	}
 
 	//------------- GOSS_ACK Stage 3 -------------//
@@ -1702,35 +1658,16 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	}
 
 	pay, err := prepareRequest(ack, 1, GOSS_ACK, uint16(0), resp.respID)
-	if err != nil {
-		return
+	if err == nil {
+		conn.mu.Lock()
+		conn.enqueueProto(pay)
+		conn.mu.Unlock()
 	}
 
-	conn.mu.Lock()
-	conn.enqueueProto(pay)
-	conn.mu.Unlock()
+	//------------- Handle Completion -------------//
 
-	//------------- Handle Completion -------------
+	_ = s.recordPhi(node)
 
-	err = s.recordPhi(node)
-	if err != nil {
-		log.Printf("error in gossip with node %s ----> %v", node, err)
-	}
-
-	if err != nil {
-		log.Printf("Error in gossip round (stage %d): %v", stage, err)
-	}
-
-	// Update Phi Accrual for Failure Detection
-
-	select {
-	case <-ctx.Done():
-		//log.Printf("%s - Gossip round canceled at stage %d: %v", s.ServerName, stage, ctx.Err())
-		return
-	default:
-		// Signal that this gossip task has completed
-		//log.Printf("%s - Gossip with node %s completed successfully", s.ServerName, node)
-	}
 }
 
 // ======================
