@@ -43,12 +43,17 @@ func (e *GBError) getErrLevelTag() string {
 
 // Implement `error` interface
 func (e *GBError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+
 	base := fmt.Sprintf("[%s] %d: %s -x", e.getErrLevelTag(), e.Code, e.ErrMsg)
 
-	var nested *GBError
-	if errors.As(e.Err, &nested) {
-		return base + " " + nested.trimmedError()
+	// Recursively unwrap any nested GBErrors
+	if e.Err != nil {
+		return base + " " + e.Err.Error()
 	}
+
 	return base
 }
 
@@ -60,6 +65,7 @@ func (e *GBError) trimmedError() string {
 // ChainGBErrorf creates a new GBError using a base GBError as template,
 // applies formatted message, and wraps the given cause (can be nil).
 func ChainGBErrorf(template *GBError, cause error, format string, args ...any) *GBError {
+
 	formatted := fmt.Sprintf(format, args...)
 	return &GBError{
 		Code:     template.Code,
@@ -78,6 +84,8 @@ func (e *GBError) Cause(err error) *GBError {
 	e.Err = err
 	return e
 }
+
+// TODO we should try to preserve the formatted string message as well
 
 func (e *GBError) Net() string {
 	return e.Error() + "\r\n"
@@ -130,7 +138,7 @@ func ExtractGBErrors(err error) []string {
 	errStr := err.Error()
 	matches := gbErrorPattern.FindAllString(errStr, -1)
 
-	//log.Printf("Extracted GBErrors: %v", matches)
+	log.Printf("Extracted GBErrors: %v", matches)
 
 	return matches
 }
@@ -153,6 +161,8 @@ func (e *GBError) ToError() error {
 func (e *GBError) ToBytes() []byte {
 	return []byte(e.Error())
 }
+
+// TODO This needs fixing
 
 func BytesToError(errMsg []byte) error {
 	if len(errMsg) == 0 {
@@ -327,6 +337,7 @@ const (
 	NIL_DIGEST_CODE                   = 18
 	NAME_NOT_FOUND_IN_FULLDIGEST_CODE = 19
 	CONFIG_CHECKSUM_FAIL_CODE         = 20
+	CONFIG_AVAILABLE_CODE             = 21
 )
 
 // Internal Error codes
@@ -371,6 +382,7 @@ var KnownNetworkErrors = map[int]*GBError{
 	NIL_DIGEST_CODE:                   &GBError{Code: NIL_DIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "full digest returned is a nil reference/pointer"},
 	NAME_NOT_FOUND_IN_FULLDIGEST_CODE: &GBError{Code: NAME_NOT_FOUND_IN_FULLDIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "full digest map entry not found"},
 	CONFIG_CHECKSUM_FAIL_CODE:         &GBError{Code: CONFIG_CHECKSUM_FAIL_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "config checksum does not match"},
+	CONFIG_AVAILABLE_CODE:             &GBError{Code: CONFIG_AVAILABLE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "config checksum mismatch new config available"},
 }
 
 var KnownInternalErrors = map[int]*GBError{
@@ -417,6 +429,7 @@ var (
 	ConnectSeedErr          = KnownInternalErrors[CONNECT_TO_SEED_CODE]
 	ConfigDeltaVersionErr   = KnownInternalErrors[GET_CONFIG_DELTAS_FOR_RECON_CODE]
 	SerialiseDeltaErr       = KnownInternalErrors[SERIALISE_DELTA_CODE]
+	NoRequestIDErr          = KnownInternalErrors[NO_REQUEST_ID_CODE]
 )
 
 var (
@@ -424,7 +437,6 @@ var (
 	DeserialiseLengthErr   = KnownNetworkErrors[DESERIALISE_LENGTH_CODE]
 	AddrMapErr             = KnownNetworkErrors[ADDR_MAP_CODE]
 	GossipDeferredErr      = KnownNetworkErrors[GOSSIP_DEFERRED_CODE]
-	NoRequestIDErr         = KnownNetworkErrors[NO_REQUEST_ID_CODE]
 	EmptyAddrMapNetworkErr = KnownNetworkErrors[EMPTY_ADDR_MAP_CODE]
 	ConductingDiscoveryErr = KnownNetworkErrors[CONDUCTING_DISCOVERY_CODE]
 	NoDigestErr            = KnownNetworkErrors[NO_DIGEST_CODE]
@@ -432,4 +444,5 @@ var (
 	NilDigestErr           = KnownNetworkErrors[NIL_DIGEST_CODE]
 	FullDigestMapEntryErr  = KnownNetworkErrors[NAME_NOT_FOUND_IN_FULLDIGEST_CODE]
 	ConfigChecksumFailErr  = KnownNetworkErrors[CONFIG_CHECKSUM_FAIL_CODE]
+	ConfigAvailableErr     = KnownNetworkErrors[CONFIG_AVAILABLE_CODE]
 )

@@ -89,7 +89,7 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 
 func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
-	ctx, cancel := context.WithTimeout(s.ServerContext, 1*time.Second)
+	ctx, cancel := context.WithTimeout(s.ServerContext, 3*time.Second)
 	defer cancel()
 
 	reqID, err := s.acquireReqID()
@@ -118,14 +118,22 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 		handledErr := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
 
 			// Loop through and check if we have our expected error
+
+			// IF we get a response err of new checksum available then we need to send a digest
+			// IF we get a response err of checksum mismatch then we fail early and shutdown
 			for _, ge := range gbErrors {
-				if errors.Is(ge, Errors.ConfigChecksumFailErr) {
+				if errors.Is(ge, Errors.ConfigAvailableErr) {
 					// Handle here...
-					// TODO Now we send a config delta digest and wait for a response
+					log.Printf("applying new config...")
+					//err := s.sendClusterConfigDigest(client)
+					//if err != nil {
+					//	return err
+					//}
+				}
+				if errors.Is(ge, Errors.ConfigChecksumFailErr) {
+					return Errors.ChainGBErrorf(&Errors.GBError{ErrLevel: Errors.SYSTEM_ERR_LEVEL, ErrMsg: "system error shutting down"}, err, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
 				}
 			}
-
-			// Do we handle inside callback?
 
 			return err
 
@@ -135,12 +143,67 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
 	}
 
-	// IF we get a response err of new checksum available then we need to send a digest
-	// IF we get a response err of checksum mismatch then we fail early and shutdown
-
 	// IF we get an ok response we return and continue
 
 	log.Printf("config response = %s", string(r.msg))
+
+	return nil
+
+}
+
+func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
+
+	d, _, err := s.serialiseClusterDigestConfigOnly()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(s.ServerContext, 3*time.Second)
+	defer cancel()
+
+	reqID, err := s.acquireReqID()
+	if err != nil {
+		return fmt.Errorf("send cluster config digest - %v", err)
+	}
+
+	pay, err := prepareRequest(d, 1, CFG_RECON, reqID, uint16(0))
+	if err != nil {
+		return fmt.Errorf("send cluster config digest - %v", err)
+	}
+
+	rsp := client.qProtoWithResponse(ctx, reqID, pay, false)
+
+	resp, err := client.waitForResponseAndBlock(rsp)
+	if err != nil {
+		return fmt.Errorf("send cluster config digest - %v", err)
+	}
+	if resp.msg == nil {
+		return fmt.Errorf("send cluster config digest - got nil response")
+	}
+
+	cd, err := deserialiseDelta(resp.msg)
+	if err != nil {
+		return fmt.Errorf("send cluster config digest - %v", err)
+	}
+
+	s.clusterMapLock.Lock()
+	self := s.GetSelfInfo()
+	s.clusterMapLock.Unlock()
+
+	if len(cd.delta) > 1 {
+		return fmt.Errorf("send cluster config digest - got %d delta length - should be 1", len(cd.delta))
+	}
+
+	if delta, ok := cd.delta[s.ServerName]; ok {
+		for _, v := range delta.keyValues {
+			err := self.Store(v)
+			if err != nil {
+				return fmt.Errorf("send cluster config digest - %v", err)
+			}
+		}
+	} else {
+		return fmt.Errorf("send cluster config digest - name not found in cluster delta recieved - %v", s.ServerName)
+	}
 
 	return nil
 
@@ -151,7 +214,7 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 // will return that error and trigger logic to either retry or exit the process
 func (s *GBServer) connectToSeed() error {
 
-	ctx, cancel := context.WithTimeout(s.ServerContext, 1*time.Second)
+	ctx, cancel := context.WithTimeout(s.ServerContext, 3*time.Second)
 	defer cancel()
 
 	conn, err := s.dialSeed()

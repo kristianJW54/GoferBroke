@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"io"
 	"log"
 	"net"
@@ -761,7 +760,8 @@ func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 		return msg, nil
 	case err := <-rsp.err:
 		log.Printf("err in wait for response for %s-%v", c.srv.PrettyName(), err)
-		return responsePayload{}, Errors.WrapGBError(Errors.ResponseErr, err)
+		// TODO Need better handling of response error here to preserve messaging and also chain responseErr
+		return responsePayload{}, err
 	}
 }
 

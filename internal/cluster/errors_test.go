@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"errors"
+	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"testing"
@@ -11,10 +12,12 @@ func TestGBErrors(t *testing.T) {
 	// Step 1: Create deepest GBError
 	base := Errors.GossipDeferredErr
 
+	log.Println("base = ", base)
+
 	// Step 3: Chain a formatted GBError on top (ConfigChecksumFailErr)
 	top := Errors.ChainGBErrorf(
 		base,
-		base,
+		Errors.NodeNotFoundErr,
 		"testing errors to unwrap",
 	)
 
@@ -31,19 +34,23 @@ func TestGBErrors(t *testing.T) {
 }
 
 func TestGBErrorSandwichWrap(t *testing.T) {
+
 	err := Errors.ChainGBErrorf(Errors.ResponseErr, Errors.GossipDeferredErr, "response failed after %d retries", 3)
 	err2 := Errors.ChainGBErrorf(Errors.DiscoveryReqErr, err, "discovery request to %s failed", "node-5")
 
+	wantErrCount := 3
+
 	log.Println("Full Error Output:\n", err2)
 
-	errs := Errors.ExtractGBErrors(err2)
-	if len(errs) != 3 {
-		t.Fatalf("expected 3 GBErrors, got %d", len(errs))
-	}
-
-	for i, e := range errs {
-		log.Printf("Match %d: %q", i+1, e)
-	}
+	_ = Errors.HandleError(err2, func(gbErrors []*Errors.GBError) error {
+		if len(gbErrors) != wantErrCount {
+			return fmt.Errorf("expected %d GB errors, got %d", wantErrCount, len(gbErrors))
+		}
+		for _, gbErr := range gbErrors {
+			log.Printf("gbErr: %+v\n", gbErr)
+		}
+		return nil
+	})
 }
 
 func TestWrappedErrorConfigExample(t *testing.T) {
@@ -90,5 +97,30 @@ func TestWrappedErrorConfigExample(t *testing.T) {
 	})
 
 	log.Println(handledErr)
+
+}
+
+func TestWrapAndFmtError(t *testing.T) {
+
+	err1 := Errors.NoRequestIDErr
+
+	err2 := fmt.Errorf("calling from test: %w", err1)
+
+	err3 := Errors.WrapGBError(Errors.GossipDeferredErr, err2)
+
+	// Can also use Chain here - maybe should standardise to use chain and remove Wrap??
+	//err3 := Errors.ChainGBErrorf(Errors.GossipDeferredErr, err2, "")
+
+	err4 := Errors.ChainGBErrorf(Errors.NodeNotFoundErr, err3, "hello :)")
+
+	_ = Errors.HandleError(err4, func(gbErrors []*Errors.GBError) error {
+
+		for _, gbError := range gbErrors {
+			log.Printf("found an error --> %v", gbError)
+		}
+
+		return nil
+
+	})
 
 }
