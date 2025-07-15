@@ -832,7 +832,7 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 
 		if err := s.ComputeAdvertiseAddr(conn); err != nil {
 			conn.Close()
-			return nil, Errors.WrapGBError(Errors.DialSeedErr, err)
+			return nil, Errors.ChainGBErrorf(Errors.DialSeedErr, err, "")
 		}
 
 		//s.nodeConnStore.Store(seed.nodeID, conn) // TODO Make sure we are storing elsewhere
@@ -860,7 +860,7 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 
 		if err := s.ComputeAdvertiseAddr(conn); err != nil {
 			conn.Close()
-			return nil, Errors.WrapGBError(Errors.DialSeedErr, err)
+			return nil, Errors.ChainGBErrorf(Errors.DialSeedErr, err, "")
 		}
 
 		//s.nodeConnStore.Store(addr.String(), conn) // TODO Make sure we are storing elsewhere

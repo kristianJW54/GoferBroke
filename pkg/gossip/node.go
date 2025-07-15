@@ -136,6 +136,7 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 	gbs, err := cluster.NewServer(
 		node.Name,
 		config.config,
+		nil,
 		node.config,
 		node.Host,
 		node.Port,
@@ -143,7 +144,7 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 		net.ListenConfig{},
 	)
 	if err != nil {
-		return nil, Errors.WrapGBError(Errors.ClusterConfigErr, err)
+		return nil, Errors.ChainGBErrorf(Errors.ClusterConfigErr, err, "")
 	}
 
 	newNode := &Node{

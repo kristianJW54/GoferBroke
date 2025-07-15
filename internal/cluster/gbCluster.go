@@ -527,7 +527,7 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 						})
 
 					} else {
-						return Errors.WrapGBError(Errors.AddGSAErr, err)
+						return Errors.ChainGBErrorf(Errors.AddGSAErr, err, "")
 					}
 
 				}
@@ -731,7 +731,7 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 	dreq, err := s.serialiseKnownAddressNodes(knownNodes)
 	if err != nil {
 		// TODO Need to error handle serialisers
-		return nil, Errors.WrapGBError(Errors.DiscoveryReqErr, err)
+		return nil, Errors.ChainGBErrorf(Errors.DiscoveryReqErr, err, "")
 	}
 
 	reqId, err := s.acquireReqID()
@@ -761,7 +761,7 @@ func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte
 	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
 		log.Printf("GOT A DISCOVERY ERROR = %s", err.Error())
-		return nil, Errors.WrapGBError(Errors.DiscoveryReqErr, err)
+		return nil, Errors.ChainGBErrorf(Errors.DiscoveryReqErr, err, "")
 	}
 
 	log.Printf("response =============== %v", r)
@@ -815,7 +815,7 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 
 	addrMap, err := c.srv.buildAddrGroupMap(request[1:])
 	if err != nil {
-		return nil, Errors.WrapGBError(Errors.DiscoveryReqErr, err)
+		return nil, Errors.ChainGBErrorf(Errors.DiscoveryReqErr, err, "")
 	}
 
 	if len(addrMap) == 0 {
@@ -824,7 +824,7 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 
 	cereal, err := c.srv.serialiseDiscoveryAddrs(addrMap)
 	if err != nil {
-		return nil, Errors.WrapGBError(Errors.DiscoveryReqErr, err)
+		return nil, Errors.ChainGBErrorf(Errors.DiscoveryReqErr, err, "")
 	}
 
 	return cereal, nil
@@ -1227,7 +1227,7 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 
 	// Compare here - Will need to take a remaining size left over from generating our digest
 	if fd == nil {
-		return nil, Errors.WrapGBError(Errors.GossAckErr, Errors.NoDigestErr)
+		return nil, Errors.ChainGBErrorf(Errors.GossAckErr, Errors.NoDigestErr, "")
 	}
 
 	partQueue, err := s.generateParticipantHeap(sender, fd)
@@ -1241,7 +1241,7 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 			}
 		})
 		if errors.Is(handledErr, Errors.EmptyParticipantHeapErr) {
-			return nil, Errors.WrapGBError(Errors.GossAckErr, Errors.EmptyParticipantHeapErr)
+			return nil, Errors.ChainGBErrorf(Errors.GossAckErr, Errors.EmptyParticipantHeapErr, "")
 		}
 		return nil, nil
 
@@ -1257,7 +1257,7 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 
 	delta, err := s.serialiseACKDelta(selectedDeltas, deltaSize)
 	if err != nil {
-		return nil, Errors.WrapGBError(Errors.GossAckErr, err)
+		return nil, Errors.ChainGBErrorf(Errors.GossAckErr, err, "")
 	}
 
 	return delta, nil

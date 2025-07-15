@@ -122,6 +122,7 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 			// IF we get a response err of new checksum available then we need to send a digest
 			// IF we get a response err of checksum mismatch then we fail early and shutdown
 			for _, ge := range gbErrors {
+				log.Printf("ge = %s", ge)
 				if errors.Is(ge, Errors.ConfigAvailableErr) {
 					// Handle here...
 					log.Printf("applying new config...")
@@ -130,7 +131,8 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 					//	return err
 					//}
 				}
-				if errors.Is(ge, Errors.ConfigChecksumFailErr) {
+				// TODO We have to match on the code as the error msg may have changed through chaining
+				if ge.Code == Errors.ConfigChecksumFailErr.Code {
 					return Errors.ChainGBErrorf(&Errors.GBError{ErrLevel: Errors.SYSTEM_ERR_LEVEL, ErrMsg: "system error shutting down"}, err, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
 				}
 			}

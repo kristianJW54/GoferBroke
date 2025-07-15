@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"io"
 	"log"
 	"net"
@@ -729,8 +730,6 @@ func (c *gbClient) addResponseChannel(ctx context.Context, seqID int) *response 
 	return rsp
 }
 
-// TODO Need to change cleanup in line with the new qProtoWithResponse - need to run in background and cleanup once channels are drained or timeout
-
 func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 	if val, ok := c.rh.resp.Load(int(respID)); ok {
 		rsp := val.(*response)
@@ -742,8 +741,6 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 		//log.Printf("responseCleanup - cleaned up response ID %d", respID)
 	}
 }
-
-// TODO need to make generic wait for response that a caller can use to wait
 
 func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	select {
@@ -761,7 +758,7 @@ func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	case err := <-rsp.err:
 		log.Printf("err in wait for response for %s-%v", c.srv.PrettyName(), err)
 		// TODO Need better handling of response error here to preserve messaging and also chain responseErr
-		return responsePayload{}, err
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, err, "")
 	}
 }
 
@@ -783,7 +780,6 @@ func (c *gbClient) waitForResponseAsync(rsp *response, handleResponse func(respo
 
 	go func() {
 
-		// TODO May need to do later after callback is handled
 		defer c.responseCleanup(rsp, uint16(rsp.id))
 
 		resp, err := c.waitForResponse(rsp)

@@ -66,23 +66,20 @@ func (e *GBError) trimmedError() string {
 // applies formatted message, and wraps the given cause (can be nil).
 func ChainGBErrorf(template *GBError, cause error, format string, args ...any) *GBError {
 
-	formatted := fmt.Sprintf(format, args...)
+	// Build the new ErrMsg:
+	var msg string
+	if format != "" {
+		msg = fmt.Sprintf("%s — %s", template.ErrMsg, fmt.Sprintf(format, args...))
+	} else {
+		msg = template.ErrMsg
+	}
+
 	return &GBError{
 		Code:     template.Code,
 		ErrLevel: template.ErrLevel,
-		ErrMsg:   fmt.Sprintf("%s — %s", template.ErrMsg, formatted), // <-- prepend base message
-		Err:      cause,
+		ErrMsg:   msg,
+		Err:      unwrapToGBErrorFromFmt(cause),
 	}
-}
-
-func (e *GBError) Withf(format string, args ...any) *GBError {
-	e.ErrMsg = fmt.Sprintf(format, args...)
-	return e
-}
-
-func (e *GBError) Cause(err error) *GBError {
-	e.Err = err
-	return e
 }
 
 // TODO we should try to preserve the formatted string message as well
@@ -91,19 +88,15 @@ func (e *GBError) Net() string {
 	return e.Error() + "\r\n"
 }
 
-func WrapGBError(wrapperErr error, cause error) error {
-	var g *GBError
-	if errors.As(wrapperErr, &g) {
-		// Create a new GBError that wraps the cause and preserves correct formatting
-		return &GBError{
-			Code:     g.Code,
-			ErrLevel: g.ErrLevel,
-			ErrMsg:   fmt.Sprintf("%s | %v", g.ErrMsg, cause),
-			Err:      cause,
+func unwrapToGBErrorFromFmt(err error) error {
+	for err != nil {
+		var GBError *GBError
+		if errors.As(err, &GBError) {
+			return err
 		}
+		err = errors.Unwrap(err)
 	}
-	// Fallback: just wrap if the base isn't a GBError
-	return fmt.Errorf("%w: %v", wrapperErr, cause)
+	return nil
 }
 
 func UnwrapGBErrors(errStr []string) []*GBError {
@@ -179,6 +172,10 @@ func BytesToError(errMsg []byte) error {
 		return WrapSystemError(errors.New(strMsg))
 	}
 
+	for _, e := range gbStrings {
+		log.Printf("e = %s", e)
+	}
+
 	// Unwrap all GBErrors
 	gbErrs := UnwrapGBErrors(gbStrings)
 	if len(gbErrs) == 0 {
@@ -230,6 +227,8 @@ func ParseGBError(err string) (*GBError, error) {
 	var msg string
 	var errLevel int
 
+	var clone GBError
+
 	// Check if it's a network error format: "11 -x- Message -x-"
 	if strings.Contains(strMsg, "[N]") {
 		parts := strings.SplitN(strMsg, ": ", 2)
@@ -259,6 +258,7 @@ func ParseGBError(err string) (*GBError, error) {
 
 		code = c
 		msg = strings.TrimSpace(parts[1])
+		log.Printf("message = %s", msg)
 		errLevel = INTERNAL_ERR_LEVEL
 
 	} else {
@@ -271,11 +271,15 @@ func ParseGBError(err string) (*GBError, error) {
 	switch errLevel {
 	case NETWORK_ERR_LEVEL:
 		if knownErr, exists := KnownNetworkErrors[code]; exists {
-			return knownErr, nil
+			clone = *knownErr
+			clone.ErrMsg = msg
+			return &clone, nil
 		}
 	case INTERNAL_ERR_LEVEL:
 		if knownErr, exists := KnownInternalErrors[code]; exists {
-			return knownErr, nil
+			clone = *knownErr
+			clone.ErrMsg = msg
+			return &clone, nil
 		}
 	case SYSTEM_ERR_LEVEL:
 		// Wrap unexpected errors

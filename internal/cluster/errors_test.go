@@ -101,26 +101,25 @@ func TestWrappedErrorConfigExample(t *testing.T) {
 }
 
 func TestWrapAndFmtError(t *testing.T) {
-
 	err1 := Errors.NoRequestIDErr
-
 	err2 := fmt.Errorf("calling from test: %w", err1)
 
-	err3 := Errors.WrapGBError(Errors.GossipDeferredErr, err2)
+	help := errors.Unwrap(err2)
+	log.Println(help)
 
-	// Can also use Chain here - maybe should standardise to use chain and remove Wrap??
-	//err3 := Errors.ChainGBErrorf(Errors.GossipDeferredErr, err2, "")
+	// Use Chain, not Wrap
+	err3 := Errors.ChainGBErrorf(Errors.ConfigChecksumFailErr, help, "")
+
+	log.Printf("error 3 %s", err3.Error())
 
 	err4 := Errors.ChainGBErrorf(Errors.NodeNotFoundErr, err3, "hello :)")
 
-	_ = Errors.HandleError(err4, func(gbErrors []*Errors.GBError) error {
+	log.Printf("full error = %s", err4)
 
-		for _, gbError := range gbErrors {
-			log.Printf("found an error --> %v", gbError)
+	_ = Errors.HandleError(err4, func(chain []*Errors.GBError) error {
+		for _, ge := range chain {
+			log.Printf("found an error --> %v", ge)
 		}
-
 		return nil
-
 	})
-
 }
