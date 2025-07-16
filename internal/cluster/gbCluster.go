@@ -966,6 +966,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 
 	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
+		log.Printf("received err in send digest - %s", err.Error())
 		return responsePayload{}, err
 	}
 
@@ -1122,15 +1123,15 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	if err != nil {
 
 		handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
-			if len(gbError) > 0 {
-				return gbError[0]
-			} else {
-				return err
+			for _, gbError := range gbError {
+				if gbError.Code == Errors.EMPTY_PARTICIPANT_HEAP_CODE {
+					return gbError
+				}
 			}
+			return nil
 		})
-
-		if errors.Is(handledErr, Errors.EmptyParticipantHeapErr) {
-
+		if handledErr != nil {
+			log.Printf("handled err = %s", handledErr.Error())
 			return d, nil
 		}
 		return nil, nil
@@ -1170,6 +1171,8 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("gsa = %+s", gsa)
 
 	respID, err := c.srv.acquireReqID()
 	if err != nil {
@@ -1535,8 +1538,8 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		}()
 	}
 
-	ns := s.gbClusterConfig.getNodeSelection()
 	s.clusterMapLock.RLock()
+	ns := s.gbClusterConfig.getNodeSelection()
 	pl := len(s.clusterMap.participantArray)
 	s.clusterMapLock.RUnlock()
 	if int(ns) > pl-1 {
@@ -1637,8 +1640,11 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
 	if err != nil {
+		log.Printf("%s - gossip deferred - %s", s.name, err.Error())
 		return
 	}
+
+	log.Printf("resp = %s", resp.msg)
 
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 	stage = 2

@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
@@ -122,8 +121,7 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 			// IF we get a response err of new checksum available then we need to send a digest
 			// IF we get a response err of checksum mismatch then we fail early and shutdown
 			for _, ge := range gbErrors {
-				log.Printf("ge = %s", ge)
-				if errors.Is(ge, Errors.ConfigAvailableErr) {
+				if ge.Code == Errors.CONFIG_AVAILABLE_CODE {
 					// Handle here...
 					log.Printf("applying new config...")
 					//err := s.sendClusterConfigDigest(client)
@@ -132,8 +130,22 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 					//}
 				}
 				// TODO We have to match on the code as the error msg may have changed through chaining
-				if ge.Code == Errors.ConfigChecksumFailErr.Code {
-					return Errors.ChainGBErrorf(&Errors.GBError{ErrLevel: Errors.SYSTEM_ERR_LEVEL, ErrMsg: "system error shutting down"}, err, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
+				if ge.Code == Errors.CONFIG_CHECKSUM_FAIL_CODE {
+
+					// Dispatch event here - we don't need an event here as we can just call Shutdown() but the added context and ability to handle helps
+					s.DispatchEvent(Event{
+						InternalError,
+						time.Now().Unix(),
+						&ErrorEvent{
+							ConnectToSeed,
+							Critical,
+							err,
+							"Connect To Seed",
+						},
+						"",
+					})
+
+					return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
 				}
 			}
 
@@ -879,7 +891,7 @@ func (c *gbClient) processErr(message []byte) {
 
 	msgErr := Errors.BytesToError(message)
 
-	log.Printf("msg err ==== %s", msgErr)
+	log.Printf("msg err = %s", msgErr)
 
 	msg := make([]byte, len(message))
 	copy(msg, message)
@@ -913,6 +925,8 @@ func (c *gbClient) processErrResp(message []byte) {
 
 	msgErr := Errors.BytesToError(msg)
 
+	log.Printf("msg err = %s", msgErr)
+
 	select {
 	case rsp.err <- msgErr: // Non-blocking
 		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
@@ -943,6 +957,8 @@ func (c *gbClient) processCfgCheck(message []byte) {
 
 	checksum := string(message[:64])
 
+	log.Printf("checksum = %s", checksum)
+
 	// First check against our current hash
 	cs, err := configChecksum(cfg)
 	if err != nil {
@@ -950,14 +966,24 @@ func (c *gbClient) processCfgCheck(message []byte) {
 		return
 	}
 
+	log.Printf("our checksum = %s", cs)
+
 	if checksum != cs {
 
 		// If checksum received is different then we must check if our cs is different from our original config checksum on server start
-		if cs != srv.originalCfgHash {
-			// Now we do a final check against the original hash - if it is different then we send an error which should result in the receiver node shutting down
+		if cs != srv.originalCfgHash && checksum == srv.originalCfgHash {
+			// Here gossip may have changed the cluster config, so we should send our complete cluster config over the network to the receiver
+			err := Errors.ChainGBErrorf(
+				Errors.ConfigAvailableErr,
+				nil,
+				"new config available -> got: [%s] -- want: [%s]",
+				checksum, cs,
+			)
+
+			c.sendErr(reqID, 0, err.Net())
 
 		} else {
-			// Here gossip may have changed the cluster config, so we should send our complete cluster config over the network to the receiver
+			// Now we do a final check against the original hash - if it is different then we send an error which should result in the receiver node shutting down
 			err := Errors.ChainGBErrorf(
 				Errors.ConfigChecksumFailErr,
 				nil, // no inner cause here
@@ -1258,6 +1284,8 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	senderName := sender
 
+	log.Printf("%s - received digest = %+v", c.srv.name, (*d)[senderName])
+
 	err = c.srv.recordPhi(senderName)
 	if err != nil {
 		log.Printf("recordPhi failed: %v", err)
@@ -1272,6 +1300,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	}
 
 	if deferGossip {
+		log.Printf("%s - making other defer", c.srv.name)
 		c.sendErr(c.ph.reqID, uint16(0), Errors.GossipDeferredErr.Net())
 		return
 	}

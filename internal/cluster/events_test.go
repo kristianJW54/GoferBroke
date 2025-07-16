@@ -118,6 +118,7 @@ func TestAsyncErrorEvent(t *testing.T) {
 			gbs.ServerContext,
 			&errorController{s: gbs},
 			gbs.DispatchEvent,
+			gbs.fatalErrorCh,
 		}
 
 		// Testing internal handler function with type and severity routing

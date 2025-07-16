@@ -756,8 +756,6 @@ func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 		//log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
 	case err := <-rsp.err:
-		log.Printf("err in wait for response for %s-%v", c.srv.PrettyName(), err)
-		// TODO Need better handling of response error here to preserve messaging and also chain responseErr
 		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, err, "")
 	}
 }

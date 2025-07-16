@@ -131,8 +131,6 @@ func ExtractGBErrors(err error) []string {
 	errStr := err.Error()
 	matches := gbErrorPattern.FindAllString(errStr, -1)
 
-	log.Printf("Extracted GBErrors: %v", matches)
-
 	return matches
 }
 
@@ -170,10 +168,6 @@ func BytesToError(errMsg []byte) error {
 	if len(gbStrings) == 0 {
 		// If not structured, fallback to wrapping raw
 		return WrapSystemError(errors.New(strMsg))
-	}
-
-	for _, e := range gbStrings {
-		log.Printf("e = %s", e)
 	}
 
 	// Unwrap all GBErrors
@@ -258,7 +252,6 @@ func ParseGBError(err string) (*GBError, error) {
 
 		code = c
 		msg = strings.TrimSpace(parts[1])
-		log.Printf("message = %s", msg)
 		errLevel = INTERNAL_ERR_LEVEL
 
 	} else {
@@ -315,7 +308,7 @@ func HandleError(err error, callback func(gbErrors []*GBError) error) error {
 	}
 
 	// Default: return the most severe or last one
-	return gbErrors[len(gbErrors)-1]
+	return nil
 }
 
 func RecoverFromPanic() error {

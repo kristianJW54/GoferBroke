@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"net"
 	"testing"
@@ -177,15 +178,106 @@ func TestServerShutDownConfigFail(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 
-	log.Printf("name -> %s", gbs.name)
-	log.Printf("name -> %s", gbs2.name)
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	go gbs2.StartServer()
+
+	select {
+	case err := <-gbs2.fatalErrorCh:
+		if err != nil {
+			var found bool
+			he := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
+
+				for _, gbError := range gbErrors {
+
+					if gbError.Code == Errors.CONFIG_CHECKSUM_FAIL_CODE {
+						found = true
+						return gbError
+					}
+				}
+				found = false
+				return nil
+
+			})
+
+			if !found {
+				t.Errorf("expected to have found fatal error %d - got %s instead", Errors.CONFIG_CHECKSUM_FAIL_CODE, he.Error())
+			}
+
+		} else {
+			t.Errorf("fatalErrorCh received nil error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("Timed out waiting for fatal error")
+	}
+
+	time.Sleep(2 * time.Second)
+	gbs.Shutdown()
+
+}
+
+func TestServerShutDownConfigUpdate(t *testing.T) {
+
+	nodeCfg := `
+				Name = "node-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True	
+				}
+
+`
+
+	node2Cfg := `
+				Name = "node-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = True	
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(node2Cfg, cfg)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
 
 	gbs.StartServer()
 	time.Sleep(1 * time.Second)
+	gbs.gbClusterConfig.Name = "new-cluster-name"
+	time.Sleep(1 * time.Second)
 	gbs2.StartServer()
-	time.Sleep(5 * time.Second)
 
-	// TODO Need to setup our config checks now
+	select {
+	case err := <-gbs2.fatalErrorCh:
+		if err != nil {
+			log.Printf("%v", err)
+		}
+	case err := <-gbs.fatalErrorCh:
+		if err != nil {
+			log.Printf("%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		gbs.Shutdown()
+		gbs2.Shutdown()
+	}
 
 }
 

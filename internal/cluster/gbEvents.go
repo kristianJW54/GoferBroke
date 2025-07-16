@@ -199,22 +199,23 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 
 	// Launch go routine for reading events on channel
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Panic in event handler [%s]: %v", ParseEventEnumToString(eventType), r)
+			}
+		}()
 
 		for {
 			select {
 			case event := <-ch:
 				if err := handler(event); err != nil {
-
-					// Error event here
-					log.Printf("Error handling event %d: %s", eventType, err.Error())
-					return
+					log.Printf("Error handling event [%s]: %v", ParseEventEnumToString(eventType), err)
 				}
 			case <-ctx.Done():
-				log.Printf("context called ending event handler - %s", ParseEventEnumToString(eventType))
+				log.Printf("Context cancelled, stopping event handler [%s]", ParseEventEnumToString(eventType))
 				return
 			}
 		}
-
 	}()
 
 	return "", nil
@@ -237,10 +238,9 @@ func (s *GBServer) DispatchEvent(event Event) {
 
 			select {
 			case handler.eventCh <- event:
-				return
+				//Delivered
 			default:
 				log.Printf("event dropped")
-				return
 			}
 
 		}

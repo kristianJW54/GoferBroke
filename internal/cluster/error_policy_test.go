@@ -39,7 +39,7 @@ func TestConnectToSeedErrorEvent(t *testing.T) {
 	}
 
 	// Start gbs2 first so that it dials an unresponsive seed to get error
-	gbs2.StartServer()
+	go gbs2.StartServer()
 
 	// Create a child context with timeout to catch if the error event doesn't pull us out
 	ctx, cancel := context.WithTimeout(gbs2.ServerContext, 5*time.Second)

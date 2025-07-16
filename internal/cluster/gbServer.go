@@ -82,15 +82,21 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 
 		log.Printf("cluster addr == %s", routes[0])
 
-		clusterIP, clusterPort := strings.Split(routes[0], ":")[0], strings.Split(routes[0], ":")[1]
+		var seeds []*Seeds
+
+		for _, route := range routes {
+			ipPort := strings.Split(route, ":")
+			if len(ipPort) != 2 {
+				return fmt.Errorf("invalid seed route: %s", route)
+			}
+			seeds = append(seeds, &Seeds{
+				Host: ipPort[0],
+				Port: ipPort[1],
+			})
+		}
 
 		config = &GbClusterConfig{
-			SeedServers: []*Seeds{
-				{
-					Host: clusterIP,
-					Port: clusterPort,
-				},
-			},
+			SeedServers: seeds,
 			Cluster: &ClusterOptions{
 				ClusterNetworkType: cn,
 			},
@@ -122,10 +128,17 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 		gbs.StartServer()
 	}()
 
-	// Block until the context is canceled
+	//select {
+	//case <-ctx.Done():
+	//	log.Println("Interrupt signal received. Shutting down server...")
+	//case err := <-gbs.fatalErrorCh:
+	//	if err != nil {
+	//		log.Printf("Fatal error received: %v", err)
+	//	}
+	//}
+
 	<-ctx.Done()
 
-	log.Println("Shutting down server...")
 	gbs.Shutdown()
 
 	return nil
@@ -233,7 +246,8 @@ type GBServer struct {
 	discoveryPhase  bool
 
 	//Events
-	event *EventDispatcher
+	event        *EventDispatcher
+	fatalErrorCh chan error
 
 	flags serverFlags
 
@@ -414,7 +428,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		clientTCPAddr:    clientAddr,
 		reachability:     1, // TODO : Yet to implement
 
-		event: ed,
+		event:        ed,
+		fatalErrorCh: make(chan error, 1),
 
 		listenConfig:        lc,
 		ServerContext:       ctx,
@@ -448,11 +463,9 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 	}
 
 	isSeedAddr := s.seedCheck()
-	log.Printf("are we a really a seed %v", s.isSeed)
 
 	switch {
 	case !s.isSeed && isSeedAddr:
-		log.Printf("are we a seed = %v", s.isSeed)
 		return nil, fmt.Errorf("server is NOT configured as a seed, but matches a listed seed address — change config to mark it as a seed OR use a different address")
 
 	case s.isSeed && !isSeedAddr:
@@ -1180,6 +1193,7 @@ func (s *GBServer) registerAndStartInternalHandlers() error {
 		s.ServerContext,
 		&errorController{s: s},
 		s.DispatchEvent,
+		s.fatalErrorCh,
 	}
 
 	// Starting Internal Error handling event process

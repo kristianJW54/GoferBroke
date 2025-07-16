@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"github.com/kristianJW54/GoferBroke/internal/cluster"
+	"log"
 	"net"
 )
 
@@ -161,7 +162,12 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 // Starting and stopping
 
 func (n *Node) Start() {
-	go n.server.StartServer()
+	go func() {
+		err := n.server.StartServer()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
 }
 
 func (n *Node) Stop() {
