@@ -220,9 +220,6 @@ func configChecksum(cfg any) (string, error) {
 // Runtime will slow us down - therefore we do it once at compile time and store the functions
 // With this we (mostly) avoid reflect
 
-type clusterConfigSetterMapFunc func(any) error
-type clusterConfigGetterMapFunc func() any
-
 type ConfigSchema struct {
 	Path      string
 	Type      reflect.Type
@@ -455,6 +452,8 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 	}
 
 }
+
+// TODO From here onwards - need proper GBError handling and returning
 
 //=====================================================================
 // Config Type Coercion
@@ -1088,6 +1087,55 @@ func encodeReflectValue(v reflect.Value) ([]byte, error) {
 
 	default:
 		return nil, fmt.Errorf("unsupported kind: %s", v.Kind())
+	}
+}
+
+func decodeDeltaValue(d *Delta) (any, error) {
+	typ, ok := deltaTypeToReflect[d.ValueType]
+	if !ok {
+		return nil, fmt.Errorf("unknown delta type: %d", d.ValueType)
+	}
+	return decodeFromBytes(d.Value, typ)
+}
+
+func decodeFromBytes(data []byte, typ reflect.Type) (any, error) {
+	switch typ.Kind() {
+	case reflect.String:
+		return string(data), nil
+
+	case reflect.Bool:
+		if len(data) != 1 {
+			return nil, fmt.Errorf("invalid bool encoding")
+		}
+		return data[0] == 1, nil
+
+	case reflect.Int8:
+		return int8(data[0]), nil
+	case reflect.Uint8:
+		return uint8(data[0]), nil
+
+	case reflect.Int16:
+		return int16(binary.BigEndian.Uint16(data)), nil
+	case reflect.Uint16:
+		return binary.BigEndian.Uint16(data), nil
+
+	case reflect.Int32:
+		return int32(binary.BigEndian.Uint32(data)), nil
+	case reflect.Uint32:
+		return binary.BigEndian.Uint32(data), nil
+
+	case reflect.Int64, reflect.Int:
+		return int64(binary.BigEndian.Uint64(data)), nil
+	case reflect.Uint64, reflect.Uint:
+		return binary.BigEndian.Uint64(data), nil
+
+	case reflect.Float32:
+		return float32(math.Float32frombits(binary.BigEndian.Uint32(data))), nil
+	case reflect.Float64:
+		return math.Float64frombits(binary.BigEndian.Uint64(data)), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported kind: %s", typ.Kind())
 	}
 }
 

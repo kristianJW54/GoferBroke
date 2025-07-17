@@ -363,6 +363,7 @@ const (
 	CONNECT_TO_SEED_CODE              = 71
 	GET_CONFIG_DELTAS_FOR_RECON_CODE  = 72
 	SERIALISE_DELTA_CODE              = 73
+	ADDING_CONFIG_UPDATE_SELF         = 74
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -406,6 +407,7 @@ var KnownInternalErrors = map[int]*GBError{
 	CONNECT_TO_SEED_CODE:              &GBError{Code: CONNECT_TO_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "connecting to seed error"},
 	GET_CONFIG_DELTAS_FOR_RECON_CODE:  &GBError{Code: GET_CONFIG_DELTAS_FOR_RECON_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error finding config deltas above version"},
 	SERIALISE_DELTA_CODE:              &GBError{Code: SERIALISE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "serialise delta failed"},
+	ADDING_CONFIG_UPDATE_SELF:         &GBError{Code: ADDING_CONFIG_UPDATE_SELF, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to update own config from GSA Update"},
 }
 
 var (
@@ -427,6 +429,7 @@ var (
 	ConfigDeltaVersionErr   = KnownInternalErrors[GET_CONFIG_DELTAS_FOR_RECON_CODE]
 	SerialiseDeltaErr       = KnownInternalErrors[SERIALISE_DELTA_CODE]
 	NoRequestIDErr          = KnownInternalErrors[NO_REQUEST_ID_CODE]
+	SelfConfigUpdateErr     = KnownInternalErrors[ADDING_CONFIG_UPDATE_SELF]
 )
 
 var (

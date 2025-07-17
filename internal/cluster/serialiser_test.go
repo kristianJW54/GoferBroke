@@ -327,10 +327,12 @@ func TestSerialiseConfigDigest(t *testing.T) {
 		t.Fatalf("Error serialising config: %v", err)
 	}
 
-	_, fd, err := deSerialiseDigest(d)
+	name, fd, err := deSerialiseDigest(d)
 	if err != nil {
 		t.Fatalf("Error serialising config: %v", err)
 	}
+
+	log.Printf("digest = %+v", (*fd)[name])
 
 	entry, ok := (*fd)[gbs.ServerName]
 	if !ok || entry == nil {
@@ -584,4 +586,19 @@ func BenchmarkSliceIteration(b *testing.B) {
 			_ = v
 		}
 	}
+}
+
+func TestVersion(t *testing.T) {
+
+	num1 := int64(1)
+	num2 := time.Now().Unix()
+
+	if num1 > num2 {
+		log.Printf("OH NO")
+	}
+
+	num1++
+
+	log.Printf("num1 = %d", num1)
+
 }

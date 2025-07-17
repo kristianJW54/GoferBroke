@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -141,6 +142,22 @@ const (
 	D_FLOAT64_TYPE
 	D_BOOL_TYPE
 )
+
+var deltaTypeToReflect = map[uint8]reflect.Type{
+	D_STRING_TYPE:  reflect.TypeOf(""),
+	D_BYTE_TYPE:    reflect.TypeOf([]byte{}),
+	D_INT_TYPE:     reflect.TypeOf(int(0)),
+	D_INT8_TYPE:    reflect.TypeOf(int8(0)),
+	D_INT16_TYPE:   reflect.TypeOf(int16(0)),
+	D_INT32_TYPE:   reflect.TypeOf(int32(0)),
+	D_INT64_TYPE:   reflect.TypeOf(int64(0)),
+	D_UINT8_TYPE:   reflect.TypeOf(uint8(0)),
+	D_UINT16_TYPE:  reflect.TypeOf(uint16(0)),
+	D_UINT32_TYPE:  reflect.TypeOf(uint32(0)),
+	D_UINT64_TYPE:  reflect.TypeOf(uint64(0)),
+	D_FLOAT64_TYPE: reflect.TypeOf(float64(0)),
+	D_BOOL_TYPE:    reflect.TypeOf(true),
+}
 
 // Internal Delta Keys [NOT TO BE USED EXTERNALLY]
 const (
@@ -401,11 +418,12 @@ func (p *Participant) Update(group, key string, d *Delta, update func(toBeUpdate
 		}
 		p.pm.Lock()
 		update(delta, d)
-		p.pm.Unlock()
 
 		if d.Version > p.maxVersion {
 			p.maxVersion = d.Version
 		}
+
+		p.pm.Unlock()
 
 		return nil
 
@@ -499,34 +517,34 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 				if err != nil {
 					handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
 
-						if gbError[0] != nil {
-							return gbError[0]
-						} else {
-							return err
+						for _, gbErr := range gbError {
+
+							if gbErr.Code == Errors.DELTA_UPDATE_NO_DELTA_CODE && v.KeyGroup != CONFIG_DKG {
+								participant.pm.Lock()
+								log.Printf("error = %v - storing new delta", gbErr)
+								participant.keyValues[k] = v
+								participant.pm.Unlock()
+
+								// Event call for new delta added
+								// TODO We could use this to build an update rate and inform gossip interval times?
+								s.DispatchEvent(Event{
+									EventType: NewDeltaAdded,
+									Time:      time.Now().Unix(),
+									Payload: &DeltaAddedEvent{
+										DeltaKey:   k,
+										DeltaValue: bytes.Clone(v.Value),
+									},
+									Message: "New delta added",
+								})
+								return nil
+							}
 						}
+
+						return gbError[len(gbError)-1]
 
 					})
 
-					// If the error is no delta found then it is a new delta we must add
-					if errors.Is(handledErr, Errors.DeltaUpdateNoDeltaErr) {
-						participant.pm.Lock()
-						log.Printf("error = %v - storing new delta", handledErr)
-						participant.keyValues[k] = v
-						participant.pm.Unlock()
-
-						// Event call for new delta added
-						// TODO We could use this to build an update rate and inform gossip interval times?
-						s.DispatchEvent(Event{
-							EventType: NewDeltaAdded,
-							Time:      time.Now().Unix(),
-							Payload: &DeltaAddedEvent{
-								DeltaKey:   k,
-								DeltaValue: bytes.Clone(v.Value),
-							},
-							Message: "New delta added",
-						})
-
-					} else {
+					if handledErr != nil {
 						return Errors.ChainGBErrorf(Errors.AddGSAErr, err, "")
 					}
 
@@ -539,6 +557,13 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 					de,
 					"Delta updated",
 				})
+
+				if v.KeyGroup == CONFIG_DKG {
+					err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
+					if err != nil {
+						return err
+					}
+				}
 
 			}
 		} else {
@@ -1131,7 +1156,6 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 			return nil
 		})
 		if handledErr != nil {
-			log.Printf("handled err = %s", handledErr.Error())
 			return d, nil
 		}
 		return nil, nil

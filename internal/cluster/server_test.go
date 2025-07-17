@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
 	"net"
@@ -185,23 +186,20 @@ func TestServerShutDownConfigFail(t *testing.T) {
 	select {
 	case err := <-gbs2.fatalErrorCh:
 		if err != nil {
-			var found bool
 			he := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
 
 				for _, gbError := range gbErrors {
 
 					if gbError.Code == Errors.CONFIG_CHECKSUM_FAIL_CODE {
-						found = true
 						return gbError
 					}
 				}
-				found = false
 				return nil
 
 			})
 
-			if !found {
-				t.Errorf("expected to have found fatal error %d - got %s instead", Errors.CONFIG_CHECKSUM_FAIL_CODE, he.Error())
+			if he == nil {
+				t.Errorf("expected to have found fatal error %d - got nil instead", Errors.CONFIG_CHECKSUM_FAIL_CODE)
 			}
 
 		} else {
@@ -211,7 +209,6 @@ func TestServerShutDownConfigFail(t *testing.T) {
 		t.Error("Timed out waiting for fatal error")
 	}
 
-	time.Sleep(2 * time.Second)
 	gbs.Shutdown()
 
 }
@@ -277,6 +274,67 @@ func TestServerShutDownConfigUpdate(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		gbs.Shutdown()
 		gbs2.Shutdown()
+	}
+
+	// gbs2 config check should now be updated to gbs config
+
+}
+
+func TestServerUpdateSelfConfig(t *testing.T) {
+
+	nodeCfg := `
+				Name = "node-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True	
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	gbs.Shutdown()
+
+	clusterKey := "Name"
+	newValue := "new-cluster-name"
+
+	deltaUpdate := &Delta{
+		KeyGroup:  CONFIG_DKG,
+		Key:       clusterKey,
+		Version:   1,
+		ValueType: D_STRING_TYPE,
+		Value:     []byte(newValue),
+	}
+
+	// Now we change a config in the cluster
+
+	if _, exists := gbs.clusterMap.participants[gbs.ServerName].keyValues["config:Name"]; exists {
+		err := gbs.updateClusterConfigDeltaAndSelf(deltaUpdate.Key, deltaUpdate)
+		if err != nil {
+			t.Errorf("%v", err)
+		}
+		d := gbs.clusterMap.participants[gbs.ServerName].keyValues["config:Name"]
+
+		if bytes.Compare(d.Value, deltaUpdate.Value) != 0 {
+			t.Errorf("wanted %s got %s", newValue, d.Value)
+		}
+
 	}
 
 }

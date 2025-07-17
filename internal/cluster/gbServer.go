@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -1006,6 +1007,8 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 		return nil, err
 	}
 
+	log.Printf("Initialised own deltas")
+
 	return p, nil
 
 }
@@ -1367,6 +1370,84 @@ func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
 
 	} else {
 		return fmt.Errorf("no heartbeat delta")
+	}
+
+	return nil
+
+}
+
+// In this method we will have received a new cluster config value - we will have already updated our view of the participant in the
+// cluster map but because this is a cluster config we will also need to update our own cluster map delta and finally apply that
+// change to the actual cluster config struct of our server
+// TODO Need to review where this should live
+func (s *GBServer) updateClusterConfigDeltaAndSelf(key string, d *Delta) error {
+
+	self := s.GetSelfInfo()
+	s.serverLock.RLock()
+	sch := s.configSchema
+	cfg := s.gbClusterConfig
+	s.serverLock.RUnlock()
+
+	de := &DeltaUpdateEvent{
+		DeltaKey: key,
+	}
+
+	err := self.Update(CONFIG_DKG, key, d, func(toBeUpdated, by *Delta) {
+		if by.Version > toBeUpdated.Version {
+			de.PreviousVersion = toBeUpdated.Version
+			de.PreviousValue = bytes.Clone(toBeUpdated.Value)
+
+			*toBeUpdated = *by
+
+			de.CurrentVersion = toBeUpdated.Version
+			de.CurrentValue = bytes.Clone(toBeUpdated.Value)
+		}
+	})
+
+	if err != nil {
+		handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
+
+			for _, gbErr := range gbError {
+
+				log.Printf("gbErr = %s", gbErr.Error())
+
+				if gbErr.Code == Errors.DELTA_UPDATE_NO_DELTA_CODE {
+					log.Printf("config can't be updated with new fields")
+
+					// TODO May want an internal error event here? To capture the config field that was new?
+
+					return gbErr
+				}
+
+			}
+
+			log.Printf("last error = %s", gbError[len(gbError)-1].Error())
+			return nil
+
+		})
+
+		if handledErr != nil {
+			log.Printf("error ----> %s", handledErr.Error())
+			return Errors.ChainGBErrorf(Errors.SelfConfigUpdateErr, err, "failed on key [%s]", key)
+		}
+
+	}
+
+	// If we have updated our own delta successfully we now try to update our server struct
+
+	cfg.lock.Lock()
+	defer cfg.lock.Unlock()
+
+	decodedValue, err := decodeDeltaValue(d)
+	if err != nil {
+		return err
+	}
+
+	err = SetByPath(sch, cfg, key, decodedValue)
+	if err != nil {
+		log.Printf("error ----> %s", err.Error())
+
+		return Errors.ChainGBErrorf(Errors.SelfConfigUpdateErr, err, "failed on key [%s]", key)
 	}
 
 	return nil
