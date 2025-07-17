@@ -13,7 +13,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // TODO
@@ -59,7 +58,6 @@ type GbClusterConfig struct {
 	Name        string
 	SeedServers []*Seeds
 	Cluster     *ClusterOptions
-	lock        sync.RWMutex
 }
 
 type Seeds struct {
@@ -1183,8 +1181,6 @@ func GenerateConfigDeltas(schema map[string]*ConfigSchema, cfg *GbClusterConfig,
 //=====================================================================
 
 func (cfg *GbClusterConfig) getNodeSelection() uint8 {
-	cfg.lock.RLock()
-	defer cfg.lock.RUnlock()
 
 	if cfg.Cluster.NodeSelectionPerGossipRound == 0 {
 		return 1

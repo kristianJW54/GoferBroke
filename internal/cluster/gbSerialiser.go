@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
+	"log"
 	"time"
 )
 
@@ -501,6 +502,8 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]Delta, deltaSize
 	length += 1
 	length += len(s.ServerName)
 
+	log.Printf("length before adding deltasize = %d - %d", length, deltaSize)
+
 	length += deltaSize
 
 	deltaBuf := make([]byte, length)
@@ -595,6 +598,8 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 	// Extract senders name
 	senderLen := int(delta[offset])
 	senderName := delta[offset+1 : offset+1+senderLen]
+
+	//log.Printf("senderLen - %d | senderName - %d", senderLen, senderName)
 
 	offset++
 	offset += senderLen
@@ -888,6 +893,95 @@ func (s *GBServer) serialiseClusterDigestConfigOnly() ([]byte, int, error) {
 	offset += len(CLRF)
 
 	return digestBuf, length, nil
+
+}
+
+func (s *GBServer) serialiseConfigDelta(selectedDelta map[string][]Delta, deltaSize int) ([]byte, error) {
+
+	// Type = Data - 1 byte Uint8
+	// Length of payload - 4 byte uint32
+	// Size of Delta - 2 byte uint16
+	// Total metadata for digest byte array = --> 7 <--
+
+	// Add to the length the header metadata for delta - not needed for digest as we've already serialised that
+	length := 7
+	// Now add the CLRF at the end of it all
+	length += 2
+
+	// Include sender's name
+	length += 1
+	length += len(s.ServerName)
+
+	length += deltaSize
+
+	deltaBuf := make([]byte, length)
+
+	offset := 0
+
+	deltaBuf[offset] = DELTA_TYPE
+	offset++
+	// TODO We are manually adding the header metadata here but will need to be careful we don't add this when building the delta
+	binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(length))
+	offset += 4
+	binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(selectedDelta)))
+	offset += 2
+
+	deltaBuf[offset] = uint8(len(s.ServerName))
+	offset++
+	copy(deltaBuf[offset:], s.ServerName)
+	offset += len(s.ServerName)
+
+	for name, value := range selectedDelta {
+		nameLen := len(name)
+		deltaBuf[offset] = uint8(nameLen)
+		offset++
+
+		copy(deltaBuf[offset:], name)
+		offset += nameLen
+
+		// Write the number of key-value pairs for the participant
+		binary.BigEndian.PutUint16(deltaBuf[offset:], uint16(len(value)))
+		offset += 2
+
+		for _, v := range value {
+
+			deltaBuf[offset] = uint8(len(v.KeyGroup))
+			offset++
+			copy(deltaBuf[offset:], v.KeyGroup)
+			offset += len(v.KeyGroup)
+
+			deltaBuf[offset] = uint8(len(v.Key))
+			offset++
+			copy(deltaBuf[offset:], v.Key)
+			offset += len(v.Key)
+
+			// Write version (8 bytes, uint64)
+			binary.BigEndian.PutUint64(deltaBuf[offset:], uint64(v.Version))
+			offset += 8
+
+			// Write the value type (1 byte, uint8)
+			deltaBuf[offset] = uint8(v.ValueType)
+			offset++
+
+			// Write the value
+			binary.BigEndian.PutUint32(deltaBuf[offset:], uint32(len(v.Value)))
+			offset += 4
+			copy(deltaBuf[offset:], v.Value)
+			offset += len(v.Value)
+
+		}
+
+	}
+
+	copy(deltaBuf[offset:], CLRF)
+	offset += len(CLRF)
+
+	// Validate buffer usage
+	if offset != length {
+		return nil, fmt.Errorf("buffer mismatch: calculated length %d, written offset %d", length, offset)
+	}
+
+	return deltaBuf, nil
 
 }
 

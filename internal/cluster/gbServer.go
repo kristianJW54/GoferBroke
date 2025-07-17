@@ -291,6 +291,7 @@ type GBServer struct {
 	// Locks
 	serverLock     sync.RWMutex
 	clusterMapLock sync.RWMutex
+	configLock     sync.RWMutex
 
 	//serverWg *sync.WaitGroup
 	startupSync *sync.WaitGroup
@@ -1435,8 +1436,8 @@ func (s *GBServer) updateClusterConfigDeltaAndSelf(key string, d *Delta) error {
 
 	// If we have updated our own delta successfully we now try to update our server struct
 
-	cfg.lock.Lock()
-	defer cfg.lock.Unlock()
+	s.configLock.Lock()
+	defer s.configLock.Unlock()
 
 	decodedValue, err := decodeDeltaValue(d)
 	if err != nil {

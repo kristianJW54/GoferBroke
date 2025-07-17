@@ -1562,8 +1562,11 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		}()
 	}
 
-	s.clusterMapLock.RLock()
+	s.configLock.RLock()
 	ns := s.gbClusterConfig.getNodeSelection()
+	s.configLock.RUnlock()
+
+	s.clusterMapLock.RLock()
 	pl := len(s.clusterMap.participantArray)
 	s.clusterMapLock.RUnlock()
 	if int(ns) > pl-1 {

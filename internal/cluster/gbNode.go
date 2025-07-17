@@ -142,6 +142,8 @@ func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr
 					return err
 				}
 
+				return nil
+
 				// TODO --
 				// Still want to return an error, but it's a soft error which we check against to retry until we are clear
 				// For now we return nil + fix later
@@ -219,12 +221,15 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "length of digest should be 1 got [%d]", len(cd.delta))
 	}
 
-	if delta, ok := cd.delta[s.ServerName]; ok {
+	if delta, ok := cd.delta[cd.sender]; ok {
 		for _, v := range delta.keyValues {
 
 			if v.KeyGroup != CONFIG_DKG {
 				return Errors.ChainGBErrorf(Errors.ConfigGroupErr, nil, "got [%s]", v.KeyGroup)
 			}
+
+			// We don't try to update our view of the sender in our cluster map because we are a new joiner and we have not yet
+			// Exchanged self info
 
 			err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
 			if err != nil {
@@ -251,35 +256,28 @@ func (s *GBServer) getConfigDeltasAboveVersion(version int64) (map[string][]Delt
 
 	sizeOfDelta := 0
 
-	cd := make(map[string][]Delta, 2)
+	cd := make(map[string][]Delta)
+	dl := make([]Delta, 0, 4)
 
 	sizeOfDelta += 1 + len(s.ServerName) + 2 // 1 byte for name length + name + size of delta key-values
 
-	for key, value := range cm.participants[s.ServerName].keyValues {
+	for _, value := range cm.participants[s.ServerName].keyValues {
 
 		if value.Version > version && value.KeyGroup == CONFIG_DKG {
-			cd[key] = append(cd[key], *value)
-			sizeOfDelta += DELTA_META_SIZE + len(value.KeyGroup) + len(value.Key) + len(value.Value)
+			dl = append(dl, *value)
+			size := DELTA_META_SIZE + len(value.KeyGroup) + len(value.Key) + len(value.Value)
+			sizeOfDelta += size
 		}
 
 	}
 
-	if len(cd) == 0 {
+	if len(dl) == 0 {
 		return cd, 0, fmt.Errorf("no config deltas found of higher version than: %d", version)
 	}
 
+	cd[s.ServerName] = dl
+
 	return cd, sizeOfDelta, nil
-
-}
-
-func (s *GBServer) reconcileClusterConfig() error {
-
-	//digestToSend, _, err := s.serialiseClusterDigestConfigOnly()
-	//if err != nil {
-	//	return err
-	//}
-
-	return nil
 
 }
 
@@ -304,17 +302,18 @@ func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
 		return err
 	}
 
-	respID, err := srv.acquireReqID()
-	if err != nil {
-		return err
-	}
+	// Not needed for now
+	//respID, err := srv.acquireReqID()
+	//if err != nil {
+	//	return err
+	//}
 
-	cereal, err := srv.serialiseACKDelta(configDeltas, size)
+	cereal, err := srv.serialiseConfigDelta(configDeltas, size)
 	if err != nil {
 		return fmt.Errorf("sendClusterConfigDelta - serialising configDeltas: %s", err)
 	}
 
-	pay, err := prepareRequest(cereal, 1, CFG_RECON_RESP, c.ph.respID, respID)
+	pay, err := prepareRequest(cereal, 1, CFG_RECON_RESP, c.ph.reqID, uint16(0)) // For now, we don't want a response of OK
 	if err != nil {
 		return err
 	}
@@ -882,6 +881,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processCfgCheck(message)
 	case CFG_RECON:
 		c.processCfgRecon(message)
+	case CFG_RECON_RESP:
+		c.processCfgReconResp(message)
 	case OK:
 		c.processOK(message)
 	case OK_RESP:
@@ -912,8 +913,6 @@ func (c *gbClient) processErr(message []byte) {
 	}
 
 	msgErr := Errors.BytesToError(message)
-
-	log.Printf("msg err = %s", msgErr)
 
 	msg := make([]byte, len(message))
 	copy(msg, message)
@@ -947,8 +946,6 @@ func (c *gbClient) processErrResp(message []byte) {
 
 	msgErr := Errors.BytesToError(msg)
 
-	log.Printf("msg err = %s", msgErr)
-
 	select {
 	case rsp.err <- msgErr: // Non-blocking
 		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
@@ -970,7 +967,6 @@ func (c *gbClient) processCfgCheck(message []byte) {
 	}
 
 	// We need to compare against our config checksums
-	// TODO Continue::
 
 	c.srv.serverLock.Lock()
 	srv := c.srv
@@ -979,16 +975,12 @@ func (c *gbClient) processCfgCheck(message []byte) {
 
 	checksum := string(message[:64])
 
-	log.Printf("checksum = %s", checksum)
-
 	// First check against our current hash
 	cs, err := configChecksum(cfg)
 	if err != nil {
 		// TODO We will want an error event here as this is an internal system error
 		return
 	}
-
-	log.Printf("our checksum = %s", cs)
 
 	if checksum != cs {
 
@@ -1024,13 +1016,46 @@ func (c *gbClient) processCfgCheck(message []byte) {
 
 func (c *gbClient) processCfgRecon(message []byte) {
 
-	//name, fd, err := deSerialiseDigest(message)
-	//if err != nil {
-	//	c.sendErr(c.ph.reqID, 0, "deserialise digest failed\r\n")
-	//	return
-	//}
+	name, fd, err := deSerialiseDigest(message)
+	if err != nil {
+		c.sendErr(c.ph.reqID, 0, "deserialise digest failed\r\n")
+		return
+	}
+
+	err = c.sendClusterConfigDelta(fd, name)
+	if err != nil {
+		// TODO Need internal event error here
+		log.Printf("sendClusterConfigDelta failed: %v", err)
+	}
 
 	return
+
+}
+
+func (c *gbClient) processCfgReconResp(message []byte) {
+
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	rsp, err := c.getResponseChannel(reqID)
+	if err != nil {
+		log.Printf("getResponseChannel failed: %v", err)
+	}
+
+	if rsp == nil {
+		log.Printf("i am nil?")
+		return
+	}
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+
+	select {
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
+	default:
+		log.Printf("Warning: response channel full for reqID %d", reqID)
+		return
+	}
 
 }
 
@@ -1306,8 +1331,6 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	senderName := sender
 
-	log.Printf("%s - received digest = %+v", c.srv.name, (*d)[senderName])
-
 	err = c.srv.recordPhi(senderName)
 	if err != nil {
 		log.Printf("recordPhi failed: %v", err)
@@ -1322,7 +1345,6 @@ func (c *gbClient) processGossSyn(message []byte) {
 	}
 
 	if deferGossip {
-		log.Printf("%s - making other defer", c.srv.name)
 		c.sendErr(c.ph.reqID, uint16(0), Errors.GossipDeferredErr.Net())
 		return
 	}

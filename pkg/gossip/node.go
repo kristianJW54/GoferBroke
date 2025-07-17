@@ -27,6 +27,7 @@ type NodeConfig struct {
 	Host        string
 	Port        string
 	NetworkType string
+	IsSeed      bool
 	ClientPort  string
 	config      *cluster.GbNodeConfig
 }
@@ -38,16 +39,16 @@ func (nc *NodeConfig) InitConfig() error {
 		return err
 	}
 
-	gbConfig := &cluster.GbNodeConfig{
-		Name:        nc.Name,
-		Host:        nc.Host,
-		Port:        nc.Port,
-		NetworkType: netType,
-		ClientPort:  nc.ClientPort,
-		Internal:    &cluster.InternalOptions{},
-	}
+	cfg := cluster.InitDefaultNodeConfig()
 
-	nc.config = gbConfig
+	cfg.Name = nc.Name
+	cfg.Host = nc.Host
+	cfg.Port = nc.Port
+	cfg.ClientPort = nc.ClientPort
+	cfg.IsSeed = nc.IsSeed
+	cfg.NetworkType = netType
+
+	nc.config = cfg
 
 	return nil
 
@@ -95,6 +96,8 @@ func (cc *ClusterConfig) InitConfig() error {
 		return err
 	}
 
+	cfg := cluster.InitDefaultClusterConfig()
+
 	if len(cc.SeedServers) == 0 {
 		return errors.New("no seed servers")
 	}
@@ -106,15 +109,13 @@ func (cc *ClusterConfig) InitConfig() error {
 		}
 	}
 
-	config := &cluster.GbClusterConfig{
-		Name:        cc.Name,
-		SeedServers: ss,
-		Cluster: &cluster.ClusterOptions{
-			ClusterNetworkType: cNet,
-		},
-	}
+	cfg.Name = cc.Name
+	cfg.Cluster.ClusterNetworkType = cNet
+	cfg.SeedServers = ss
 
-	cc.config = config
+	cc.config = cfg
+
+	log.Printf("seeds = %+v", cc.SeedServers)
 
 	return nil
 
@@ -126,18 +127,30 @@ func (cc *ClusterConfig) InitConfig() error {
 
 // TODO may need to change the config to file paths to first parse report errors and then build new node??
 
-func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
+func NewNodeFromConfig(Config *ClusterConfig, node *NodeConfig) (*Node, error) {
 
-	if len(config.SeedServers) == 0 ||
-		config.SeedServers[0].SeedHost == "" ||
-		config.SeedServers[0].SeedPort == "" {
+	if len(Config.SeedServers) == 0 ||
+		Config.SeedServers[0].SeedHost == "" ||
+		Config.SeedServers[0].SeedPort == "" {
 		return nil, fmt.Errorf("%w - seed host or port is missing", Errors.ClusterConfigErr)
 	}
 
+	err := Config.InitConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	err = node.InitConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	sch := cluster.BuildConfigSchema(Config.config)
+
 	gbs, err := cluster.NewServer(
 		node.Name,
-		config.config,
-		nil,
+		Config.config,
+		sch,
 		node.config,
 		node.Host,
 		node.Port,
@@ -145,13 +158,14 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 		net.ListenConfig{},
 	)
 	if err != nil {
-		return nil, Errors.ChainGBErrorf(Errors.ClusterConfigErr, err, "")
+		//return nil, Errors.ChainGBErrorf(Errors.ClusterConfigErr, err, "")
+		return nil, err
 	}
 
 	newNode := &Node{
 		server:        gbs,
 		nodeConfig:    node.config,
-		clusterConfig: config.config,
+		clusterConfig: Config.config,
 		handlers:      make(map[string][]string),
 	}
 
@@ -162,12 +176,7 @@ func NewNodeFromConfig(config *ClusterConfig, node *NodeConfig) (*Node, error) {
 // Starting and stopping
 
 func (n *Node) Start() {
-	go func() {
-		err := n.server.StartServer()
-		if err != nil {
-			log.Fatal(err)
-		}
-	}()
+	go n.server.StartServer()
 }
 
 func (n *Node) Stop() {

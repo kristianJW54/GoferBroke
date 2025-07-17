@@ -26,17 +26,8 @@ func main() {
 		Host:        "localhost",
 		Port:        "8081",
 		NetworkType: "LOCAL",
+		IsSeed:      true,
 		ClientPort:  "8083",
-	}
-
-	// Initialise our configs
-	err := clusterConfig.InitConfig()
-	if err != nil {
-		panic(err)
-	}
-	err = node1Config.InitConfig()
-	if err != nil {
-		panic(err)
 	}
 
 	// Now we create our node-1
@@ -73,12 +64,8 @@ func main() {
 		Host:        "localhost",
 		Port:        "8082",
 		NetworkType: "LOCAL",
+		IsSeed:      false,
 		ClientPort:  "8083",
-	}
-
-	err = node2Config.InitConfig()
-	if err != nil {
-		panic(err)
 	}
 
 	// Now we create our node-2
