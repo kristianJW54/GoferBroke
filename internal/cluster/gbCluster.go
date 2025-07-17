@@ -447,7 +447,7 @@ func (p *Participant) Get(deltaKey string) (*Delta, error) {
 
 //---------------------
 
-// TODO We need to return error for this and handle them accordingly
+// TODO We need to return error for this and handle them accordingly + also refactor so (SRP) compliant
 func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
 
 	log.Printf("called")

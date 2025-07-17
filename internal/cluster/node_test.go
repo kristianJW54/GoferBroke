@@ -189,3 +189,56 @@ func TestGetRandomSeedToDial(t *testing.T) {
 	}
 
 }
+
+func TestGetClusterConfigDeltas(t *testing.T) {
+
+	nodeCfg := `
+				Name = "node-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True	
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	configKey := "config:Name"
+
+	go gbs.StartServer()
+
+	time.Sleep(1 * time.Second)
+
+	p := gbs.clusterMap.participants[gbs.ServerName]
+
+	// TODO This needs to be an update delta function with a potential callback or if block to also update struct if CONFIG_DKG
+	gbs.gbClusterConfig.Name = "new-cluster"
+	p.keyValues[configKey].Value = []byte("new-cluster")
+	p.keyValues[configKey].Version++
+
+	d, _, err := gbs.getConfigDeltasAboveVersion(0)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	if len(d[configKey]) != 1 {
+		t.Errorf("expected to find a single delta for config key: %s --> got %d", configKey, len(d[configKey]))
+	}
+
+	gbs.Shutdown()
+
+}

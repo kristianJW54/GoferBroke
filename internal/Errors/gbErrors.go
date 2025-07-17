@@ -364,6 +364,8 @@ const (
 	GET_CONFIG_DELTAS_FOR_RECON_CODE  = 72
 	SERIALISE_DELTA_CODE              = 73
 	ADDING_CONFIG_UPDATE_SELF         = 74
+	WANT_CONFIG_GROUP                 = 75
+	CONFIG_DIGEST_CODE                = 76
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -408,6 +410,8 @@ var KnownInternalErrors = map[int]*GBError{
 	GET_CONFIG_DELTAS_FOR_RECON_CODE:  &GBError{Code: GET_CONFIG_DELTAS_FOR_RECON_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error finding config deltas above version"},
 	SERIALISE_DELTA_CODE:              &GBError{Code: SERIALISE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "serialise delta failed"},
 	ADDING_CONFIG_UPDATE_SELF:         &GBError{Code: ADDING_CONFIG_UPDATE_SELF, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to update own config from GSA Update"},
+	WANT_CONFIG_GROUP:                 &GBError{Code: WANT_CONFIG_GROUP, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "should receive a config group delta"},
+	CONFIG_DIGEST_CODE:                &GBError{Code: CONFIG_DIGEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "sending config digest failed"},
 }
 
 var (
@@ -430,6 +434,8 @@ var (
 	SerialiseDeltaErr       = KnownInternalErrors[SERIALISE_DELTA_CODE]
 	NoRequestIDErr          = KnownInternalErrors[NO_REQUEST_ID_CODE]
 	SelfConfigUpdateErr     = KnownInternalErrors[ADDING_CONFIG_UPDATE_SELF]
+	ConfigGroupErr          = KnownInternalErrors[WANT_CONFIG_GROUP]
+	ConfigDigestErr         = KnownInternalErrors[CONFIG_DIGEST_CODE]
 )
 
 var (

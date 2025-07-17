@@ -114,47 +114,7 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
 	r, err := client.waitForResponseAndBlock(resp)
 	if err != nil {
-		handledErr := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
-
-			// Loop through and check if we have our expected error
-
-			// IF we get a response err of new checksum available then we need to send a digest
-			// IF we get a response err of checksum mismatch then we fail early and shutdown
-			for _, ge := range gbErrors {
-				if ge.Code == Errors.CONFIG_AVAILABLE_CODE {
-					// Handle here...
-					log.Printf("applying new config...")
-					//err := s.sendClusterConfigDigest(client)
-					//if err != nil {
-					//	return err
-					//}
-				}
-				// TODO We have to match on the code as the error msg may have changed through chaining
-				if ge.Code == Errors.CONFIG_CHECKSUM_FAIL_CODE {
-
-					// Dispatch event here - we don't need an event here as we can just call Shutdown() but the added context and ability to handle helps
-					s.DispatchEvent(Event{
-						InternalError,
-						time.Now().Unix(),
-						&ErrorEvent{
-							ConnectToSeed,
-							Critical,
-							err,
-							"Connect To Seed",
-						},
-						"",
-					})
-
-					return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
-				}
-			}
-
-			return err
-
-		})
-
-		return handledErr
-
+		return s.handleClusterConfigChecksumResponse(client, err)
 	}
 
 	// IF we get an ok response we return and continue
@@ -164,6 +124,59 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 	return nil
 
 }
+
+func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr error) error {
+
+	handledErr := Errors.HandleError(respErr, func(gbErrors []*Errors.GBError) error {
+
+		// Loop through and check if we have our expected error
+
+		// IF we get a response err of new checksum available then we need to send a digest
+		// IF we get a response err of checksum mismatch then we fail early and shutdown
+		for _, ge := range gbErrors {
+			if ge.Code == Errors.CONFIG_AVAILABLE_CODE {
+				// Handle here...
+				log.Printf("applying new config...")
+				err := s.sendClusterConfigDigest(client)
+				if err != nil {
+					return err
+				}
+
+				// TODO --
+				// Still want to return an error, but it's a soft error which we check against to retry until we are clear
+				// For now we return nil + fix later
+
+			}
+
+			if ge.Code == Errors.CONFIG_CHECKSUM_FAIL_CODE {
+
+				// Dispatch event here - we don't need an event here as we can just call Shutdown() but the added context and ability to handle helps
+				s.DispatchEvent(Event{
+					InternalError,
+					time.Now().Unix(),
+					&ErrorEvent{
+						ConnectToSeed,
+						Critical,
+						respErr,
+						"Connect To Seed",
+					},
+					"",
+				})
+
+				return Errors.ChainGBErrorf(Errors.ConnectSeedErr, respErr, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
+			}
+		}
+
+		return respErr
+
+	})
+
+	return handledErr
+
+}
+
+//TODO Need to streamline and maybe offload some of this function (doing too much?)
+// Maybe should just send -> return response -> another function handles the response
 
 func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 
@@ -177,47 +190,138 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 
 	reqID, err := s.acquireReqID()
 	if err != nil {
-		return fmt.Errorf("send cluster config digest - %v", err)
+		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "")
 	}
 
 	pay, err := prepareRequest(d, 1, CFG_RECON, reqID, uint16(0))
 	if err != nil {
-		return fmt.Errorf("send cluster config digest - %v", err)
+		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "")
 	}
 
 	rsp := client.qProtoWithResponse(ctx, reqID, pay, false)
 
 	resp, err := client.waitForResponseAndBlock(rsp)
 	if err != nil {
-		return fmt.Errorf("send cluster config digest - %v", err)
+		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "")
 	}
 	if resp.msg == nil {
-		return fmt.Errorf("send cluster config digest - got nil response")
+		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, nil, "got nil response")
 	}
+
+	// Consider returning the response or calling a handle response function here ---
 
 	cd, err := deserialiseDelta(resp.msg)
 	if err != nil {
-		return fmt.Errorf("send cluster config digest - %v", err)
+		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "")
 	}
 
-	s.clusterMapLock.Lock()
-	self := s.GetSelfInfo()
-	s.clusterMapLock.Unlock()
-
 	if len(cd.delta) > 1 {
-		return fmt.Errorf("send cluster config digest - got %d delta length - should be 1", len(cd.delta))
+		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "length of digest should be 1 got [%d]", len(cd.delta))
 	}
 
 	if delta, ok := cd.delta[s.ServerName]; ok {
 		for _, v := range delta.keyValues {
-			err := self.Store(v)
+
+			if v.KeyGroup != CONFIG_DKG {
+				return Errors.ChainGBErrorf(Errors.ConfigGroupErr, nil, "got [%s]", v.KeyGroup)
+			}
+
+			err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
 			if err != nil {
-				return fmt.Errorf("send cluster config digest - %v", err)
+				return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "for key [%s]", v.Key)
 			}
 		}
 	} else {
-		return fmt.Errorf("send cluster config digest - name not found in cluster delta recieved - %v", s.ServerName)
+		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, nil, "delta not found for [%s]", s.ServerName)
 	}
+
+	return nil
+
+}
+
+//=====================================================================
+// Config Reconciliation for initial bootstrap
+//=====================================================================
+
+func (s *GBServer) getConfigDeltasAboveVersion(version int64) (map[string][]Delta, int, error) {
+
+	s.clusterMapLock.RLock()
+	cm := s.clusterMap
+	s.clusterMapLock.RUnlock()
+
+	sizeOfDelta := 0
+
+	cd := make(map[string][]Delta, 2)
+
+	sizeOfDelta += 1 + len(s.ServerName) + 2 // 1 byte for name length + name + size of delta key-values
+
+	for key, value := range cm.participants[s.ServerName].keyValues {
+
+		if value.Version > version && value.KeyGroup == CONFIG_DKG {
+			cd[key] = append(cd[key], *value)
+			sizeOfDelta += DELTA_META_SIZE + len(value.KeyGroup) + len(value.Key) + len(value.Value)
+		}
+
+	}
+
+	if len(cd) == 0 {
+		return cd, 0, fmt.Errorf("no config deltas found of higher version than: %d", version)
+	}
+
+	return cd, sizeOfDelta, nil
+
+}
+
+func (s *GBServer) reconcileClusterConfig() error {
+
+	//digestToSend, _, err := s.serialiseClusterDigestConfigOnly()
+	//if err != nil {
+	//	return err
+	//}
+
+	return nil
+
+}
+
+func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
+
+	c.mu.Lock()
+	srv := c.srv
+	c.mu.Unlock()
+
+	if fd == nil {
+		return fmt.Errorf("fulld digest is nil")
+	}
+
+	entry, ok := (*fd)[sender]
+	if !ok || entry == nil {
+		return fmt.Errorf("%s not found in full difest map", sender)
+	}
+
+	// Build method with this in it
+	configDeltas, size, err := srv.getConfigDeltasAboveVersion(entry.maxVersion)
+	if err != nil {
+		return err
+	}
+
+	respID, err := srv.acquireReqID()
+	if err != nil {
+		return err
+	}
+
+	cereal, err := srv.serialiseACKDelta(configDeltas, size)
+	if err != nil {
+		return fmt.Errorf("sendClusterConfigDelta - serialising configDeltas: %s", err)
+	}
+
+	pay, err := prepareRequest(cereal, 1, CFG_RECON_RESP, c.ph.respID, respID)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.enqueueProto(pay)
+	c.mu.Unlock()
 
 	return nil
 
@@ -251,12 +355,13 @@ func (s *GBServer) connectToSeed() error {
 
 	client := s.createNodeClient(conn, "tmpClient", true, NODE)
 
-	// Assume response ok if no error
 	log.Printf("checking cluster config...")
 	err = s.sendClusterCgfChecksum(client)
 	if err != nil {
 		return err
 	}
+
+	// Assume response ok if no error
 
 	//-----------------
 	// Send self info to onboard
@@ -438,89 +543,6 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		return ctx.Err()
 	default:
 	}
-
-	return nil
-
-}
-
-//=====================================================================
-// Config Reconciliation for initial bootstrap
-//=====================================================================
-
-func (s *GBServer) getConfigDeltasAboveVersion(version int64) (map[string][]Delta, int, error) {
-
-	s.clusterMapLock.RLock()
-	cm := s.clusterMap
-	s.clusterMapLock.RUnlock()
-
-	sizeOfDelta := 0
-
-	cd := make(map[string][]Delta)
-
-	for key, value := range cm.participants[s.ServerName].keyValues {
-
-		sizeOfDelta += 1 + len(s.ServerName) + 2 // 1 byte for name length + name + size of delta key-values
-
-		if value.Version > version {
-			cd[key] = append(cd[key], *value)
-			sizeOfDelta += DELTA_META_SIZE + len(value.KeyGroup) + len(value.Key) + len(value.Value)
-		}
-
-	}
-
-	if len(cd) == 0 {
-		return cd, 0, fmt.Errorf("no config deltas found of higher version than: %d", version)
-	}
-
-	return cd, sizeOfDelta, nil
-
-}
-
-func (s *GBServer) reconcileClusterConfig() error {
-
-	//digestToSend, _, err := s.serialiseClusterDigestConfigOnly()
-	//if err != nil {
-	//	return err
-	//}
-
-	return nil
-
-}
-
-func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
-
-	c.mu.Lock()
-	srv := c.srv
-	c.mu.Unlock()
-
-	if fd == nil {
-		return fmt.Errorf("fulld digest is nil")
-	}
-
-	entry, ok := (*fd)[sender]
-	if !ok || entry == nil {
-		return fmt.Errorf("%s not found in full difest map", sender)
-	}
-
-	// Build method with this in it
-	configDeltas, size, err := srv.getConfigDeltasAboveVersion(entry.maxVersion)
-	if err != nil {
-		return err
-	}
-
-	cereal, err := srv.serialiseACKDelta(configDeltas, size)
-	if err != nil {
-		return fmt.Errorf("sendClusterConfigDelta - serialising configDeltas: %s", err)
-	}
-
-	pay, err := prepareRequest(cereal, 1, CFG_RECON, c.ph.respID, uint16(0))
-	if err != nil {
-		return err
-	}
-
-	c.mu.Lock()
-	c.enqueueProto(pay)
-	c.mu.Unlock()
 
 	return nil
 
@@ -1004,7 +1026,7 @@ func (c *gbClient) processCfgRecon(message []byte) {
 
 	//name, fd, err := deSerialiseDigest(message)
 	//if err != nil {
-	//	c.sendErr(c.ph.reqID, 0, err.Error())
+	//	c.sendErr(c.ph.reqID, 0, "deserialise digest failed\r\n")
 	//	return
 	//}
 
