@@ -1357,7 +1357,9 @@ func (s *GBServer) addIDToSeedAddrList(id string, addr net.Addr) error {
 // Example - every increase in node count will need to be updated in self info and max version updated
 // Equally for heartbeats on every successful gossip with a node - the heartbeat and value should be updated
 
-func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
+func (s *GBServer) updateHeartBeat(timeOfUpdate int64) error {
+
+	self := s.GetSelfInfo()
 
 	key := MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)
 
@@ -1371,6 +1373,12 @@ func updateHeartBeat(self *Participant, timeOfUpdate int64) error {
 
 	} else {
 		return fmt.Errorf("no heartbeat delta")
+	}
+
+	if timeOfUpdate > self.maxVersion {
+		s.clusterMapLock.Lock()
+		self.maxVersion = timeOfUpdate
+		s.clusterMapLock.Unlock()
 	}
 
 	return nil

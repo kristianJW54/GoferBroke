@@ -202,7 +202,7 @@ type Delta struct {
 	KeyGroup  string
 	Key       string
 	Version   int64
-	ValueType byte   // This should be string, int, int64, float64 etc
+	ValueType uint8  // This should be string, int, int64, float64 etc
 	Value     []byte // Value should go last for easier de-serialisation
 	// Could add user defined metadata later on??
 }
@@ -1600,9 +1600,10 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 			nodeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
 
-			s.updateSelfInfo(time.Now().Unix(), func(p *Participant, t int64) error {
-				return updateHeartBeat(p, t)
-			})
+			err := s.updateHeartBeat(time.Now().Unix())
+			if err != nil {
+				return
+			}
 
 			s.gossipWithNode(nodeCtx, node)
 		}(nodeID)

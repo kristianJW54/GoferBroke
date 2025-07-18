@@ -285,17 +285,22 @@ func TestGetClusterConfigUpdateExchange(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 
-	configKey := "config:Name"
+	configKey := "Name"
 
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 
-	p := gbs.clusterMap.participants[gbs.ServerName]
+	//p := gbs.clusterMap.participants[gbs.ServerName]
 
 	// TODO This needs to be an update delta function with a potential callback or if block to also update struct if CONFIG_DKG
-	gbs.gbClusterConfig.Name = "new-cluster"
-	p.keyValues[configKey].Value = []byte("new-cluster")
-	p.keyValues[configKey].Version++
+	//gbs.gbClusterConfig.Name = "new-cluster"
+	//p.keyValues[configKey].Value = []byte("new-cluster")
+	//p.keyValues[configKey].Version++
+
+	err = gbs.updateSelfInfo(CONFIG_DKG, configKey, D_STRING_TYPE, "new-cluster")
+	if err != nil {
+		t.Errorf("%v", err)
+	}
 
 	d, _, err := gbs.getConfigDeltasAboveVersion(0)
 	if err != nil {
@@ -313,6 +318,12 @@ func TestGetClusterConfigUpdateExchange(t *testing.T) {
 	if gbs2.gbClusterConfig.Name != "new-cluster" {
 		t.Errorf("expected to get config name of [new-cluster] --> got %s", gbs2.gbClusterConfig.Name)
 	}
+
+	self := gbs2.GetSelfInfo()
+	for k, v := range self.keyValues {
+		log.Printf("k = %s, v = %v", k, v.Version)
+	}
+	log.Printf("gbs2 name = %s", gbs2.gbClusterConfig.Name)
 
 	gbs2.Shutdown()
 	gbs.Shutdown()

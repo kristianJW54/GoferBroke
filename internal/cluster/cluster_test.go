@@ -3,7 +3,6 @@ package cluster
 import (
 	"bytes"
 	"container/heap"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"sync"
@@ -255,58 +254,24 @@ func TestDeltaHeap(t *testing.T) {
 
 func TestUpdateHeartBeat(t *testing.T) {
 
-	// Initialize config with the seed server address
-	config := &GbClusterConfig{
-		SeedServers: []*Seeds{
-			{},
-		},
-		Cluster: &ClusterOptions{},
-	}
-
-	mockServer := &GBServer{
-		ServerName: "mock-server-1",
-		clusterMap: ClusterMap{
-			participants: make(map[string]*Participant, 1),
-		},
-		gbClusterConfig: config,
-	}
-
 	keyValues := map[string]*Delta{
-		"test:heartbeat": &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
-		"test:tcp":       &Delta{KeyGroup: TEST_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
+		"system:heartbeat": &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
+		"system:tcp":       &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
 	}
 
-	participant := &Participant{
-		name:       mockServer.ServerName,
-		keyValues:  keyValues,
-		maxVersion: 1640995200,
+	// Initialize config with the seed server address
+	gbs := GenerateDefaultTestServer("test-1", keyValues, 0)
+
+	self := gbs.GetSelfInfo()
+
+	log.Printf("heartbeat - %d", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
+
+	err := gbs.updateHeartBeat(time.Now().Unix())
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	mockServer.clusterMap.participants[mockServer.ServerName] = participant
-
-	// Now test update heartbeat function
-
-	self := mockServer.GetSelfInfo()
-	heartbeatBytes := self.keyValues[_HEARTBEAT_].Value
-	heartbeatInt := int64(binary.BigEndian.Uint64(heartbeatBytes))
-
-	log.Printf("current heartbeat value = %v", heartbeatInt)
-	log.Println("updating heartbeat...")
-	time.Sleep(2 * time.Second)
-
-	now := time.Now().Unix()
-	mockServer.updateSelfInfo(now, func(participant *Participant, timeOfUpdate int64) error {
-		err := updateHeartBeat(participant, timeOfUpdate)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-
-	heartbeatBytes = self.keyValues[_HEARTBEAT_].Value
-	heartbeatInt = int64(binary.BigEndian.Uint64(heartbeatBytes))
-
-	log.Printf("update heartbeat time: %v", heartbeatInt)
+	log.Printf("new heartbeat - %d", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
 
 }
 
@@ -342,13 +307,10 @@ func TestClusterMapLocks(t *testing.T) {
 	}
 
 	updateSelfInfo := func() {
-		mockServer.updateSelfInfo(time.Now().Unix(), func(participant *Participant, timeOfUpdate int64) error {
-			err := updateHeartBeat(participant, timeOfUpdate)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
+		err := mockServer.updateSelfInfo(SYSTEM_DKG, _HEARTBEAT_, D_INT64_TYPE, time.Now().Unix())
+		if err != nil {
+			t.Errorf("%v", err)
+		}
 	}
 
 	addParticipant := func() {

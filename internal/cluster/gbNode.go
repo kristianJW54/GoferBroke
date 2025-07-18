@@ -1,7 +1,9 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
@@ -556,32 +558,141 @@ func (s *GBServer) GetSelfInfo() *Participant {
 	return s.clusterMap.participants[s.ServerName]
 }
 
-func (s *GBServer) updateSelfInfo(timeOfUpdate int64, updateFunc func(participant *Participant, timeOfUpdate int64) error) {
+// TODO Consider where to put this
+func encodeValue(valueType uint8, value any) ([]byte, error) {
 
-	if s.gbNodeConfig.Internal.DisableInternalGossipSystemUpdate {
-		log.Printf("internal systems gossip update is off")
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
 	}
+
+	var buf bytes.Buffer
+
+	switch valueType {
+	case D_STRING_TYPE:
+		v, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("expected string, got %T", value)
+		}
+		return []byte(v), nil
+	case D_BYTE_TYPE:
+		v, ok := value.([]byte)
+		if !ok {
+			return nil, fmt.Errorf("expected []byte, got %T", value)
+		}
+		return v, nil
+	case D_INT_TYPE:
+		v, ok := value.(int)
+		if !ok {
+			return nil, fmt.Errorf("expected int, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, int64(v)) // normalize size
+		return buf.Bytes(), err
+	case D_INT8_TYPE:
+		v, ok := value.(int8)
+		if !ok {
+			return nil, fmt.Errorf("expected int8, got %T", value)
+		}
+		return []byte{byte(v)}, nil
+	case D_INT16_TYPE:
+		v, ok := value.(int16)
+		if !ok {
+			return nil, fmt.Errorf("expected int16, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, v)
+		return buf.Bytes(), err
+	case D_INT32_TYPE:
+		v, ok := value.(int32)
+		if !ok {
+			return nil, fmt.Errorf("expected int32, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, v)
+		return buf.Bytes(), err
+	case D_INT64_TYPE:
+		v, ok := value.(int64)
+		if !ok {
+			return nil, fmt.Errorf("expected int64, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, v)
+		return buf.Bytes(), err
+	case D_UINT8_TYPE:
+		v, ok := value.(uint8)
+		if !ok {
+			return nil, fmt.Errorf("expected uint8, got %T", value)
+		}
+		return []byte{byte(v)}, nil
+	case D_UINT16_TYPE:
+		v, ok := value.(uint16)
+		if !ok {
+			return nil, fmt.Errorf("expected uint16, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, v)
+		return buf.Bytes(), err
+	case D_UINT32_TYPE:
+		v, ok := value.(uint32)
+		if !ok {
+			return nil, fmt.Errorf("expected uint32, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, v)
+		return buf.Bytes(), err
+	case D_UINT64_TYPE:
+		v, ok := value.(uint64)
+		if !ok {
+			return nil, fmt.Errorf("expected uint64, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, v)
+		return buf.Bytes(), err
+	case D_FLOAT64_TYPE:
+		v, ok := value.(float64)
+		if !ok {
+			return nil, fmt.Errorf("expected float64, got %T", value)
+		}
+		err := binary.Write(&buf, binary.BigEndian, v)
+		return buf.Bytes(), err
+	case D_BOOL_TYPE:
+		v, ok := value.(bool)
+		if !ok {
+			return nil, fmt.Errorf("expected bool, got %T", value)
+		}
+		if v {
+			return []byte{1}, nil
+		}
+		return []byte{0}, nil
+	default:
+		return nil, fmt.Errorf("unsupported valueType: %d", valueType)
+	}
+}
+
+func (s *GBServer) updateSelfInfo(keyGroup, key string, valueType uint8, value any) error {
 
 	self := s.GetSelfInfo()
 
-	err := updateFunc(self, timeOfUpdate)
-	if err != nil {
-		log.Printf("error %v", err)
+	if delta, exists := self.keyValues[MakeDeltaKey(keyGroup, key)]; exists {
+
+		log.Printf("found")
+
+		v, err := encodeValue(valueType, value)
+		if err != nil {
+			return err
+		}
+
+		//self.pm.Lock()
+		delta.Value = v
+		if delta.KeyGroup == CONFIG_DKG {
+			err := s.updateClusterConfigDeltaAndSelf(delta.Key, delta)
+			if err != nil {
+				return err
+			}
+			delta.Version++
+		} else {
+			delta.Version = time.Now().Unix()
+		}
+		//self.pm.Unlock()
+
+		return nil
+
 	}
 
-	s.clusterMapLock.Lock()
-	s.clusterMap.participants[s.ServerName].maxVersion = timeOfUpdate
-	s.clusterMapLock.Unlock()
-
-}
-
-// Assume no lock held coming
-func (s *GBServer) updateParticipant(node *Participant, timeOfUpdate int64, update func(node *Participant, timeOfUpdate int64) error) {
-
-	err := update(node, timeOfUpdate)
-	if err != nil {
-		log.Printf("error %v", err)
-	}
+	return fmt.Errorf("found no delta for %s", key)
 
 }
 
