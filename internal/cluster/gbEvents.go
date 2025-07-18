@@ -12,53 +12,53 @@ import (
 
 Event Strategy — Reviewed
 
-There are two types of events in the system: **Internal** and **External**
+There are two types of events in the system: Internal and External
 
 ---
 
-🔹 Internal Events
+Internal Events
 
-Internal events are **system-level events** used to monitor or react to internal mechanics of the gossip protocol. These events are:
-- **Pre-registered** by the system
-- **Handled by the core** (not user-defined logic)
+Internal events are system level events used to monitor or react to internal mechanics of the gossip protocol. These events are:
+- Pre registered by the system
+- Handled by the core (not user defined logic)
 - Used to track or enforce protocol behavior
-- Triggered only by **internal deltas** or system operations
+- Triggered only by internal deltas or system operations
 
-These events are **strictly read-only for the server's self state**. That means:
-- Even if a peer gossips an internal delta about "you", the server will not merge that value into its **own** state
+These events are strictly read-only for the server's self state. That means:
+- Even if a peer gossips an internal delta about "you", the server will not merge that value into its own state
 - Instead, it will trigger an internal event for observation or failure detection
 
 Example:
 `InternalDeltaUpdated` — triggered when a node receives a newer version of an internal delta (e.g., number of connections) about a peer.
 
-**Why this matters:**
-> Internal deltas must never overwrite or influence the server’s self-state, even if other nodes gossip conflicting information.
+Why this matters:
+> Internal deltas must never overwrite or influence the server’s self state, even if other nodes gossip conflicting information.
 
 ---
 
-🔸 External Events
+External Events
 
-External events are triggered by **user-defined or application-level deltas** and changes in the system. These events:
-- Can be **reacted to freely** by application developers
+External events are triggered by user defined or application-level deltas and changes in the system. These events:
+- Can be reacted to freely by application developers
 - May lead to updates in the server’s own state, if the application chooses
-- Are **loosely coupled** to the protocol — acting on them does not affect core correctness
+- Are loosely coupled to the protocol — acting on them does not affect core correctness
 
-These events give **application designers flexibility** to use the gossip system as a state dissemination mechanism.
+These events give application designers flexibility to use the gossip system as a state dissemination mechanism.
 
 Example:
-`UserDeltaReceived` — triggered when a node receives a new delta about a "to-do list" key from another peer.
+`UserDeltaReceived` — triggered when a node receives a new delta about a "to do list" key from another peer.
 
 > Application logic may choose to incorporate the peer’s state into its own (e.g., merging tasks), but this is optional and application-specific.
 
 ---
 
-🛑 Warning on Merging External State
+Warning on Merging External State
 
-While external deltas **can** be merged into the server’s self state, it is **not recommended by default**. This blurs the ownership model and can lead to:
+While external deltas can be merged into the server’s self state, it is not recommended by default. This blurs the ownership model and can lead to:
 - Diverging update responsibilities
 - Unclear authority over data
 
-Applications must make **explicit decisions** when choosing to mirror peer state.
+Applications must make explicit decisions when choosing to mirror peer state.
 
 ---
 
@@ -90,13 +90,15 @@ const (
 	ClientConnected
 	ClientDisconnected
 
-	GossipLoadReached
-	MaxNodeConnectionsReached
-	MaxClientConnectionsReached
-
 	AdvertiseAddressUpdatedFromDial
 
 	InternalError
+
+	// Possible trace events
+
+	GossipLoadReached
+	MaxNodeConnectionsReached
+	MaxClientConnectionsReached
 
 	// Will need error events to provide the option to handle in-flight errors
 	// Also register system(internal) error handlers to handle

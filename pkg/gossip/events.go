@@ -118,14 +118,14 @@ func (n *Node) OnEvent(eventType EventEnum, handler func(Event) error) (string, 
 //=======================================================
 
 type DeltaUpdateEvent struct {
-	DeltaKey        string
-	PreviousVersion int64
-	PreviousValue   []byte
-	CurrentVersion  int64
-	CurrentValue    []byte
+	DeltaKey        string `json:"delta_key"`
+	PreviousVersion int64  `json:"previous_version"`
+	PreviousValue   []byte `json:"previous_value"`
+	CurrentVersion  int64  `json:"current_version"`
+	CurrentValue    []byte `json:"current_value"`
 }
 
 type DeltaAddedEvent struct {
-	DeltaKey   string
-	DeltaValue []byte
+	DeltaKey   string `json:"delta_key"`
+	DeltaValue []byte `json:"delta_value"`
 }

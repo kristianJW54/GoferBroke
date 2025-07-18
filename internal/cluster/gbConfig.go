@@ -75,6 +75,21 @@ const (
 	C_LOCAL
 )
 
+// TODO Need to add side-car observability client localhost
+// TODO Need to add gossip round buffer size
+// Config options
+// - EnableMetrics bool
+// - Interval for collections
+
+// TODO Logging config
+// - Custom slog bool
+// if !custom slog:
+// - log buffer size
+// - level
+// - output : file, stdout, none
+// if file:
+// - log file path
+
 type ClusterOptions struct {
 	NodeSelectionPerGossipRound    uint8
 	DiscoveryPercentage            uint8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
@@ -88,9 +103,10 @@ type ClusterOptions struct {
 	MaxSequenceIDPool              uint32
 	ClusterNetworkType             ClusterNetworkType
 	DynamicGossipScaling           bool // Adjusts node selection, delta size, discovery size, etc based on cluster metrics and size
-	LoggingURL                     string
-	MetricsURL                     string
-	ErrorsURL                      string
+
+	// Logging
+	CustomSlog bool
+
 	// TODO Think if we need a URL map that users can specify for their own endpoints
 	EndpointsURLMap map[string]string
 
@@ -120,12 +136,12 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			MaxSequenceIDPool:              DEFAULT_SEQUENCE_ID_POOL,
 			ClusterNetworkType:             C_UNDEFINED,
 			DynamicGossipScaling:           false,
-			LoggingURL:                     "",
-			MetricsURL:                     "",
-			ErrorsURL:                      "",
-			EndpointsURLMap:                ep,
-			NodeMTLSRequired:               false,
-			ClientMTLSRequired:             false,
+
+			CustomSlog: false,
+
+			EndpointsURLMap:    ep,
+			NodeMTLSRequired:   false,
+			ClientMTLSRequired: false,
 		},
 	}
 

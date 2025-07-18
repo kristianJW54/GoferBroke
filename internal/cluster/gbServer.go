@@ -10,6 +10,7 @@ import (
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -272,6 +273,11 @@ type GBServer struct {
 	clusterMap ClusterMap
 	phi        phiControl
 
+	//Logging
+	logger        *slog.Logger
+	logRingBuffer *logBuffer
+	logHandler    *asyncRingHandler
+
 	//Connection Handling
 	gcid uint64 // Global client ID counter
 	// May need one for client and one for node as we will treat them differently
@@ -418,6 +424,33 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Logging setup
+	var sl *slog.Logger
+	var lb *logBuffer
+	var arh *asyncRingHandler
+
+	// TODO Finish implementing user defined logging behavior
+	if gbConfig.Cluster.CustomSlog {
+		sl = nil
+		lb = nil
+		arh = nil
+
+	} else {
+		ring := newLogBuffer(100)
+		console := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
+		async := newAsyncRingHandler(ctx, ring, console, 248)
+		logger := slog.New(async)
+
+		slog.SetDefault(logger)
+
+		sl = logger
+		lb = ring
+		arh = async
+
+	}
+
 	s := &GBServer{
 		ServerID:         *serverID,
 		ServerName:       srvName,
@@ -444,6 +477,10 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		originalCfgHash: cfgHash,
 
 		clientStore: make(map[uint64]*gbClient),
+
+		logger:        sl,
+		logRingBuffer: lb,
+		logHandler:    arh,
 
 		gossip:          goss,
 		isSeed:          gbNodeConfig.IsSeed,
