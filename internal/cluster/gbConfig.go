@@ -91,7 +91,8 @@ const (
 // - log file path
 
 type ClusterOptions struct {
-	NodeSelectionPerGossipRound    uint8
+	NodeSelectionPerGossipRound uint8
+	// Would like to do a gossip interval ticker time but would need a time.Duration or float which may be hard - need to revisit lex/parse/ast
 	DiscoveryPercentage            uint8 // from 0 to 100 how much of a percentage a new node should gather address information in discovery mode for based on total number of participants in the cluster
 	MaxDeltaGossipedPerParticipant uint8
 	MaxGossipSize                  uint16
@@ -102,13 +103,17 @@ type ClusterOptions struct {
 	MaxNumberOfNodes               uint32
 	MaxSequenceIDPool              uint32
 	ClusterNetworkType             ClusterNetworkType
-	DynamicGossipScaling           bool // Adjusts node selection, delta size, discovery size, etc based on cluster metrics and size
-
-	// Logging
-	CustomSlog bool
 
 	// TODO Think if we need a URL map that users can specify for their own endpoints
 	EndpointsURLMap map[string]string
+
+	// Log endpoints/sinks
+
+	//Security Control
+	MaxNumberOfClients uint16
+	AllowedClientIPs   []string
+	RateLimitPerClient uint16
+	RateLimitInterval  uint16
 
 	NodeMTLSRequired   bool `default:"false"`
 	ClientMTLSRequired bool `default:"false"`
@@ -135,11 +140,14 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			MaxNumberOfNodes:               DEFAULT_MAX_NUMBER_OF_NODES,
 			MaxSequenceIDPool:              DEFAULT_SEQUENCE_ID_POOL,
 			ClusterNetworkType:             C_UNDEFINED,
-			DynamicGossipScaling:           false,
 
-			CustomSlog: false,
+			EndpointsURLMap: ep,
 
-			EndpointsURLMap:    ep,
+			MaxNumberOfClients: 10,
+			AllowedClientIPs:   []string{},
+			RateLimitPerClient: 100,
+			RateLimitInterval:  300, // Seconds
+
 			NodeMTLSRequired:   false,
 			ClientMTLSRequired: false,
 		},
@@ -184,6 +192,13 @@ type InternalOptions struct {
 	KeyFilePath    string
 
 	// Need logging config also
+	// Logging
+	LogToBuffer          bool
+	LogBufferSize        uint16
+	LogChannelSize       uint16
+	DefaultLoggerEnabled bool
+	Output               string
+	LogFilePath          string
 }
 
 func InitDefaultNodeConfig() *GbNodeConfig {

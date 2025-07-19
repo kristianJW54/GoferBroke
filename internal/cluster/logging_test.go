@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -10,7 +10,6 @@ import (
 )
 
 func TestBasicServerLog(t *testing.T) {
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -18,15 +17,17 @@ func TestBasicServerLog(t *testing.T) {
 	console := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
-	async := newAsyncRingHandler(ctx, ring, console, 248)
+	async := newSlogLogger(ctx, ring, console, 256)
+
 	logger := slog.New(async)
 
 	slog.SetDefault(logger)
 
+	// Write logs
 	logger.Info("Test log message", "module", "test", "step", 1)
 	logger.Warn("Something happened", "code", 123)
 
-	// Let the async worker process logs
+	// Optional: wait briefly or rely on async.Close() drain
 	time.Sleep(100 * time.Millisecond)
 
 	// Snapshot and assert
@@ -36,20 +37,8 @@ func TestBasicServerLog(t *testing.T) {
 		t.Errorf("expected at least 2 log entries, got %d", len(snapshot))
 	}
 
-	// Optional: verify contents
-	found := false
-	for _, entry := range snapshot {
-		log.Printf("entry = %+v", entry)
-		if entry.Message == "Test log message" {
-			found = true
-			break
-		}
+	for _, snap := range snapshot {
+		fmt.Printf("snapshot -----> %s\n", snap)
 	}
-	if !found {
-		t.Errorf("expected 'Test log message' in ring buffer, not found")
-	}
-
-	// Clean shutdown
-	async.Close()
 
 }

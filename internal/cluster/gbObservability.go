@@ -58,74 +58,131 @@ func (lb *logBuffer) Snapshot() []*LogEntry {
 	return out
 }
 
-type asyncRingHandler struct {
-	ch     chan slog.Record
-	next   slog.Handler
-	buffer *logBuffer
-	done   chan struct{}
-	ctx    context.Context
-	once   sync.Once
+func (lb *logBuffer) Drain() []*LogEntry {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+
+	var out []*LogEntry
+	if lb.full {
+		out = append(out, lb.entries[:lb.idx]...)
+		out = append(out, lb.entries[lb.idx:]...)
+	} else {
+		out = append(out, lb.entries[:lb.idx]...)
+	}
+
+	lb.entries = make([]*LogEntry, len(lb.entries))
+	lb.idx = 0
+	lb.full = false
+
+	return out
+
 }
 
-func newAsyncRingHandler(mainCtx context.Context, buffer *logBuffer, next slog.Handler, chanSize int) *asyncRingHandler {
-	h := &asyncRingHandler{
-		ch:     make(chan slog.Record, chanSize),
-		next:   next,
-		buffer: buffer,
-		done:   make(chan struct{}),
-		ctx:    mainCtx,
+//----------
+// Implement the interface
+
+func (lb *logBuffer) Handle(rec slog.Record, attr []slog.Attr) error {
+	entry := &LogEntry{
+		Time:    rec.Time,
+		Level:   rec.Level,
+		Message: rec.Message,
+		Attrs:   attr,
+	}
+	lb.Add(entry)
+
+	return nil
+
+}
+
+type CustomSlogHandler interface {
+	Handle(rec slog.Record, attrs []slog.Attr) error
+}
+
+type slogLogger struct {
+	ch          chan slog.Record
+	next        slog.Handler
+	customLogic CustomSlogHandler
+	done        chan struct{}
+	ctx         context.Context
+	once        sync.Once
+}
+
+func newSlogLogger(ctx context.Context, custom CustomSlogHandler, next slog.Handler, chanSize int) *slogLogger {
+	h := &slogLogger{
+		ch:          make(chan slog.Record, chanSize),
+		next:        next,
+		customLogic: custom,
+		done:        make(chan struct{}),
+		ctx:         ctx,
 	}
 	go h.run()
 	return h
 }
 
-func (h *asyncRingHandler) run() {
+// Run as go-routine
+func (h *slogLogger) run() {
 	for rec := range h.ch {
 		var attrs []slog.Attr
 		rec.Attrs(func(a slog.Attr) bool {
 			attrs = append(attrs, a)
 			return true
 		})
-		h.buffer.Add(&LogEntry{
-			Time:    rec.Time,
-			Level:   rec.Level,
-			Message: rec.Message,
-			Attrs:   attrs,
-		})
+		_ = h.customLogic.Handle(rec, attrs)
 		_ = h.next.Handle(context.Background(), rec)
 	}
 	close(h.done)
 }
 
-func (h *asyncRingHandler) Handle(_ context.Context, rec slog.Record) error {
+func (h *slogLogger) Enabled(ctx context.Context, level slog.Level) bool {
+	return true // Always return true and decide later what to do
+}
+
+func (h *slogLogger) Handle(_ context.Context, rec slog.Record) error {
 	select {
 	case h.ch <- rec:
 		return nil
 	case <-h.ctx.Done():
 		return h.ctx.Err()
 	default:
-		// optional: drop, warn, or write directly to buffer
-		return nil
+		if h.next != nil {
+			return h.next.Handle(context.Background(), rec)
+		}
+		return nil // Drop or log manually
 	}
 }
 
-func (h *asyncRingHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.next.Enabled(ctx, level)
+func (h *slogLogger) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return newSlogLogger(h.ctx, h.customLogic, h.next.WithAttrs(attrs), cap(h.ch))
 }
 
-func (h *asyncRingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return newAsyncRingHandler(h.ctx, h.buffer, h.next.WithAttrs(attrs), cap(h.ch))
+func (h *slogLogger) WithGroup(name string) slog.Handler {
+	return newSlogLogger(h.ctx, h.customLogic, h.next.WithGroup(name), cap(h.ch))
 }
 
-func (h *asyncRingHandler) WithGroup(name string) slog.Handler {
-	return newAsyncRingHandler(h.ctx, h.buffer, h.next.WithGroup(name), cap(h.ch))
-}
-
-func (h *asyncRingHandler) Close() {
+func (h *slogLogger) Close() {
 	h.once.Do(func() {
 		close(h.ch)
 		<-h.done
 	})
+}
+
+//========================================================
+// Null Common Slog for when only Custom is specified
+
+type noopHandler struct{}
+
+func (n noopHandler) Enabled(_ context.Context, _ slog.Level) bool  { return false }
+func (n noopHandler) Handle(_ context.Context, _ slog.Record) error { return nil }
+func (n noopHandler) WithAttrs(_ []slog.Attr) slog.Handler          { return n }
+func (n noopHandler) WithGroup(_ string) slog.Handler               { return n }
+
+//=========================
+// Logger setup
+
+func (s *GBServer) SetupLogger() error {
+
+	return nil
+
 }
 
 //============================================

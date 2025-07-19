@@ -276,7 +276,7 @@ type GBServer struct {
 	//Logging
 	logger        *slog.Logger
 	logRingBuffer *logBuffer
-	logHandler    *asyncRingHandler
+	logHandler    *slogLogger
 
 	//Connection Handling
 	gcid uint64 // Global client ID counter
@@ -427,29 +427,22 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 	// Logging setup
 	var sl *slog.Logger
 	var lb *logBuffer
-	var arh *asyncRingHandler
+	var arh *slogLogger
 
-	// TODO Finish implementing user defined logging behavior
-	if gbConfig.Cluster.CustomSlog {
-		sl = nil
-		lb = nil
-		arh = nil
+	// TODO Finish implementing user defined logging behavior - Wrap into a method
 
-	} else {
-		ring := newLogBuffer(100)
-		console := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-		async := newAsyncRingHandler(ctx, ring, console, 248)
-		logger := slog.New(async)
+	ring := newLogBuffer(100)
+	console := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})
+	async := newSlogLogger(ctx, ring, console, 248)
+	logger := slog.New(async)
 
-		slog.SetDefault(logger)
+	slog.SetDefault(logger)
 
-		sl = logger
-		lb = ring
-		arh = async
-
-	}
+	sl = logger
+	lb = ring
+	arh = async
 
 	s := &GBServer{
 		ServerID:         *serverID,
