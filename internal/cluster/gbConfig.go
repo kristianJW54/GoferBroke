@@ -194,11 +194,11 @@ type InternalOptions struct {
 	// Need logging config also
 	// Logging
 	LogToBuffer          bool
+	LogBufferOutput      string
 	LogBufferSize        uint16
 	LogChannelSize       uint16
 	DefaultLoggerEnabled bool
 	Output               string
-	LogFilePath          string
 }
 
 func InitDefaultNodeConfig() *GbNodeConfig {
@@ -217,6 +217,13 @@ func InitDefaultNodeConfig() *GbNodeConfig {
 			DebugMode:                             false,
 			DisableUpdateServerTimeStampOnStartup: false,
 			DisableInternalGossipSystemUpdate:     false,
+
+			LogToBuffer:          true,
+			LogBufferOutput:      "text",
+			LogBufferSize:        512,
+			LogChannelSize:       128,
+			DefaultLoggerEnabled: true,
+			Output:               "stderr",
 
 			CACertFilePath: "",
 			CertFilePath:   "",

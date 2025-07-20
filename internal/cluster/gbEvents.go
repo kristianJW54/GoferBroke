@@ -203,7 +203,7 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("Panic in event handler [%s]: %v", ParseEventEnumToString(eventType), r)
+				//log.Printf("Panic in event handler [%s]: %v", ParseEventEnumToString(eventType), r)
 			}
 		}()
 
@@ -211,10 +211,10 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 			select {
 			case event := <-ch:
 				if err := handler(event); err != nil {
-					log.Printf("Error handling event [%s]: %v", ParseEventEnumToString(eventType), err)
+					//log.Printf("Error handling event [%s]: %v", ParseEventEnumToString(eventType), err)
 				}
 			case <-ctx.Done():
-				log.Printf("Context cancelled, stopping event handler [%s]", ParseEventEnumToString(eventType))
+				//log.Printf("Context cancelled, stopping event handler [%s]", ParseEventEnumToString(eventType))
 				return
 			}
 		}

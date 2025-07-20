@@ -275,7 +275,8 @@ type GBServer struct {
 
 	//Logging
 	logger        *slog.Logger
-	logRingBuffer *logBuffer
+	logRingBuffer *normalLogBuffer
+	jsonLogBuffer *jsonLogBuffer
 	logHandler    *slogLogger
 
 	//Connection Handling
@@ -363,6 +364,10 @@ func NewServerFromConfigString(nodeConfigData, clusterConfigData string) (*GBSer
 
 func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*ConfigSchema, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
 
+	//Logging setup
+	logger, customerSlogLogger, logRingBuffer, jsonRingBuffer := setupLogger(context.Background(), gbNodeConfig)
+	slog.SetDefault(logger)
+
 	if len([]byte(serverName)) > ServerNameMaxLength {
 		return nil, fmt.Errorf("server name length exceeds %d", ServerNameMaxLength)
 	}
@@ -424,26 +429,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Logging setup
-	var sl *slog.Logger
-	var lb *logBuffer
-	var arh *slogLogger
-
-	// TODO Finish implementing user defined logging behavior - Wrap into a method
-
-	ring := newLogBuffer(100)
-	console := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
-	async := newSlogLogger(ctx, ring, console, 248)
-	logger := slog.New(async)
-
-	slog.SetDefault(logger)
-
-	sl = logger
-	lb = ring
-	arh = async
-
 	s := &GBServer{
 		ServerID:         *serverID,
 		ServerName:       srvName,
@@ -471,9 +456,10 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 		clientStore: make(map[uint64]*gbClient),
 
-		logger:        sl,
-		logRingBuffer: lb,
-		logHandler:    arh,
+		logger:        logger,
+		logRingBuffer: logRingBuffer,
+		jsonLogBuffer: jsonRingBuffer,
+		logHandler:    customerSlogLogger,
 
 		gossip:          goss,
 		isSeed:          gbNodeConfig.IsSeed,
@@ -517,7 +503,7 @@ func (s *GBServer) initSelf() {
 	// Then we initialise our info into a participant struct
 	selfInfo, err := s.initSelfParticipant()
 	if err != nil {
-		log.Printf("error in init participant %v", err)
+		s.logger.Info("failed to intialise self", "err: ", err)
 		return
 	}
 
@@ -536,6 +522,14 @@ func (s *GBServer) initSelf() {
 		}
 	}
 
+}
+
+func parseMode(isSeed bool) string {
+	if isSeed {
+		return "seed"
+	} else {
+		return "node"
+	}
 }
 
 // StartServer should be run in a go-routine. Upon start, the server will check it's state and launch both internal and gossip processes once accept connection routines
@@ -558,16 +552,8 @@ func (s *GBServer) StartServer() {
 		s.ServerName = srvName
 	}
 
-	if s.gbNodeConfig.Internal.IsTestMode {
-		// Add debug mode output
-		log.Printf("Server starting in test mode: %s\n", s.PrettyName())
-	} else {
-		fmt.Printf("Server starting: %s -- Part of %s\n", s.PrettyName(), s.gbClusterConfig.Name)
-
-	}
 	//s.clusterMapLock.Lock()
 	if s.gbNodeConfig.Internal.DisableInitialiseSelf {
-		log.Printf("[WARN] Config, Cluster Map, Phi Accrual, Self -> Not Initialised\n")
 	} else {
 		// Debug logs here
 		s.startupSync.Add(1)
@@ -645,6 +631,13 @@ func (s *GBServer) StartServer() {
 			})
 	}
 
+	s.logger.Info(fmt.Sprintf(
+		"Server %s started", s.name),
+		"Mode", parseMode(s.isSeed),
+		"Cluster", s.gbClusterConfig.Name,
+		"Node Address", s.advertiseAddress,
+	)
+
 	// May need to periodically check our node addr? and ensure we are resolved and reachable etc
 }
 
@@ -660,16 +653,20 @@ func (s *GBServer) Shutdown() {
 
 	// Try to acquire the server lock
 	if !s.serverLock.TryLock() { // Assuming TryLock is implemented
-		log.Printf("%s - Shutdown blocked waiting on serverLock", s.PrettyName())
 		return
 	}
 	defer s.serverLock.Unlock()
 
 	// Log shutdown initiation
-	log.Printf("%s - Shutdown Initiated", s.PrettyName())
+
+	s.logger.Info("Shutting down server...")
 
 	// Cancel the server context to signal all other processes
 	s.serverContextCancel()
+
+	//if s.logger != nil {
+	//	s.logHandler.Close() // Only if stored and exposed
+	//}
 
 	// Set the SHUTTING_DOWN flag to prevent new processes from starting
 	s.flags.set(SHUTTING_DOWN)
@@ -691,11 +688,9 @@ func (s *GBServer) Shutdown() {
 	s.tmpConnStore.Range(func(key, value interface{}) bool {
 		c, ok := value.(*gbClient)
 		if !ok {
-			log.Printf("Error: expected *gbClient but got %T for key %v", value, key)
 			return true // Continue iteration
 		}
 		if c.gbc != nil {
-			log.Printf("%s -- closing temp node %s", s.PrettyName(), key)
 			c.gbc.Close()
 		}
 		s.tmpConnStore.Delete(key)
@@ -707,11 +702,9 @@ func (s *GBServer) Shutdown() {
 	s.nodeConnStore.Range(func(key, value interface{}) bool {
 		c, ok := value.(*gbClient)
 		if !ok {
-			log.Printf("Error: expected *gbClient but got %T for key %v", value, key)
 			return true
 		}
 		if c.gbc != nil {
-			log.Printf("%s -- closing node %s", s.PrettyName(), key)
 			c.gbc.Close()
 		}
 		s.nodeConnStore.Delete(key)
@@ -725,17 +718,6 @@ func (s *GBServer) Shutdown() {
 	//log.Println("waiting...")
 	s.grWg.Wait()
 	//log.Println("done")
-
-	if s.gbNodeConfig.Internal.IsTestMode {
-
-		// Dump the deltas for checking
-		for _, p := range s.clusterMap.participantArray {
-
-			log.Printf("participant --> %s", p)
-
-		}
-
-	}
 
 	//log.Println("Server shutdown complete")
 }
@@ -767,7 +749,7 @@ func resolveConfigSeedAddr(cfg *GbClusterConfig) ([]*seedEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Printf("adding seed addr = %s", tcpAddr.String())
+		//log.Printf("adding seed addr = %s", tcpAddr.String())
 		seedAddr = append(seedAddr, &seedEntry{
 			host:     value.Host,
 			port:     value.Port,
@@ -923,7 +905,7 @@ func (s *GBServer) seedCheck() bool {
 			//if addr.resolved.IP.Equal(s.advertiseAddress.IP) && addr.resolved.Port == s.advertiseAddress.Port {
 			//	return true
 			//}
-			log.Printf("Checking seed %s - against us %s", addr.resolved.String(), s.boundTCPAddr.String())
+			//log.Printf("Checking seed %s - against us %s", addr.resolved.String(), s.boundTCPAddr.String())
 			if addr.resolved.String() == s.boundTCPAddr.String() {
 				return true
 			}
@@ -1038,7 +1020,7 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 		return nil, err
 	}
 
-	log.Printf("Initialised own deltas")
+	//log.Printf("Initialised own deltas")
 
 	return p, nil
 
@@ -1117,7 +1099,7 @@ func (s *GBServer) AcceptNodeLoop(name string) error {
 				select {
 				case <-ctx.Done():
 					//log.Println("accept loop context canceled -- exiting loop")
-					log.Println("Context canceled, exiting accept loop")
+					//log.Println("Context canceled, exiting accept loop")
 					return true
 				default:
 					//log.Printf("accept loop context error -- %s\n", err)

@@ -450,8 +450,6 @@ func (p *Participant) Get(deltaKey string) (*Delta, error) {
 // TODO We need to return error for this and handle them accordingly + also refactor so (SRP) compliant
 func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
 
-	log.Printf("called")
-
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
@@ -460,7 +458,7 @@ func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participa
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
 
-	log.Printf("adding %s to cluster map ", serverName)
+	//log.Printf("adding %s to cluster map ", serverName)
 
 	cm.participants[serverName] = participant
 	cm.participantArray = append(cm.participantArray, participant.name)

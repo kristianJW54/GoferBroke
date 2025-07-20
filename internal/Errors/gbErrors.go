@@ -366,6 +366,7 @@ const (
 	ADDING_CONFIG_UPDATE_SELF         = 74
 	WANT_CONFIG_GROUP                 = 75
 	CONFIG_DIGEST_CODE                = 76
+	NO_LOGGER_FILE_PATH               = 77
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -412,6 +413,7 @@ var KnownInternalErrors = map[int]*GBError{
 	ADDING_CONFIG_UPDATE_SELF:         &GBError{Code: ADDING_CONFIG_UPDATE_SELF, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to update own config from GSA Update"},
 	WANT_CONFIG_GROUP:                 &GBError{Code: WANT_CONFIG_GROUP, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "should receive a config group delta"},
 	CONFIG_DIGEST_CODE:                &GBError{Code: CONFIG_DIGEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "sending config digest failed"},
+	NO_LOGGER_FILE_PATH:               &GBError{Code: NO_LOGGER_FILE_PATH, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "logger output specified as file but no file path given"},
 }
 
 var (
@@ -436,6 +438,7 @@ var (
 	SelfConfigUpdateErr     = KnownInternalErrors[ADDING_CONFIG_UPDATE_SELF]
 	ConfigGroupErr          = KnownInternalErrors[WANT_CONFIG_GROUP]
 	ConfigDigestErr         = KnownInternalErrors[CONFIG_DIGEST_CODE]
+	LoggerFilePathErr       = KnownInternalErrors[NO_LOGGER_FILE_PATH]
 )
 
 var (
