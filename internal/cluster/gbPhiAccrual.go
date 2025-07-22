@@ -17,7 +17,7 @@ import (
 //Heartbeat Monitoring + Failure Detection
 
 type phiControl struct {
-	threshold    uint8
+	threshold    float64
 	warmUpBucket uint16
 	windowSize   uint16
 	phiSemaphore chan struct{}
@@ -27,13 +27,14 @@ type phiControl struct {
 }
 
 type phiAccrual struct {
-	warmupBucket uint16
-	lastBeat     int64
-	window       []int64
-	windowIndex  int
-	score        float64
-	dead         bool
-	pa           sync.Mutex
+	warmupBucket  uint16
+	lastBeat      int64
+	window        []int64
+	windowIndex   int
+	score         float64
+	dead          bool
+	reachAttempts uint8
+	pa            sync.Mutex
 }
 
 // Phi calculates the suspicion level of a participant using the ϕ accrual failure detection model.
@@ -57,7 +58,7 @@ type phiAccrual struct {
 // We don't gossip phi scores or node failures to others in the cluster as the detection is based on local time
 // It is for other nodes to detect failed nodes themselves
 
-func (s *GBServer) generateDefaultThreshold(windowSize uint16) uint8 {
+func (s *GBServer) getThreshold(windowSize uint16) float64 {
 	if windowSize == 0 {
 		return 0
 	}
@@ -72,6 +73,26 @@ func (s *GBServer) generateDefaultThreshold(windowSize uint16) uint8 {
 	return 8 // very stable, high-confidence threshold
 }
 
+func (s *GBServer) adjustedThreshold(participant *Participant) float64 {
+	warmup := participant.paDetection.warmupBucket
+
+	switch {
+	case warmup == 0:
+		return 16.0 // disable detection at first
+	case warmup < 3:
+		return 12.0
+	case warmup < 5:
+		return 9.5
+	case warmup < 10:
+		return 9.0
+	case warmup >= s.phi.windowSize:
+		return 8.0
+	default:
+		// Between 20 and windowSize
+		return 8.5
+	}
+}
+
 func (s *GBServer) initPhiControl() *phiControl {
 
 	var paWindowSize uint16
@@ -84,7 +105,7 @@ func (s *GBServer) initPhiControl() *phiControl {
 
 	// Should be taken from config
 	return &phiControl{
-		s.generateDefaultThreshold(paWindowSize),
+		s.getThreshold(paWindowSize),
 		setWarmupBucket(paWindowSize),
 		paWindowSize,
 		make(chan struct{}),
@@ -121,12 +142,13 @@ func (s *GBServer) increaseWarmupBucket(participant *Participant) {
 func (s *GBServer) initPhiAccrual() *phiAccrual {
 
 	return &phiAccrual{
-		lastBeat:     0,
-		window:       make([]int64, s.phi.windowSize), //Should be from config or default //TODO change back paWindowSize
-		windowIndex:  0,
-		score:        0.00,
-		warmupBucket: 0,
-		dead:         false,
+		lastBeat:      0,
+		window:        make([]int64, s.phi.windowSize), //TODO change back paWindowSize
+		windowIndex:   0,
+		score:         0.00,
+		warmupBucket:  0,
+		reachAttempts: 0,
+		dead:          false,
 	}
 }
 
@@ -396,17 +418,26 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 			participant.pm.Lock()
 			participant.paDetection.score = phi
 			threshold := s.phi.threshold
-			if participant.paDetection.warmupBucket <= 10 {
-				threshold = 10 // TODO make config - warmUp Threshold -- Maybe want this high because this is warming up and may have skewed numbers
+			//if participant.paDetection.warmupBucket <= 10 {
+			//	threshold = 10 // TODO make config - warmUp Threshold -- Maybe want this high because this is warming up and may have skewed numbers
+			//} else {
+			//	threshold = s.getThreshold(s.phi.windowSize)
+			//}
+
+			if s.phi.warmUpBucket == s.phi.windowSize {
+				threshold = 8.0
+			} else {
+				threshold = s.adjustedThreshold(participant)
 			}
 
-			//log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s | th = %d",
-			//	s.ServerName, phi, delta, s.ServerName, participant.name, threshold)
+			log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s | th = %.2f",
+				s.ServerName, phi, delta, s.ServerName, participant.name, threshold)
 
-			if phi > float64(threshold) {
+			if phi > threshold {
 				participant.paDetection.dead = true
 
 				// Participant marked dead event here
+				log.Printf("node is dead -------------------------------------------")
 
 			}
 			participant.pm.Unlock()

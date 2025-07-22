@@ -3,7 +3,6 @@ package cluster
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -62,11 +61,11 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 }
 
 func (g *grTracking) logActiveGoRoutines() {
-	log.Printf("Go routines left in tracker: %v", atomic.LoadInt64(&g.numRoutines))
-	log.Println("Go routines in tracker:")
+	fmt.Printf("Go routines left in tracker: %v\n", atomic.LoadInt64(&g.numRoutines))
+	fmt.Println("Go routines in tracker:")
 
 	g.routineMap.Range(func(key, value interface{}) bool {
-		log.Printf("Goroutine -- %v %s\n", key, value)
+		fmt.Printf("Goroutine -- %v %s\n", key, value)
 		return true // continue iteration
 	})
 }

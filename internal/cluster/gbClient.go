@@ -342,10 +342,6 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 		return fmt.Errorf("client %s already exists in nodeConnStore: %+v", name, c.gbc)
 	}
 
-	//TODO --> use server ID without timestamp to detect whether a node has restarted if so, check addr to verify and then
-	// gossip digest to bring up to date, allow background node deleter to remove previous store when dead
-	// - ! Need to remove old version of two of the same node !
-
 	// If client not found we must check our cluster map for both server ID + Addr
 	// If it's in there then we must decide on what to do - gossip and update - remove old entry
 
@@ -354,6 +350,7 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 		s.nodeConnStore.Store(name, c)
 		c.flags.set(CONNECTED)
 	case CLIENT:
+		// TODO Do the same for clients here
 		s.clientStore[cid] = c
 		c.flags.set(CONNECTED)
 	}

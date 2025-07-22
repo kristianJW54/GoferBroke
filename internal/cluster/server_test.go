@@ -93,12 +93,12 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	gbs.Shutdown()
 	time.Sleep(1 * time.Second)
 
-	for k, v := range gbs.clusterMap.participants {
-		log.Printf("name = %s", k)
-		for k, value := range v.keyValues {
-			log.Printf("%s-%+s", k, value.Value)
-		}
-	}
+	//for k, v := range gbs.clusterMap.participants {
+	//	fmt.Printf("name = %s\n", k)
+	//	for k, value := range v.keyValues {
+	//		fmt.Printf("%s-%+s\n", k, value.Value)
+	//	}
+	//}
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
@@ -336,6 +336,53 @@ func TestServerUpdateSelfConfig(t *testing.T) {
 		}
 
 	}
+
+}
+
+//======================================================
+// Testing handling dead nodes
+
+func TestServerReachingOutToDeadNode(t *testing.T) {
+
+	clusterPath := "../../Configs/cluster/default_cluster_config.conf"
+
+	seedFilePath := "../../Configs/node/basic_seed_config.conf"
+	nodeFilePath := "../../Configs/node/basic_node_config.conf"
+
+	gbs, err := NewServerFromConfigFile(seedFilePath, clusterPath)
+	if err != nil {
+		t.Errorf("%v", err)
+		return
+	}
+	gbs2, err := NewServerFromConfigFile(nodeFilePath, clusterPath)
+	if err != nil {
+		t.Errorf("%v", err)
+		return
+	}
+
+	go gbs.StartServer()
+	time.Sleep(1 * time.Second)
+	go gbs2.StartServer()
+
+	time.Sleep(3 * time.Second)
+
+	gbs2.serverContextCancel()
+
+	time.Sleep(10 * time.Second)
+
+	gbs.Shutdown()
+	time.Sleep(1 * time.Second)
+
+	//for k, v := range gbs.clusterMap.participants {
+	//	fmt.Printf("name = %s\n", k)
+	//	for k, value := range v.keyValues {
+	//		fmt.Printf("%s-%+s\n", k, value.Value)
+	//	}
+	//}
+
+	gbs.logActiveGoRoutines()
+	gbs2.logActiveGoRoutines()
+	//gbs3.logActiveGoRoutines()
 
 }
 

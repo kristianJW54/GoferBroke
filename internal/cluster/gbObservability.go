@@ -210,8 +210,8 @@ func (h *slogLogger) Handle(_ context.Context, rec slog.Record) error {
 	select {
 	case h.ch <- rec:
 		return nil
-	case <-h.ctx.Done():
-		return h.ctx.Err()
+	//case <-h.ctx.Done():
+	//	return h.ctx.Err()
 	default:
 		if h.next != nil {
 			return h.next.Handle(h.ctx, rec)

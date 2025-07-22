@@ -47,7 +47,7 @@ type node struct {
 func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
 
 	now := time.Now()
-	clientName := fmt.Sprintf("%s_%d", name, now.Unix())
+	clientName := fmt.Sprintf("%s@%d", name, now.Unix())
 
 	client := &gbClient{
 		name:    clientName,
@@ -938,6 +938,7 @@ func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSele
 	// Build list of candidate indexes, excluding self
 	candidates := make([]int, 0, partLenArray-1)
 	for i, id := range partArray {
+		// TODO - use the ID to do a look up in the notToGossipStore instead
 		if id != excludeID {
 			candidates = append(candidates, i)
 		}

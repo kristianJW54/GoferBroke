@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"fmt"
-	"net"
 	"testing"
 	"time"
 )
@@ -74,35 +73,20 @@ func TestPhiCalc(t *testing.T) {
 
 func TestPhiLive(t *testing.T) {
 
-	lc := net.ListenConfig{}
+	clusterPath := "../../Configs/cluster/default_cluster_config.conf"
 
-	ip := "127.0.0.1" // Use the full IP address
-	port := "8081"
+	seedFilePath := "../../Configs/node/basic_seed_config.conf"
+	nodeFilePath := "../../Configs/node/basic_node_config.conf"
 
-	// Initialize config with the seed server address
-	config := &GbClusterConfig{
-		SeedServers: []*Seeds{
-			{
-				Host: ip,
-				Port: port,
-			},
-		},
-		Cluster: &ClusterOptions{
-			ClusterNetworkType: C_LOCAL,
-		},
-	}
-
-	nodeConfig := &GbNodeConfig{
-		Internal: &InternalOptions{},
-	}
-
-	gbs, err := NewServer("test-server", config, nil, nodeConfig, "localhost", "8081", "8080", lc)
+	gbs, err := NewServerFromConfigFile(seedFilePath, clusterPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Errorf("%v", err)
+		return
 	}
-	gbs2, err := NewServer("test-server", config, nil, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs2, err := NewServerFromConfigFile(nodeFilePath, clusterPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Errorf("%v", err)
+		return
 	}
 
 	gbs.StartServer()
@@ -119,6 +103,8 @@ func TestPhiLive(t *testing.T) {
 	gbs.Shutdown()
 
 	time.Sleep(1 * time.Second)
+
+	fmt.Printf("number in buffer --> %d\n", len(gbs.logRingBuffer.Snapshot()))
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()

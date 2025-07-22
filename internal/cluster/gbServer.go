@@ -34,37 +34,25 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	// TODO Need to complete this function - to seed checks and addr checks before creating servers
-	// TODO Once server is created and started it is the job of dialling and exchanging to validate and fail etc -- need rules on this
-
 	lc := net.ListenConfig{}
 
 	var config *GbClusterConfig
 	var nodeConfig *GbNodeConfig
 
 	if nodeFileConfig == "" {
-		// Load default config file from internal
-		nodeConfig = &GbNodeConfig{
-			Name:        name,
-			Host:        nodeIP,
-			Port:        nodePort,
-			NetworkType: UNDEFINED,
-			IsSeed:      mode == "seed",
-			Internal:    &InternalOptions{},
-		}
+		nodeConfig = InitDefaultNodeConfig()
 	}
 
 	if clusterFileConfig == "" {
-		config = &GbClusterConfig{}
+		config = InitDefaultClusterConfig()
 	}
 
 	var cn ClusterNetworkType
 
 	cn, err := ParseClusterConfigNetworkType(clusterNetwork)
 
-	// TODO This needs to change - cannot be localhost
 	if len(routes) == 0 {
-		ip := nodeIP // Use interface for now - will change when actual config is implemented
+		ip := nodeIP
 		port := nodePort
 
 		// Initialize config with the seed server address
@@ -79,10 +67,7 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 				ClusterNetworkType: cn,
 			},
 		}
-		log.Println("Config initialized:", config)
 	} else {
-
-		log.Printf("cluster addr == %s", routes[0])
 
 		var seeds []*Seeds
 
@@ -103,20 +88,7 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 				ClusterNetworkType: cn,
 			},
 		}
-		log.Println("Config initialized:", config)
-	}
-
-	switch {
-	case mode == "seed" || mode == "Seed":
-
-		// First determine if we need to parser config files
-		if clusterFileConfig != "" {
-			log.Printf("need to parse config file")
-			// clusterConfig will be created here
-		} else {
-			//config := &GbClusterConfig{}
-		}
-
+		fmt.Println("Config initialized:", config)
 	}
 
 	// Create and start the server
@@ -126,18 +98,9 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	}
 
 	go func() {
-		log.Println("Starting server...")
+		fmt.Println("Starting server...")
 		gbs.StartServer()
 	}()
-
-	//select {
-	//case <-ctx.Done():
-	//	log.Println("Interrupt signal received. Shutting down server...")
-	//case err := <-gbs.fatalErrorCh:
-	//	if err != nil {
-	//		log.Printf("Fatal error received: %v", err)
-	//	}
-	//}
 
 	<-ctx.Done()
 
@@ -223,15 +186,14 @@ func (sf *ServerID) updateTime(time uint64) {
 	sf.timeUnix = time
 }
 
-//===================================================
-// Main Server
-//===================================================
+//----------------------------------------------------------
+// Server Struct
 
-// GBServer is the main server struct
+// GBServer is the main server struct and the starting point of the server as a node in the cluster.
 type GBServer struct {
 	//Server Info - can add separate info struct later
 	ServerID
-	ServerName       string //ID and timestamp
+	ServerName       string //ID and timestamp - this is what the cluster knows this server as - and is what is gossiped
 	initialised      uint64 //time of server creation - can point to ServerID timestamp
 	host             string
 	port             string
@@ -244,8 +206,8 @@ type GBServer struct {
 	//Distributed Info
 	gossip          *gossip
 	isSeed          bool
-	canBeRendezvous bool // TODO Change to reachable state machine
-	discoveryPhase  bool
+	canBeRendezvous bool // Can this server be a rendezvous server for a node to discover it's advertise for NAT Traversal with another node
+	discoveryPhase  bool // Is this server discovering other nodes as a new joiner
 
 	//Events
 	event        *EventDispatcher
@@ -253,6 +215,7 @@ type GBServer struct {
 
 	flags serverFlags
 
+	// TCP Listeners
 	listener           net.Listener
 	listenConfig       net.ListenConfig
 	nodeListener       net.Listener
@@ -269,30 +232,31 @@ type GBServer struct {
 	originalCfgHash string
 	configSchema    map[string]*ConfigSchema
 
-	//Server Info for gossip
+	//The in-memory map of the cluster for this server
 	clusterMap ClusterMap
-	phi        phiControl
+
+	// Failure Detection
+	phi phiControl
 
 	//Logging
 	logger        *slog.Logger
-	logRingBuffer *normalLogBuffer
-	jsonLogBuffer *jsonLogBuffer
-	logHandler    *slogLogger
+	logRingBuffer *normalLogBuffer // Ring buffer to store text/struct data
+	jsonLogBuffer *jsonLogBuffer   // Ring buffer to store json data - only one ring buffer is active at runtime
+	logHandler    *slogLogger      // Custom handler wrapped around the slog logger
 
 	//Connection Handling
-	gcid uint64 // Global client ID counter
-	// May need one for client and one for node as we will treat them differently
-	numNodeConnections   int64 //Atomically incremented
-	numClientConnections int64 //Atomically incremented
+	gcid                 uint64 // Global client ID counter
+	numNodeConnections   int64  //Atomically incremented
+	numClientConnections int64  //Atomically incremented
 
 	// TODO Use sync.Map instead for connection storing
-	clientStore map[uint64]*gbClient
-
-	tmpConnStore  sync.Map
-	nodeConnStore sync.Map
+	clientStore          map[uint64]*gbClient
+	tmpConnStore         sync.Map // Store temp connections before moving them after validation checks
+	nodeConnStore        sync.Map
+	notToGossipNodeStore sync.Map // We store the *Participant pointer here instead of the connection
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
-	//it must maintain a pool of active sequence numbers for open requests awaiting response
+	//it must maintain a pool of active sequence numbers for open requests or responses awaiting reply
 	nodeReqPool seqReqPool
 
 	// Locks
@@ -305,10 +269,9 @@ type GBServer struct {
 
 	//go-routine tracking
 	grTracking
-
-	debugTrack int
 }
 
+// seedEntry stores the resolved seed address of a seed node from the cluster configuration.
 type seedEntry struct {
 	host     string
 	port     string
@@ -316,8 +279,12 @@ type seedEntry struct {
 	nodeID   string // This should be set when we make connection which will enable us to access the node conn in store and cluster map
 }
 
+// NewServerFromConfigFile initialises a server from a file path. Two file paths should be passed to the function one for a node configuration
+// and the other for a cluster configuration. The file is opened and the text within is lexed and parsed into a node config and cluster config.
+// Both are passed into a NewServer function to return an instance of a GBServer.
 func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServer, error) {
 
+	// Initialise default configs so that we have no nil values in the config structs when we walk and assign in the parser
 	nodeCfg := InitDefaultNodeConfig()
 	clusterCfg := InitDefaultClusterConfig()
 
@@ -326,6 +293,7 @@ func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServe
 		return nil, err
 	}
 
+	// Initialise a the cluster config and return a schema to pass to the NewServer function
 	sch, err := BuildConfigFromFile(clusterConfigPath, clusterCfg)
 	if err != nil {
 		return nil, err
@@ -339,6 +307,9 @@ func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServe
 	return srv, nil
 }
 
+// NewServerFromConfigString initialises a server using a raw string configuration for both cluster and node configurations.
+// the raw string is parsed and initialised along with a schema of the cluster config which is passed to a NewServer function.
+// The return is a new instance of a GBServer
 func NewServerFromConfigString(nodeConfigData, clusterConfigData string) (*GBServer, error) {
 
 	nodeCfg := InitDefaultNodeConfig()
@@ -362,7 +333,20 @@ func NewServerFromConfigString(nodeConfigData, clusterConfigData string) (*GBSer
 	return srv, nil
 }
 
+// NewServer initialise and creates a new instance of GBServer. A valid cluster configuration must be passed to NewServer specifying a network type as well as
+// valid seed servers for the server to reach out to. If the server is specified as being a seed server in the node config then it's address must resolve to
+// one of the seed servers given in the cluster config or NewServer will fail early. Both cluster network types and node network types must also be compatible (see network strategy)
+// e.g. a localhost node address cannot join on a public cluster network.
+// A UUID will be generated for the server - this UUID will form part of the ServerName which will be used to gossip in the cluster, and is how other nodes will know this server by.
 func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*ConfigSchema, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
+
+	// TODO Finish cleaning ------
+	// TODO Also need to implement a dead node store with background process to kick out dead node -- What to do about their gossip entry? add tombstone and crank all the version numbers to nobody can gossip old back?
+	//TODO Add in convergence time estimate --> convergenceTime = (math.Log(float64(N)) / math.Log(float64(fanout+1))) * gossipInterval
+	// We will disconnect a dead node -> gossip a tombstone
+	// Each node that receives the tombstone will remove the map entries and only keep the tombstone
+	// They will all add a TTL on the map entry based on the convergence estimate
+	// Once TTL expired - map entry is removed for that node and the node should be added to a blacklist
 
 	//Logging setup
 	logger, customerSlogLogger, logRingBuffer, jsonRingBuffer := setupLogger(context.Background(), gbNodeConfig)
@@ -464,8 +448,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		gossip:          goss,
 		isSeed:          gbNodeConfig.IsSeed,
 		canBeRendezvous: false,
-		//numNodeConnections:   0,
-		//numClientConnections: 0,
 
 		nodeReqPool: *seq,
 
@@ -476,8 +458,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 			numRoutines: 0,
 			grWg:        &sync.WaitGroup{},
 		},
-
-		debugTrack: 0,
 	}
 
 	isSeedAddr := s.seedCheck()
@@ -503,7 +483,7 @@ func (s *GBServer) initSelf() {
 	// Then we initialise our info into a participant struct
 	selfInfo, err := s.initSelfParticipant()
 	if err != nil {
-		s.logger.Info("failed to intialise self", "err: ", err)
+		s.logger.Info("failed to intialise self", "error", err)
 		return
 	}
 
@@ -552,10 +532,8 @@ func (s *GBServer) StartServer() {
 		s.ServerName = srvName
 	}
 
-	//s.clusterMapLock.Lock()
 	if s.gbNodeConfig.Internal.DisableInitialiseSelf {
 	} else {
-		// Debug logs here
 		s.startupSync.Add(1)
 		s.initSelf()
 		//if !s.isSeed {
@@ -581,7 +559,6 @@ func (s *GBServer) StartServer() {
 	//---------------- Node Accept Loop ----------------//
 
 	// Here we attempt to dial and connect to seed
-	// TODO If we get a dial error being the same addr used on an active node then we signal shutdown immediately and send error event
 
 	s.startupSync.Add(1)
 	err = s.AcceptNodeLoop("node-test")
@@ -592,23 +569,10 @@ func (s *GBServer) StartServer() {
 	//---------------- Client Accept Loop ----------------//
 	//s.AcceptLoop("client-test")
 
-	//TODO add monitoring routines to keep internal state up to date
-	// CPU Metrics using an aggregate or significant change metric - how to signal?
-	// can have a ticker monitoring which will signal a waiting loop for updating internal state
-
 	//---------------- Internal Event Registers ----------------//
 
 	//-- Start a background process to delete dead nodes
 	//-- Start a background process to delete tombstone deltas
-
-	// Main routines will be :....
-	// - System monitoring
-	// -- Memory used and stored by node, max delta size...
-	// - Config changes
-	// - State changes
-	// - Use case assignments
-	// - Handlers added
-	// - Routing??
 
 	// We wait for start up to complete here
 	s.startupSync.Wait()
@@ -638,15 +602,11 @@ func (s *GBServer) StartServer() {
 		"Node Address", s.advertiseAddress,
 	)
 
-	// May need to periodically check our node addr? and ensure we are resolved and reachable etc
 }
 
 //=======================================================
 //---------------------
 // Server Shutdown
-
-//TODO - Thinking to add a tryShutdown which signals - logs time checks after a couple seconds and then checks
-// flags and signals, if nothing then it simply calls it again
 
 // Shutdown attempts to gracefully shut down the server and terminate any running processes and go-routines. It will close listeners and client connections.
 func (s *GBServer) Shutdown() {
@@ -657,30 +617,26 @@ func (s *GBServer) Shutdown() {
 	}
 	defer s.serverLock.Unlock()
 
-	// Log shutdown initiation
-
 	s.logger.Info("Shutting down server...")
 
 	// Cancel the server context to signal all other processes
 	s.serverContextCancel()
 
-	//if s.logger != nil {
-	//	s.logHandler.Close() // Only if stored and exposed
-	//}
-
 	// Set the SHUTTING_DOWN flag to prevent new processes from starting
 	s.flags.set(SHUTTING_DOWN)
 
-	//log.Println("context called")
-
 	if s.listener != nil {
-		//log.Println("closing client listener")
-		s.listener.Close()
+		err := s.listener.Close()
+		if err != nil {
+			s.logger.Error("failed to close client listener", "error", err)
+		}
 		s.listener = nil
 	}
 	if s.nodeListener != nil {
-		//log.Println("closing node listener")
-		s.nodeListener.Close()
+		err := s.nodeListener.Close()
+		if err != nil {
+			s.logger.Error("failed to close node listener", "error", err)
+		}
 		s.nodeListener = nil
 	}
 
@@ -691,7 +647,10 @@ func (s *GBServer) Shutdown() {
 			return true // Continue iteration
 		}
 		if c.gbc != nil {
-			c.gbc.Close()
+			err := c.gbc.Close()
+			if err != nil {
+				s.logger.Error("failed to close temporary connection", "error", err, "conn type", c.cType, "address", c.tcpAddr)
+			}
 		}
 		s.tmpConnStore.Delete(key)
 		return true
@@ -705,21 +664,24 @@ func (s *GBServer) Shutdown() {
 			return true
 		}
 		if c.gbc != nil {
-			c.gbc.Close()
+			err := c.gbc.Close()
+			if err != nil {
+				s.logger.Error("failed to close connection", "error", err, "name", c.name, "conn type", c.cType, "address", c.tcpAddr)
+			}
 		}
 		s.nodeConnStore.Delete(key)
 		return true
 	})
 
-	//s.serverLock.Unlock()
-
-	//s.nodeReqPool.reqPool.Put(1)
-
-	//log.Println("waiting...")
 	s.grWg.Wait()
-	//log.Println("done")
 
-	//log.Println("Server shutdown complete")
+	s.logger.Info("Shutdown complete")
+
+	//defer func() {
+	//	if s.logger != nil {
+	//		s.logHandler.Close()
+	//	}
+	//}()
 }
 
 //=======================================================
@@ -749,7 +711,7 @@ func resolveConfigSeedAddr(cfg *GbClusterConfig) ([]*seedEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		//log.Printf("adding seed addr = %s", tcpAddr.String())
+
 		seedAddr = append(seedAddr, &seedEntry{
 			host:     value.Host,
 			port:     value.Port,
@@ -773,11 +735,9 @@ func (s *GBServer) tryReconnectToSeed(connIndex int) (net.Conn, error) {
 	if !currAddr.resolved.IP.Equal(addrResolve.IP) {
 		s.serverLock.Lock()
 		s.seedAddr[connIndex].resolved = addrResolve
-		log.Printf("updating seed addr %v - from %s to %s", connIndex, currAddr.resolved.String(), addrResolve.String())
 		s.serverLock.Unlock()
 	}
 
-	log.Printf("dialling again")
 	conn, err := net.Dial("tcp", addrResolve.String())
 	if err != nil {
 		return nil, err
@@ -815,9 +775,10 @@ func (s *GBServer) ComputeAdvertiseAddr(conn net.Conn) error {
 		s.serverLock.Lock()
 		s.advertiseAddress = &net.TCPAddr{
 			IP:   local.IP,   // whatever IP the OS used
-			Port: bound.Port, // your actual listening port
+			Port: bound.Port, // actual listening port
 		}
 		s.addr = s.advertiseAddress.String()
+		s.logger.Info("Updating own advertise address", "name", s.name, "bound addr", s.boundTCPAddr, "advertise addr", s.advertiseAddress)
 		s.serverLock.Unlock()
 		return nil
 	}
@@ -1232,7 +1193,7 @@ func (s *GBServer) registerAndStartInternalHandlers() error {
 }
 
 //=======================================================
-// Sync Pool for Server-Server Request cycles
+// Connection Handling
 //=======================================================
 
 // seqReqPool is a configurable number of request pools to create ID's for request-response cycles. When a node queues a message with an expected response, it will
@@ -1359,6 +1320,47 @@ func (s *GBServer) addIDToSeedAddrList(id string, addr net.Addr) error {
 
 	return fmt.Errorf("found no seed addresses in the list - looking for %s - for node %s", addr.String(), id)
 
+}
+
+func (s *GBServer) handleDeadNode(ctx context.Context, p *Participant) {
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
+
+		if _, exists := p.keyValues[MakeDeltaKey(SYSTEM_DKG, "dead")]; !exists {
+
+			p.paDetection.pa.Lock()
+			defer p.paDetection.pa.Unlock()
+
+			// TODO have a time since last attempt so we don't spam in short time
+
+			if p.paDetection.reachAttempts != 3 {
+				log.Printf("attempting to connect to %s using address: %s", p.name, string(p.keyValues[MakeDeltaKey(ADDR_DKG, _ADDRESS_)].Value))
+				p.paDetection.reachAttempts += 1
+				log.Printf("reconnect failed - incrementing retry count to %d", p.paDetection.reachAttempts)
+				return
+			} else {
+				log.Printf("reached max attempts for %s -> moving to notToGossip Store", p.name)
+				return
+			}
+
+			// If this participant does NOT have a dead key with a TTL value AND we have not maxed out our retries,
+			// Then we try to dial reach out to it and re-establish a connection
+			// If we are unsuccessful, we increment the reachAttempt count
+
+		} else {
+			log.Printf("nod %s considered dead -> leaving for background GC to clean up", p.name)
+		}
+
+	}
+
+}
+
+func (s *GBServer) addToPotentialDeadList(c *gbClient) error {
+
+	return nil
 }
 
 //==================================================

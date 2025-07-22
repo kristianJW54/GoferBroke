@@ -918,14 +918,6 @@ func (s *GBServer) generateDigest() ([]byte, int, error) {
 		}
 	}
 
-	if s.debugTrack == 1 {
-		b, size, err := s.serialiseClusterDigest()
-		if err != nil {
-			return nil, 0, err
-		}
-		return b, size, nil
-	}
-
 	b, size, err := s.serialiseClusterDigest()
 	if err != nil {
 		return nil, 0, err
@@ -1589,6 +1581,12 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 		if participant.paDetection.dead {
 			// Add event here and also handle with background task
+			ctx, cancel := context.WithTimeout(s.ServerContext, 3*time.Second)
+			go func() {
+				defer cancel()
+				s.handleDeadNode(ctx, participant)
+			}()
+			log.Printf("suspected dead continuing -------------------------")
 			continue
 		}
 
