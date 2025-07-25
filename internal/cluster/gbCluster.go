@@ -23,15 +23,6 @@ import (
 // Gossip
 //===================================================================================
 
-// TODO Draft struct for gossip metrics which will drive events for warning etc and maintain gossip cluster health
-type gossipMetrics struct {
-	bytesPerRound   int
-	roundSkips      int
-	inFlightErrors  int
-	mtuReached      int
-	avgExchangeTime int
-}
-
 type gossip struct {
 	gossInterval         time.Duration
 	nodeSelection        uint8 // Remove and use node config instead OR use config to populate this
@@ -46,8 +37,6 @@ type gossip struct {
 }
 
 func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *gossip {
-
-	// TODO Will need to carefully incorporate with config or flags
 
 	goss := &gossip{
 		gossInterval:         gossipInterval,
@@ -171,6 +160,7 @@ const (
 	_UPDATE_INTERVAL_ = "update_interval"
 	_NETWORK_LOAD_    = "network_load"
 	_NODE_NAME_       = "node_name"
+	_DEAD_            = "dead"
 )
 
 // Standard Delta Key-Groups
@@ -194,9 +184,6 @@ type Seed struct {
 //-------------------
 // Main cluster map for gossiping
 
-//TODO For flow-control we will need to add the rates to the header of a digest exchange
-// therefore we need to think where we track and store the rates - in a struct, embedded or calculated and included in the serialised digest on the fly
-
 type Delta struct {
 	index     int
 	KeyGroup  string
@@ -211,11 +198,10 @@ type Delta struct {
 // select deltas from participants that are most outdated. Deltas are then added to a temporary heap in order to sort by max-version
 // before serialising
 type deltaQueue struct {
-	index    int
-	overload bool
-	keyGroup string
-	key      string
-	version  int64
+	delta   *Delta
+	version int64
+	size    int
+	index   int
 }
 
 type connectionMetaData struct {
@@ -239,12 +225,9 @@ type Participant struct {
 }
 
 type ClusterMap struct {
-	seedServer   *Seed
-	participants map[string]*Participant
-
-	// TODO Need to find a more efficient way of selecting random nodes to gossip with from the map rather than storing an array
+	seedServer       *Seed
+	participants     map[string]*Participant
 	participantArray []string
-	// TODO Move cluster map lock from server to here
 }
 
 type participantQueue struct {
@@ -319,23 +302,18 @@ func (ph *participantHeap) update(item *participantQueue, availableDeltas int, m
 // Delta Heap
 //=======================================================
 
-//goland:noinspection GoMixedReceiverTypes
-func (dh deltaHeap) Len() int {
-	return len(dh)
-}
+func (dh deltaHeap) Len() int { return len(dh) }
 
-//goland:noinspection GoMixedReceiverTypes
 func (dh deltaHeap) Less(i, j int) bool {
-	return dh[i].version < dh[j].version
+	return dh[i].version < dh[j].version // Min-heap by version (Scuttlebutt constraint)
 }
 
-//goland:noinspection GoMixedReceiverTypes
 func (dh deltaHeap) Swap(i, j int) {
 	dh[i], dh[j] = dh[j], dh[i]
-	dh[i].index, dh[j].index = i, j
+	dh[i].index = i
+	dh[j].index = j
 }
 
-//goland:noinspection GoMixedReceiverTypes
 func (dh *deltaHeap) Push(x any) {
 	n := len(*dh)
 	item := x.(*deltaQueue)
@@ -343,28 +321,20 @@ func (dh *deltaHeap) Push(x any) {
 	*dh = append(*dh, item)
 }
 
-//goland:noinspection GoMixedReceiverTypes
 func (dh *deltaHeap) Pop() any {
 	old := *dh
 	n := len(old)
 	x := old[n-1]
-	old[n-1] = nil
-	x.index = -1
+	old[n-1] = nil // avoid memory leak
+	x.index = -1   // for safety
 	*dh = old[0 : n-1]
 	return x
 }
 
-//goland:noinspection GoMixedReceiverTypes
-func (dh *deltaHeap) update(item *Delta, version int64, key ...string) {
-
-	if len(key) == 1 {
-		item.Key = key[0]
-	}
-
-	item.Version = version
-
+// Optional: If you still need an update method (likely not with direct delta ref)
+func (dh *deltaHeap) update(item *deltaQueue, version int64) {
+	item.version = version
 	heap.Fix(dh, item.index)
-
 }
 
 //=======================================================
@@ -450,8 +420,6 @@ func (p *Participant) Get(deltaKey string) (*Delta, error) {
 // TODO We need to return error for this and handle them accordingly + also refactor so (SRP) compliant
 func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
 
-	log.Printf("called")
-
 	cm := &ClusterMap{
 		&Seed{seedAddr: seed},
 		make(map[string]*Participant),
@@ -459,8 +427,6 @@ func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participa
 	}
 
 	// We don't add the phiAccrual here as we don't track our own internal failure detection
-
-	log.Printf("adding %s to cluster map ", serverName)
 
 	cm.participants[serverName] = participant
 	cm.participantArray = append(cm.participantArray, participant.name)
@@ -494,6 +460,30 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 				de := &DeltaUpdateEvent{
 					DeltaKey: k,
+				}
+
+				if v.Key == _DEAD_ {
+
+					fmt.Printf("received a dead key :0 -- ")
+
+					// Add dead node kv here if we encounter one
+					participant.pm.Lock()
+					clear(participant.keyValues)
+					participant.keyValues = map[string]*Delta{
+						MakeDeltaKey(SYSTEM_DKG, _DEAD_): {
+							KeyGroup:  SYSTEM_DKG,
+							Key:       _DEAD_,
+							Version:   time.Now().Unix(),
+							ValueType: D_BYTE_TYPE,
+							Value:     []byte{},
+						},
+					}
+					participant.maxVersion = time.Now().Unix()
+					participant.pm.Unlock()
+
+					fmt.Printf("new clustermap for this part = %+v", participant.keyValues)
+
+					break
 				}
 
 				// We get our own participants view of the participant in our map and update it
@@ -593,8 +583,6 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 // Thread safe
 func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) error {
 
-	s.clusterMapLock.Lock()
-
 	// Step 1: Add participant to the participants map
 	newParticipant := &Participant{
 		name:        name,
@@ -626,6 +614,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	newParticipant.maxVersion = maxV
 
+	s.clusterMapLock.Lock()
 	s.clusterMap.participants[name] = newParticipant
 	s.clusterMap.participantArray = append(s.clusterMap.participantArray, newParticipant.name)
 
@@ -868,72 +857,40 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 
 // Thread safe
 func (s *GBServer) generateDigest() ([]byte, int, error) {
-
-	// We need to determine if we have too many participants then we need to enter a subset strategy selection
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
+	partList := cm.participantArray
+	partMap := cm.participants
 	s.clusterMapLock.RUnlock()
 
-	// First we need to make an estimate to see if the current number of participants in our map would exceed an MTU_DIGEST allocation
-	// Serialisation header bytes minus 1,max node name len max(23), 8 for every participant
-	// If we are over then we must create a subset
-	mtuEstimate := CEREAL_DIGEST_HEADER_SIZE + (len(cm.participants) * 32)
-	if mtuEstimate > MTU_DIGEST {
-		// TODO Move the subset creation within here
-		// Create a subset here
-		if len(cm.participantArray) > 10 {
+	mtuEstimate := CEREAL_DIGEST_HEADER_SIZE + len(partMap)*32
+	if mtuEstimate > MTU_DIGEST && len(partList) > 10 {
+		var newPartArray []string
+		subsetSize := 0
 
-			var newPartArray []string
-
-			selectedNodes := make(map[string]struct{}, len(newPartArray))
-			subsetSize := 0
-
-			// Weak pointer to newArray? clean up after?
-
-			for i := 0; i < 10; i++ {
-				randNum := rand.Intn(len(cm.participantArray))
-				node := cm.participantArray[randNum]
-
-				if exists := cm.participants[node]; exists != nil {
-
-					if _, ok := selectedNodes[node]; ok {
-						continue
-					}
-
-					if subsetSize > MTU_DIGEST {
-						break
-					}
-
-					newPartArray = append(newPartArray, node)
-					selectedNodes[node] = struct{}{}
-					subsetSize += 1 + len(node) + 8
-				}
-
+		for _, idx := range rand.Perm(len(partList)) {
+			node := partList[idx]
+			if _, ok := partMap[node]; !ok {
+				continue
 			}
 
-			// Pass the newPartArray to the serialiseClusterDigestWithArray
-			cereal, err := s.serialiseClusterDigestWithArray(newPartArray, subsetSize)
-			if err != nil {
-				return nil, 0, err
+			entrySize := 1 + len(node) + 8 // name + len prefix + version
+			if subsetSize+entrySize > MTU_DIGEST {
+				break
 			}
-			return cereal, subsetSize, nil
+
+			newPartArray = append(newPartArray, node)
+			subsetSize += entrySize
 		}
-	}
 
-	if s.debugTrack == 1 {
-		b, size, err := s.serialiseClusterDigest()
+		cereal, err := s.serialiseClusterDigestWithArray(newPartArray, subsetSize)
 		if err != nil {
 			return nil, 0, err
 		}
-		return b, size, nil
+		return cereal, subsetSize, nil
 	}
 
-	b, size, err := s.serialiseClusterDigest()
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return b, size, nil
+	return s.serialiseClusterDigest()
 }
 
 func (s *GBServer) modifyDigest(digest []byte) ([]byte, int, error) {
@@ -1071,26 +1028,29 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 	sizeOfDelta := 0
 
-	// TODO Would prefer to pre-allocate if there is a way -- need to think about this here
 	selectedDeltas := make(map[string][]Delta)
 
-	// TODO This is should have a set ceiling to avoid open ended loops running away from us
 	for ph.Len() > 0 && sizeOfDelta < remaining {
 
 		phEntry := heap.Pop(ph).(*participantQueue)
 		participant := cm.participants[phEntry.name]
+
+		if participant.maxVersion <= phEntry.peerMaxVersion {
+			continue
+		}
 
 		// Make a delta heap for each participant
 		// Are we being inefficient here by pushing all deltas onto the heap everytime?
 		dh := make(deltaHeap, 0, len(participant.keyValues))
 		for _, delta := range participant.keyValues {
 
+			size := DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(delta.Value)
+
 			if delta.Version > phEntry.peerMaxVersion {
 				heap.Push(&dh, &deltaQueue{
-					keyGroup: delta.KeyGroup,
-					key:      delta.Key,
-					version:  delta.Version,
-					overload: len(delta.Value) > int(s.gbClusterConfig.Cluster.MaxDeltaSize),
+					delta:   delta,
+					version: delta.Version,
+					size:    size,
 				})
 			}
 		}
@@ -1101,7 +1061,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 		// First add the participant size to the sizeOfDelta
 		sizeOfDelta += 1 + len(participant.name) + 2 // 1 byte for name length + name + size of delta key-values
 
-		deltaList := make([]Delta, 0, 10)
+		deltaList := make([]Delta, 0, len(dh))
 
 		// Make selected delta list here and populate
 
@@ -1109,27 +1069,20 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			d := heap.Pop(&dh).(*deltaQueue)
 
-			delta := participant.keyValues[MakeDeltaKey(d.keyGroup, d.key)]
-			// Calc size to do a remaining check before committing to selecting
-			size := DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(delta.Value)
-
-			if size+sizeOfDelta > remaining {
+			if d.size+sizeOfDelta > remaining {
 				log.Printf("BROKE SIZE -- %d", size+sizeOfDelta)
 				break
 			}
 
-			sizeOfDelta += size
+			sizeOfDelta += d.size
 
-			deltaList = append(deltaList, *delta)
+			deltaList = append(deltaList, *d.delta)
 
 		}
-
 		if len(deltaList) > 0 {
 			selectedDeltas[participant.name] = deltaList
 		}
-
 	}
-
 	return selectedDeltas, sizeOfDelta, nil
 }
 
@@ -1210,13 +1163,14 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	//log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
 
-	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 4*time.Second)
 
 	resp := c.qProtoWithResponse(ctx, respID, pay, false)
 
 	c.waitForResponseAsync(resp, func(delta responsePayload, err error) {
 
 		defer cancel()
+
 		if err != nil {
 			log.Printf("%s - error in sending goss_syn_ack: %v", c.srv.PrettyName(), err.Error())
 			// Need to handle the error but for now just return
@@ -1545,7 +1499,12 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	start := time.Now()
 	defer func() {
-		log.Printf("Gossip round took: %.3fms", float64(time.Since(start))/1e6)
+		duration := time.Since(start)
+		if duration > 100*time.Millisecond {
+			fmt.Println()
+			fmt.Printf("Gossip round took: %.3fms\n", float64(duration)/1e6) // Will be log
+			fmt.Println()
+		}
 		s.endGossip()
 		s.clearGossipingWithMap()
 		s.gossip.gossWg.Done()
@@ -1566,14 +1525,16 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	ns := s.gbClusterConfig.getNodeSelection()
 	s.configLock.RUnlock()
 
-	s.clusterMapLock.RLock()
 	pl := len(s.clusterMap.participantArray)
-	s.clusterMapLock.RUnlock()
 	if int(ns) > pl-1 {
 		ns = 1
 	}
 
-	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, int(ns), s.String())
+	s.clusterMapLock.RLock()
+	partList := append([]string(nil), s.clusterMap.participantArray...)
+	s.clusterMapLock.RUnlock()
+
+	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), s.notToGossipNodeStore)
 	if err != nil {
 		log.Printf("Error generating random participant indexes: %v", err)
 		// TODO Need to add error event as its internal system error
@@ -1584,26 +1545,18 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	// We could add a semaphore channel for maximum amount of nodes allowed to be selected limiting the potential for lots of node gossip round spawns
 
 	for _, idx := range indexes {
-		s.clusterMapLock.RLock()
-		nodeID := s.clusterMap.participantArray[idx]
-		participant := s.clusterMap.participants[nodeID]
-		s.clusterMapLock.RUnlock()
+		nodeID := partList[idx]
 
-		if participant.paDetection.dead {
-			// Add event here and also handle with background task
-			continue
-		}
+		//if participant.paDetection.dead {
+		//	// Add event here and also handle with background task
+		//	continue
+		//}
 
 		wg.Add(1)
 		go func(node string) {
 			defer wg.Done()
 			nodeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
-
-			err := s.updateHeartBeat(time.Now().Unix())
-			if err != nil {
-				return
-			}
 
 			s.gossipWithNode(nodeCtx, node)
 		}(nodeID)
@@ -1623,7 +1576,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		// Completed successfully
 	}
 
-	return
+	_ = s.updateHeartBeat(time.Now().Unix()) // Mark end of round
 
 }
 
@@ -1634,6 +1587,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	if s.flags.isSet(SHUTTING_DOWN) {
 		return
 	}
+	_ = s.storeGossipingWith(node)
 
 	//------------- Dial Check -------------//
 
@@ -1653,8 +1607,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	if err != nil {
 		return
 	}
-
-	_ = s.storeGossipingWith(node)
 
 	var stage int
 

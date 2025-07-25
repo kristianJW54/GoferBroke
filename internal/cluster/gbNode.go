@@ -929,7 +929,7 @@ func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 // Random node selector
 
 // Lock should be held on entry
-func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, excludeID string) ([]int, error) {
+func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, notToGossip map[string]interface{}) ([]int, error) {
 	partLenArray := len(partArray)
 	if partLenArray <= 0 || numOfNodeSelection <= 0 {
 		return nil, fmt.Errorf("invalid participant array or selection count")
@@ -938,9 +938,10 @@ func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSele
 	// Build list of candidate indexes, excluding self
 	candidates := make([]int, 0, partLenArray-1)
 	for i, id := range partArray {
-		if id != excludeID {
-			candidates = append(candidates, i)
+		if _, exists := notToGossip[id]; exists {
+			continue
 		}
+		candidates = append(candidates, i)
 	}
 
 	if numOfNodeSelection > len(candidates) {

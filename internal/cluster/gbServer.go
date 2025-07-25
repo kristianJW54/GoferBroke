@@ -33,59 +33,42 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	// TODO Need to complete this function - to seed checks and addr checks before creating servers
-	// TODO Once server is created and started it is the job of dialling and exchanging to validate and fail etc -- need rules on this
-
 	lc := net.ListenConfig{}
 
 	var config *GbClusterConfig
 	var nodeConfig *GbNodeConfig
 
-	if nodeFileConfig == "" {
-		// Load default config file from internal
-		nodeConfig = &GbNodeConfig{
-			Name:        name,
-			Host:        nodeIP,
-			Port:        nodePort,
-			NetworkType: UNDEFINED,
-			IsSeed:      mode == "seed",
-			Internal:    &InternalOptions{},
-		}
-	}
+	nodeConfig = InitDefaultNodeConfig()
 
-	if clusterFileConfig == "" {
-		config = &GbClusterConfig{}
-	}
+	config = InitDefaultClusterConfig()
 
 	var cn ClusterNetworkType
 
 	cn, err := ParseClusterConfigNetworkType(clusterNetwork)
 
-	// TODO This needs to change - cannot be localhost
+	if mode == "seed" {
+		nodeConfig.IsSeed = true
+	} else {
+		nodeConfig.IsSeed = false
+	}
+
 	if len(routes) == 0 {
-		ip := nodeIP // Use interface for now - will change when actual config is implemented
+		ip := nodeIP
 		port := nodePort
 
 		// Initialize config with the seed server address
-		config = &GbClusterConfig{
-			SeedServers: []*Seeds{
-				{
-					Host: ip,
-					Port: port,
-				},
-			},
-			Cluster: &ClusterOptions{
-				ClusterNetworkType: cn,
-			},
-		}
-		log.Println("Config initialized:", config)
-	} else {
+		config.SeedServers = append(config.SeedServers, &Seeds{
+			Host: ip,
+			Port: port,
+		})
+		config.Cluster.ClusterNetworkType = cn
 
-		log.Printf("cluster addr == %s", routes[0])
+	} else {
 
 		var seeds []*Seeds
 
 		for _, route := range routes {
+			log.Printf("route = %s", route)
 			ipPort := strings.Split(route, ":")
 			if len(ipPort) != 2 {
 				return fmt.Errorf("invalid seed route: %s", route)
@@ -96,47 +79,26 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 			})
 		}
 
-		config = &GbClusterConfig{
-			SeedServers: seeds,
-			Cluster: &ClusterOptions{
-				ClusterNetworkType: cn,
-			},
-		}
-		log.Println("Config initialized:", config)
+		config.SeedServers = seeds
+		config.Cluster.ClusterNetworkType = cn
+
+		fmt.Println("Config initialized:", config.SeedServers[0])
 	}
 
-	switch {
-	case mode == "seed" || mode == "Seed":
-
-		// First determine if we need to parser config files
-		if clusterFileConfig != "" {
-			log.Printf("need to parse config file")
-			// clusterConfig will be created here
-		} else {
-			//config := &GbClusterConfig{}
-		}
-
-	}
+	log.Printf("reached here")
 
 	// Create and start the server
 	gbs, err := NewServer(name, config, nil, nodeConfig, nodeIP, nodePort, "5000", lc)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create server: %w", err)
 	}
 
+	log.Printf("also reached here")
+
 	go func() {
-		log.Println("Starting server...")
+		fmt.Println("Starting server...")
 		gbs.StartServer()
 	}()
-
-	//select {
-	//case <-ctx.Done():
-	//	log.Println("Interrupt signal received. Shutting down server...")
-	//case err := <-gbs.fatalErrorCh:
-	//	if err != nil {
-	//		log.Printf("Fatal error received: %v", err)
-	//	}
-	//}
 
 	<-ctx.Done()
 
@@ -281,8 +243,9 @@ type GBServer struct {
 	// TODO Use sync.Map instead for connection storing
 	clientStore map[uint64]*gbClient
 
-	tmpConnStore  sync.Map
-	nodeConnStore sync.Map
+	tmpConnStore         sync.Map
+	nodeConnStore        sync.Map
+	notToGossipNodeStore map[string]interface{}
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response
@@ -445,6 +408,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 		clientStore: make(map[uint64]*gbClient),
 
+		notToGossipNodeStore: make(map[string]interface{}),
+
 		gossip:          goss,
 		isSeed:          gbNodeConfig.IsSeed,
 		canBeRendezvous: false,
@@ -505,6 +470,8 @@ func (s *GBServer) initSelf() {
 			}
 		}
 	}
+
+	s.notToGossipNodeStore[s.ServerName] = &struct{}{}
 
 }
 
@@ -1358,31 +1325,24 @@ func (s *GBServer) addIDToSeedAddrList(id string, addr net.Addr) error {
 // Equally for heartbeats on every successful gossip with a node - the heartbeat and value should be updated
 
 func (s *GBServer) updateHeartBeat(timeOfUpdate int64) error {
-
 	self := s.GetSelfInfo()
-
 	key := MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)
 
-	if addr, exists := self.keyValues[key]; exists {
+	self.pm.Lock()
+	defer self.pm.Unlock()
 
-		binary.BigEndian.PutUint64(addr.Value, uint64(timeOfUpdate))
-
-		self.pm.Lock()
-		self.keyValues[key].Version = timeOfUpdate
-		self.pm.Unlock()
-
+	if delta, exists := self.keyValues[key]; exists {
+		binary.BigEndian.PutUint64(delta.Value, uint64(timeOfUpdate))
+		delta.Version = timeOfUpdate
 	} else {
 		return fmt.Errorf("no heartbeat delta")
 	}
 
 	if timeOfUpdate > self.maxVersion {
-		s.clusterMapLock.Lock()
 		self.maxVersion = timeOfUpdate
-		s.clusterMapLock.Unlock()
 	}
 
 	return nil
-
 }
 
 // In this method we will have received a new cluster config value - we will have already updated our view of the participant in the

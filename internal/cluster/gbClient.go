@@ -732,10 +732,10 @@ func (c *gbClient) addResponseChannel(ctx context.Context, seqID int) *response 
 
 func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 	if val, ok := c.rh.resp.Load(int(respID)); ok {
-		rsp := val.(*response)
+		_ = val.(*response)
 		c.srv.releaseReqID(respID)
-		close(rsp.ch)
-		close(rsp.err)
+		//close(rsp.ch)
+		//close(rsp.err)
 		c.rh.resp.Delete(respID) // Remove safely
 
 		//log.Printf("responseCleanup - cleaned up response ID %d", respID)
