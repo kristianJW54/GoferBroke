@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
-	"log"
 	"time"
 )
 
@@ -501,8 +500,6 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]Delta, deltaSize
 	// Include sender's name
 	length += 1
 	length += len(s.ServerName)
-
-	log.Printf("length before adding deltasize = %d - %d", length, deltaSize)
 
 	length += deltaSize
 

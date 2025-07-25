@@ -39,39 +39,37 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	var config *GbClusterConfig
 	var nodeConfig *GbNodeConfig
 
-	if nodeFileConfig == "" {
-		nodeConfig = InitDefaultNodeConfig()
-	}
+	nodeConfig = InitDefaultNodeConfig()
 
-	if clusterFileConfig == "" {
-		config = InitDefaultClusterConfig()
-	}
+	config = InitDefaultClusterConfig()
 
 	var cn ClusterNetworkType
 
 	cn, err := ParseClusterConfigNetworkType(clusterNetwork)
+
+	if mode == "seed" {
+		nodeConfig.IsSeed = true
+	} else {
+		nodeConfig.IsSeed = false
+	}
 
 	if len(routes) == 0 {
 		ip := nodeIP
 		port := nodePort
 
 		// Initialize config with the seed server address
-		config = &GbClusterConfig{
-			SeedServers: []*Seeds{
-				{
-					Host: ip,
-					Port: port,
-				},
-			},
-			Cluster: &ClusterOptions{
-				ClusterNetworkType: cn,
-			},
-		}
+		config.SeedServers = append(config.SeedServers, &Seeds{
+			Host: ip,
+			Port: port,
+		})
+		config.Cluster.ClusterNetworkType = cn
+
 	} else {
 
 		var seeds []*Seeds
 
 		for _, route := range routes {
+			log.Printf("route = %s", route)
 			ipPort := strings.Split(route, ":")
 			if len(ipPort) != 2 {
 				return fmt.Errorf("invalid seed route: %s", route)
@@ -82,20 +80,21 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 			})
 		}
 
-		config = &GbClusterConfig{
-			SeedServers: seeds,
-			Cluster: &ClusterOptions{
-				ClusterNetworkType: cn,
-			},
-		}
-		fmt.Println("Config initialized:", config)
+		config.SeedServers = seeds
+		config.Cluster.ClusterNetworkType = cn
+
+		fmt.Println("Config initialized:", config.SeedServers[0])
 	}
+
+	log.Printf("reached here")
 
 	// Create and start the server
 	gbs, err := NewServer(name, config, nil, nodeConfig, nodeIP, nodePort, "5000", lc)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create server: %w", err)
 	}
+
+	log.Printf("also reached here")
 
 	go func() {
 		fmt.Println("Starting server...")
@@ -253,7 +252,7 @@ type GBServer struct {
 	clientStore          map[uint64]*gbClient
 	tmpConnStore         sync.Map // Store temp connections before moving them after validation checks
 	nodeConnStore        sync.Map
-	notToGossipNodeStore sync.Map // We store the *Participant pointer here instead of the connection
+	notToGossipNodeStore map[string]interface{}
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests or responses awaiting reply
@@ -263,6 +262,7 @@ type GBServer struct {
 	serverLock     sync.RWMutex
 	clusterMapLock sync.RWMutex
 	configLock     sync.RWMutex
+	deadNodeLock   sync.RWMutex
 
 	//serverWg *sync.WaitGroup
 	startupSync *sync.WaitGroup
@@ -445,6 +445,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		jsonLogBuffer: jsonRingBuffer,
 		logHandler:    customerSlogLogger,
 
+		notToGossipNodeStore: make(map[string]interface{}),
+
 		gossip:          goss,
 		isSeed:          gbNodeConfig.IsSeed,
 		canBeRendezvous: false,
@@ -501,6 +503,9 @@ func (s *GBServer) initSelf() {
 			}
 		}
 	}
+
+	// Add ourselves to the notToGossip slice, so we don't gossip with ourselves lol
+	s.notToGossipNodeStore[s.ServerName] = &struct{}{}
 
 }
 
@@ -582,11 +587,13 @@ func (s *GBServer) StartServer() {
 
 		// Start up phi process which will wait for the gossip signal
 		s.startGoRoutine(s.PrettyName(), "phi-process", func() {
-
-			// Phi cleanup needed?
 			s.phiProcess(s.ServerContext)
-
 		})
+
+		// Dead node monitoring
+		//s.startGoRoutine(s.PrettyName(), "gc process", func() {
+		//	s.gcProcessForDeadNodes(s.ServerContext)
+		//})
 
 		s.startGoRoutine(s.PrettyName(), "gossip-process",
 			func() {
@@ -721,32 +728,6 @@ func resolveConfigSeedAddr(cfg *GbClusterConfig) ([]*seedEntry, error) {
 	return seedAddr, nil
 }
 
-func (s *GBServer) tryReconnectToSeed(connIndex int) (net.Conn, error) {
-
-	s.serverLock.RLock()
-	currAddr := s.seedAddr[connIndex]
-	s.serverLock.RUnlock()
-
-	addrResolve, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(currAddr.host, currAddr.port))
-	if err != nil {
-		return nil, err
-	}
-
-	if !currAddr.resolved.IP.Equal(addrResolve.IP) {
-		s.serverLock.Lock()
-		s.seedAddr[connIndex].resolved = addrResolve
-		s.serverLock.Unlock()
-	}
-
-	conn, err := net.Dial("tcp", addrResolve.String())
-	if err != nil {
-		return nil, err
-	}
-
-	return conn, nil
-
-}
-
 func (s *GBServer) ComputeAdvertiseAddr(conn net.Conn) error {
 
 	s.serverLock.RLock()
@@ -786,76 +767,6 @@ func (s *GBServer) ComputeAdvertiseAddr(conn net.Conn) error {
 	// Fallback
 	return Errors.UnableAdvertiseErr
 
-}
-
-func (s *GBServer) dialSeed() (net.Conn, error) {
-	s.serverLock.RLock()
-	seeds := s.seedAddr
-	s.serverLock.RUnlock()
-
-	if len(seeds) == 0 {
-		return nil, fmt.Errorf("no seeds configured")
-	}
-
-	// Special case: single seed
-	if len(seeds) == 1 {
-		seed := seeds[0]
-
-		if seed.resolved.IP.Equal(s.boundTCPAddr.IP) && seed.resolved.Port == s.boundTCPAddr.Port {
-			log.Printf("I am the only seed — skipping dial")
-			return nil, nil
-		}
-
-		// Check if already connected
-		if conn, ok := s.nodeConnStore.Load(seed.nodeID); ok {
-			log.Printf("Reusing existing connection to seed %s", seed.nodeID)
-			return conn.(net.Conn), nil
-		}
-
-		// Try to connect
-		conn, err := net.Dial("tcp", seed.resolved.String())
-		if err != nil {
-			return nil, fmt.Errorf("failed to dial single seed %s: %w", seed.nodeID, err)
-		}
-
-		if err := s.ComputeAdvertiseAddr(conn); err != nil {
-			conn.Close()
-			return nil, Errors.ChainGBErrorf(Errors.DialSeedErr, err, "")
-		}
-
-		//s.nodeConnStore.Store(seed.nodeID, conn) // TODO Make sure we are storing elsewhere
-		return conn, nil
-	}
-
-	// Multiple seed retry logic
-	retries := 3 // TODO: from config
-	for i := 0; i < retries; i++ {
-		addr, err := s.getRandomSeedToDial()
-		if err != nil {
-			return nil, fmt.Errorf("failed to select a seed: %w", err)
-		}
-
-		if conn, ok := s.nodeConnStore.Load(addr.nodeID); ok {
-			log.Printf("Reusing connection to seed %s", addr.resolved.String())
-			return conn.(net.Conn), nil
-		}
-
-		conn, err := net.Dial("tcp", addr.resolved.String())
-		if err != nil {
-			log.Printf("Failed to dial seed %s: %v", addr.resolved.String(), err)
-			continue
-		}
-
-		if err := s.ComputeAdvertiseAddr(conn); err != nil {
-			conn.Close()
-			return nil, Errors.ChainGBErrorf(Errors.DialSeedErr, err, "")
-		}
-
-		//s.nodeConnStore.Store(addr.String(), conn) // TODO Make sure we are storing elsewhere
-		return conn, nil
-	}
-
-	return nil, fmt.Errorf("failed to dial any seed after %d attempts", retries)
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.
@@ -1322,7 +1233,67 @@ func (s *GBServer) addIDToSeedAddrList(id string, addr net.Addr) error {
 
 }
 
-func (s *GBServer) handleDeadNode(ctx context.Context, p *Participant) {
+// ==============================================
+// Background dead node handling
+// ==============================================
+// Default tick rate should be every 10 seconds maybe...
+// TODO Finish this --
+
+func (s *GBServer) gcProcessForDeadNodes(ctx context.Context) {
+
+	// Notify all waiting goroutines to proceed if needed.
+	stopCondition := context.AfterFunc(ctx, func() {
+		// Notify all waiting goroutines to proceed if needed.
+		s.gossip.gossSignal.L.Lock()
+		defer s.gossip.gossSignal.L.Unlock()
+	})
+	defer stopCondition()
+
+	gcProcessOk := false
+
+	for {
+
+		s.gossip.gossMu.Lock()
+
+		if s.ServerContext.Err() != nil {
+			s.gossip.gossMu.Unlock()
+			return
+		}
+
+		// Wait for gossipOK to become true, or until serverContext is canceled.
+		if !gcProcessOk || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
+
+			log.Printf("gc processes waiting for gossip signal...")
+			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
+
+		}
+
+		s.gossip.gossMu.Unlock()
+
+		gcProcessOk = s.startGcProcessForDeadNodes()
+
+	}
+
+}
+
+func (s *GBServer) startGcProcessForDeadNodes() bool {
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ServerContext.Done():
+			return false
+		case <-ticker.C:
+
+			fmt.Println("running gc process")
+
+		}
+	}
+}
+
+func (s *GBServer) handleDeadNodes(ctx context.Context, p *Participant) {
 
 	select {
 	case <-ctx.Done():
@@ -1334,18 +1305,6 @@ func (s *GBServer) handleDeadNode(ctx context.Context, p *Participant) {
 			p.paDetection.pa.Lock()
 			defer p.paDetection.pa.Unlock()
 
-			// TODO have a time since last attempt so we don't spam in short time
-
-			if p.paDetection.reachAttempts != 3 {
-				log.Printf("attempting to connect to %s using address: %s", p.name, string(p.keyValues[MakeDeltaKey(ADDR_DKG, _ADDRESS_)].Value))
-				p.paDetection.reachAttempts += 1
-				log.Printf("reconnect failed - incrementing retry count to %d", p.paDetection.reachAttempts)
-				return
-			} else {
-				log.Printf("reached max attempts for %s -> moving to notToGossip Store", p.name)
-				return
-			}
-
 			// If this participant does NOT have a dead key with a TTL value AND we have not maxed out our retries,
 			// Then we try to dial reach out to it and re-establish a connection
 			// If we are unsuccessful, we increment the reachAttempt count
@@ -1356,11 +1315,6 @@ func (s *GBServer) handleDeadNode(ctx context.Context, p *Participant) {
 
 	}
 
-}
-
-func (s *GBServer) addToPotentialDeadList(c *gbClient) error {
-
-	return nil
 }
 
 //==================================================

@@ -171,6 +171,7 @@ const (
 	_UPDATE_INTERVAL_ = "update_interval"
 	_NETWORK_LOAD_    = "network_load"
 	_NODE_NAME_       = "node_name"
+	_DEAD_            = "dead"
 )
 
 // Standard Delta Key-Groups
@@ -494,6 +495,30 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 					DeltaKey: k,
 				}
 
+				if v.Key == _DEAD_ {
+
+					fmt.Printf("received a dead key :0 -- ")
+
+					// Add dead node kv here if we encounter one
+					participant.pm.Lock()
+					clear(participant.keyValues)
+					participant.keyValues = map[string]*Delta{
+						MakeDeltaKey(SYSTEM_DKG, _DEAD_): {
+							KeyGroup:  SYSTEM_DKG,
+							Key:       _DEAD_,
+							Version:   time.Now().Unix(),
+							ValueType: D_BYTE_TYPE,
+							Value:     []byte{},
+						},
+					}
+					participant.maxVersion = time.Now().Unix()
+					participant.pm.Unlock()
+
+					fmt.Printf("new clustermap for this part = %+v", participant.keyValues)
+
+					break
+				}
+
 				// We get our own participants view of the participant in our map and update it
 				err := participant.Update(v.KeyGroup, v.Key, v, func(toBeUpdated, by *Delta) {
 					if by.Version > toBeUpdated.Version {
@@ -519,7 +544,7 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 							if gbErr.Code == Errors.DELTA_UPDATE_NO_DELTA_CODE && v.KeyGroup != CONFIG_DKG {
 								participant.pm.Lock()
-								log.Printf("error = %v - storing new delta", gbErr)
+								log.Printf("error = %v - storing new delta - key = %s", gbErr, k)
 								participant.keyValues[k] = v
 								participant.pm.Unlock()
 
@@ -703,6 +728,53 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 
 	return nil
 
+}
+
+func (s *GBServer) suspectedShouldWeGossipAttempt(p *Participant) bool {
+
+	p.paDetection.pa.Lock()
+	defer p.paDetection.pa.Unlock()
+
+	if p.paDetection.reachAttempts >= 3 {
+		return false
+	}
+
+	// If we have recently tried then we return early
+	if time.Since(p.paDetection.lastAttempt) < DEFAULT_REACH_WAIT {
+		log.Printf("attempt time out")
+		return false
+	}
+
+	if p.paDetection.reachAttempts != 3 {
+		p.paDetection.reachAttempts += 1
+		now := time.Now()
+		p.paDetection.lastAttempt = now
+		log.Printf("attempting to gossip with node")
+
+		if p.paDetection.reachAttempts == 3 {
+			log.Printf("reached max attempts for %s -> moving to notToGossip Store and removing connection", p.name)
+			s.notToGossipNodeStore[p.name] = struct{}{}
+			s.nodeConnStore.Delete(p.name)
+
+			p.pm.Lock()
+			clear(p.keyValues)
+			p.keyValues = map[string]*Delta{
+				MakeDeltaKey(SYSTEM_DKG, _DEAD_): {
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _DEAD_,
+					Version:   time.Now().Unix(),
+					ValueType: D_BYTE_TYPE,
+					Value:     []byte{},
+				},
+			}
+			p.maxVersion = time.Now().Unix()
+			p.pm.Unlock()
+
+		}
+		return true
+	} else {
+		return false
+	}
 }
 
 //=======================================================
@@ -981,7 +1053,8 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 
 	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
-		log.Printf("received err in send digest - %s", err.Error())
+		//log.Printf("received err in send digest - %s", err.Error())
+		_ = s.recordPhi(conn.name) // TODO Trying to record at every step
 		return responsePayload{}, err
 	}
 
@@ -1186,8 +1259,6 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		return err
 	}
 
-	log.Printf("gsa = %+s", gsa)
-
 	respID, err := c.srv.acquireReqID()
 	if err != nil {
 		return err
@@ -1200,15 +1271,15 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	//log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
 
-	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 5*time.Second)
+	//ctx, cancel := context.WithTimeout(c.srv.ServerContext, 5*time.Second)
 
-	resp := c.qProtoWithResponse(ctx, respID, pay, false)
+	resp := c.qProtoWithResponse(c.srv.ServerContext, respID, pay, false)
 
 	c.waitForResponseAsync(resp, func(delta responsePayload, err error) {
 
-		defer cancel()
+		//defer cancel()
 		if err != nil {
-			log.Printf("%s - error in sending goss_syn_ack: %v", c.srv.PrettyName(), err.Error())
+			log.Printf("\n%s - error in sending goss_syn_ack: %v\n\n", c.srv.PrettyName(), err.Error())
 			// Need to handle the error but for now just return
 			return
 		}
@@ -1216,7 +1287,7 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		// If we receive a response delta - process and add it to our map
 		srv := c.srv
 
-		log.Printf("%s - delta in async [][][][][][][][][] = %s", srv.PrettyName(), delta.msg)
+		log.Printf("delta in async [][][][][][][][][]")
 
 		cd, e := deserialiseDelta(delta.msg)
 		if e != nil {
@@ -1228,6 +1299,8 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 			log.Printf("error in sending goss_syn_ack: %v", e)
 			return
 		}
+
+		_ = c.srv.recordPhi(sender)
 
 		return
 
@@ -1303,7 +1376,6 @@ func (s *GBServer) checkGossipCondition() {
 		s.flags.set(GOSSIP_SIGNALLED)
 		s.serverLock.Unlock()
 		s.gossip.gossipControlChannel <- true
-		log.Println("signalling gossip")
 		s.gossip.gossSignal.Broadcast()
 
 	} else if nodes < 1 && s.flags.isSet(GOSSIP_SIGNALLED) {
@@ -1405,7 +1477,6 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		s.gossip.gossMu.Lock()
 
 		if s.ServerContext.Err() != nil {
-			log.Printf("%s - gossip process exiting due to context cancellation", s.PrettyName())
 			//s.endGossip()
 			s.gossip.gossMu.Unlock()
 			return
@@ -1413,10 +1484,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
 		if !s.gossip.gossipOK || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
-
-			log.Printf("waiting for node to join...")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
-
 		}
 
 		if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
@@ -1477,12 +1545,9 @@ func (s *GBServer) startGossipProcess() bool {
 		log.Printf("%s - Server context already canceled, exiting gossip process", s.PrettyName())
 		return false
 	}
-
-	log.Printf("Gossip process started")
 	for {
 		select {
 		case <-s.ServerContext.Done():
-			log.Printf("%s - Gossip process stopped due to context cancellation - waiting for rounds to finish", s.PrettyName())
 			s.gossip.gossWg.Wait() // Wait for the rounds to finish
 			s.endGossip()          // Ensure state is reset
 			return false
@@ -1535,7 +1600,10 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	start := time.Now()
 	defer func() {
-		log.Printf("Gossip round took: %.3fms", float64(time.Since(start))/1e6)
+		duration := time.Since(start)
+		if duration > 500*time.Millisecond {
+			fmt.Printf("Gossip round took: %.3fms\n", float64(duration)/1e6) // Will be log
+		}
 		s.endGossip()
 		s.clearGossipingWithMap()
 		s.gossip.gossWg.Done()
@@ -1563,7 +1631,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		ns = 1
 	}
 
-	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, int(ns), s.String())
+	indexes, err := generateRandomParticipantIndexesForGossip(s.clusterMap.participantArray, int(ns), s.notToGossipNodeStore)
 	if err != nil {
 		log.Printf("Error generating random participant indexes: %v", err)
 		// TODO Need to add error event as its internal system error
@@ -1579,13 +1647,8 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		participant := s.clusterMap.participants[nodeID]
 		s.clusterMapLock.RUnlock()
 
-		if participant.paDetection.dead {
+		if participant.paDetection.dead && !s.suspectedShouldWeGossipAttempt(participant) {
 			// Add event here and also handle with background task
-			ctx, cancel := context.WithTimeout(s.ServerContext, 3*time.Second)
-			go func() {
-				defer cancel()
-				s.handleDeadNode(ctx, participant)
-			}()
 			log.Printf("suspected dead continuing -------------------------")
 			continue
 		}
@@ -1593,7 +1656,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		wg.Add(1)
 		go func(node string) {
 			defer wg.Done()
-			nodeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			nodeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 			defer cancel()
 
 			err := s.updateHeartBeat(time.Now().Unix())
@@ -1633,6 +1696,12 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	//------------- Dial Check -------------//
 
+	// First check if they're in our not to gossip list
+	if _, exists := s.notToGossipNodeStore[node]; exists {
+		log.Printf("not gossiping with node %s", node)
+		return
+	}
+
 	conn, exists, err := s.getNodeConnFromStore(node)
 	if err == nil && !exists {
 		go func() {
@@ -1659,16 +1728,16 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- GOSS_SYN Stage 1 -------------//
 
 	stage = 1
-	log.Printf("%s - Gossiping with node %s (stage %d)", s.PrettyName(), node, stage)
+	//log.Printf("%s - Gossiping with node %s (stage %d)", s.PrettyName(), node, stage)
 
 	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
 	if err != nil {
-		log.Printf("%s - gossip deferred - %s", s.name, err.Error())
+		//log.Printf("%s - gossip deferred - %s", s.name, err.Error())
 		return
 	}
 
-	log.Printf("resp = %s", resp.msg)
+	//log.Printf("resp = %s", resp.msg)
 
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
 	stage = 2
@@ -1697,6 +1766,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	//------------- Handle Completion -------------//
 
 	_ = s.recordPhi(node)
+
+	s.logger.Debug("gossip round complete", "node", node, "stage reached", stage)
 
 }
 

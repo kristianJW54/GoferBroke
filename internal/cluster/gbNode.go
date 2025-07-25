@@ -114,14 +114,12 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
 	resp := client.qProtoWithResponse(ctx, reqID, pay, true)
 
-	r, err := client.waitForResponseAndBlock(resp)
+	_, err = client.waitForResponseAndBlock(resp)
 	if err != nil {
 		return s.handleClusterConfigChecksumResponse(client, err)
 	}
 
 	// IF we get an ok response we return and continue
-
-	log.Printf("config response = %s", string(r.msg))
 
 	return nil
 
@@ -246,6 +244,76 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 
 }
 
+func (s *GBServer) dialSeed() (net.Conn, error) {
+	s.serverLock.RLock()
+	seeds := s.seedAddr
+	s.serverLock.RUnlock()
+
+	if len(seeds) == 0 {
+		return nil, fmt.Errorf("no seeds configured")
+	}
+
+	// Special case: single seed
+	if len(seeds) == 1 {
+		seed := seeds[0]
+
+		if seed.resolved.IP.Equal(s.boundTCPAddr.IP) && seed.resolved.Port == s.boundTCPAddr.Port {
+			log.Printf("I am the only seed — skipping dial")
+			return nil, nil
+		}
+
+		// Check if already connected
+		if conn, ok := s.nodeConnStore.Load(seed.nodeID); ok {
+			log.Printf("Reusing existing connection to seed %s", seed.nodeID)
+			return conn.(net.Conn), nil
+		}
+
+		// Try to connect
+		conn, err := net.Dial("tcp", seed.resolved.String())
+		if err != nil {
+			return nil, fmt.Errorf("failed to dial single seed %s: %w", seed.nodeID, err)
+		}
+
+		if err := s.ComputeAdvertiseAddr(conn); err != nil {
+			conn.Close()
+			return nil, Errors.ChainGBErrorf(Errors.DialSeedErr, err, "")
+		}
+
+		//s.nodeConnStore.Store(seed.nodeID, conn) // TODO Make sure we are storing elsewhere
+		return conn, nil
+	}
+
+	// Multiple seed retry logic
+	retries := 3 // TODO: from config
+	for i := 0; i < retries; i++ {
+		addr, err := s.getRandomSeedToDial()
+		if err != nil {
+			return nil, fmt.Errorf("failed to select a seed: %w", err)
+		}
+
+		if conn, ok := s.nodeConnStore.Load(addr.nodeID); ok {
+			log.Printf("Reusing connection to seed %s", addr.resolved.String())
+			return conn.(net.Conn), nil
+		}
+
+		conn, err := net.Dial("tcp", addr.resolved.String())
+		if err != nil {
+			log.Printf("Failed to dial seed %s: %v", addr.resolved.String(), err)
+			continue
+		}
+
+		if err := s.ComputeAdvertiseAddr(conn); err != nil {
+			conn.Close()
+			return nil, Errors.ChainGBErrorf(Errors.DialSeedErr, err, "")
+		}
+
+		//s.nodeConnStore.Store(addr.String(), conn) // TODO Make sure we are storing elsewhere
+		return conn, nil
+	}
+
+	return nil, fmt.Errorf("failed to dial any seed after %d attempts", retries)
+}
+
 //=====================================================================
 // Config Reconciliation for initial bootstrap
 //=====================================================================
@@ -328,6 +396,10 @@ func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
 
 }
 
+//=============================================
+// Connecting to seed + node
+//=============================================
+
 // connectToSeed is called by the server in a go-routine. It blocks on response to wait for the seed server to respond with a signal
 // that it has completed INFO exchange. If an error occurs through context, or response error from seed server, then connectToSeed
 // will return that error and trigger logic to either retry or exit the process
@@ -355,8 +427,6 @@ func (s *GBServer) connectToSeed() error {
 	// Config check to fail early
 
 	client := s.createNodeClient(conn, "tmpClient", true, NODE)
-
-	log.Printf("checking cluster config...")
 	err = s.sendClusterCgfChecksum(client)
 	if err != nil {
 		return err
@@ -405,7 +475,7 @@ func (s *GBServer) connectToSeed() error {
 				return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
 			}
 
-			// We also need to the ID to the seed addr list
+			// We also need to add the ID to the seed addr list
 			log.Printf("adding id -- %s to seed addr list with addr --> %s", name, conn.RemoteAddr().String())
 			err = s.addIDToSeedAddrList(name, conn.RemoteAddr())
 			if err != nil {
@@ -828,8 +898,6 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 			log.Printf("error in onboardNewJoiner: %v", err)
 		}
 
-		log.Printf("resp ===== in new on board = %s", bytes.msg)
-
 		//log.Printf("response from onboardNewJoiner: %v", string(bytes))
 		err = c.srv.moveToConnected(c.cid, cd.sender)
 		if err != nil {
@@ -929,7 +997,7 @@ func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 // Random node selector
 
 // Lock should be held on entry
-func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, excludeID string) ([]int, error) {
+func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, notToGossip map[string]interface{}) ([]int, error) {
 	partLenArray := len(partArray)
 	if partLenArray <= 0 || numOfNodeSelection <= 0 {
 		return nil, fmt.Errorf("invalid participant array or selection count")
@@ -938,10 +1006,10 @@ func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSele
 	// Build list of candidate indexes, excluding self
 	candidates := make([]int, 0, partLenArray-1)
 	for i, id := range partArray {
-		// TODO - use the ID to do a look up in the notToGossipStore instead
-		if id != excludeID {
-			candidates = append(candidates, i)
+		if _, exists := notToGossip[id]; exists {
+			continue
 		}
+		candidates = append(candidates, i)
 	}
 
 	if numOfNodeSelection > len(candidates) {
@@ -1501,6 +1569,8 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 func (c *gbClient) processGossAck(message []byte) {
 
+	log.Printf("processGossSynAck: received message len=%d", len(message))
+
 	// Copy IDs early to avoid race or mutation
 	reqID := c.ph.reqID
 	respID := c.ph.respID
@@ -1520,6 +1590,7 @@ func (c *gbClient) processGossAck(message []byte) {
 
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
+		log.Printf("processGossSynAck: response delivered for reqID %d", reqID)
 	default:
 		log.Printf("Warning: response channel full for respID %d", respID)
 		return

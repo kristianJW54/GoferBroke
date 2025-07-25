@@ -104,16 +104,17 @@ type ClusterOptions struct {
 	MaxSequenceIDPool              uint32
 	ClusterNetworkType             ClusterNetworkType
 
+	// Failure
+	MaxGossipRetries uint8
+
 	// TODO Think if we need a URL map that users can specify for their own endpoints
 	EndpointsURLMap map[string]string
 
 	// Log endpoints/sinks
 
-	//Security Control
+	//Security & Rate Control
 	MaxNumberOfClients uint16
 	AllowedClientIPs   []string
-	RateLimitPerClient uint16
-	RateLimitInterval  uint16
 
 	NodeMTLSRequired   bool `default:"false"`
 	ClientMTLSRequired bool `default:"false"`
@@ -145,8 +146,6 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 
 			MaxNumberOfClients: 10,
 			AllowedClientIPs:   []string{},
-			RateLimitPerClient: 100,
-			RateLimitInterval:  300, // Seconds
 
 			NodeMTLSRequired:   false,
 			ClientMTLSRequired: false,

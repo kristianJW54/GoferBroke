@@ -13,6 +13,11 @@ import (
 // Phi Accrual Failure Detection
 //=======================================================
 
+const (
+	DEFAULT_REACH_WAIT = 3 * time.Second // Seconds
+	DEFAULT_DEAD_GC    = 10 * time.Second
+)
+
 //-------------------
 //Heartbeat Monitoring + Failure Detection
 
@@ -27,13 +32,15 @@ type phiControl struct {
 }
 
 type phiAccrual struct {
+	reachAttempts uint8
 	warmupBucket  uint16
+	lastAttempt   time.Time
 	lastBeat      int64
 	window        []int64
 	windowIndex   int
 	score         float64
+	smoothedScore float64
 	dead          bool
-	reachAttempts uint8
 	pa            sync.Mutex
 }
 
@@ -58,38 +65,23 @@ type phiAccrual struct {
 // We don't gossip phi scores or node failures to others in the cluster as the detection is based on local time
 // It is for other nodes to detect failed nodes themselves
 
-func (s *GBServer) getThreshold(windowSize uint16) float64 {
-	if windowSize == 0 {
-		return 0
-	}
-
-	if windowSize < 10 {
-		return 2
-	} else if windowSize < 30 {
-		return 4
-	} else if windowSize < 100 {
-		return 6
-	}
-	return 8 // very stable, high-confidence threshold
-}
-
 func (s *GBServer) adjustedThreshold(participant *Participant) float64 {
 	warmup := participant.paDetection.warmupBucket
 
 	switch {
 	case warmup == 0:
 		return 16.0 // disable detection at first
-	case warmup < 3:
-		return 12.0
-	case warmup < 5:
-		return 9.5
 	case warmup < 10:
-		return 9.0
+		return 12.0
+	case warmup < 60:
+		return 10
+	case warmup < 80:
+		return 10
 	case warmup >= s.phi.windowSize:
-		return 8.0
+		return 10
 	default:
 		// Between 20 and windowSize
-		return 8.5
+		return 10
 	}
 }
 
@@ -105,7 +97,7 @@ func (s *GBServer) initPhiControl() *phiControl {
 
 	// Should be taken from config
 	return &phiControl{
-		s.getThreshold(paWindowSize),
+		16,
 		setWarmupBucket(paWindowSize),
 		paWindowSize,
 		make(chan struct{}),
@@ -134,9 +126,6 @@ func (s *GBServer) increaseWarmupBucket(participant *Participant) {
 	if participant.paDetection.warmupBucket < s.phi.windowSize {
 		participant.paDetection.warmupBucket++
 	}
-
-	//log.Printf("warmupBucket for %s = %d/%d", participant.name, participant.paDetection.warmupBucket, s.phi.windowSize)
-
 }
 
 func (s *GBServer) initPhiAccrual() *phiAccrual {
@@ -189,6 +178,7 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 
 	for {
 
+		// TODO Do we need to use our own phi lock here?
 		s.gossip.gossMu.Lock()
 
 		if s.ServerContext.Err() != nil {
@@ -200,10 +190,7 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
 		if !s.phi.phiOK || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
-
-			log.Printf("waiting for gossip signal...")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
-
 		}
 
 		if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
@@ -236,8 +223,6 @@ func (s *GBServer) startPhiProcess() bool {
 				return false
 			}
 		case <-ticker.C:
-
-			// TODO We are only calculating once so far - need to fix
 
 			ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 
@@ -416,25 +401,28 @@ func (s *GBServer) calculatePhi(ctx context.Context) {
 			//log.Printf("%s - window = %v", s.ServerName, phiWindow)
 
 			participant.pm.Lock()
-			participant.paDetection.score = phi
-			threshold := s.phi.threshold
-			//if participant.paDetection.warmupBucket <= 10 {
-			//	threshold = 10 // TODO make config - warmUp Threshold -- Maybe want this high because this is warming up and may have skewed numbers
-			//} else {
-			//	threshold = s.getThreshold(s.phi.windowSize)
-			//}
 
-			if s.phi.warmUpBucket == s.phi.windowSize {
-				threshold = 8.0
+			alpha := 0.7 // smoothing factor: closer to 1 = more responsive
+			previous := participant.paDetection.smoothedScore
+			smoothed := alpha*phi + (1-alpha)*previous
+
+			participant.paDetection.score = phi
+			participant.paDetection.smoothedScore = smoothed
+
+			threshold := s.phi.threshold
+
+			if participant.paDetection.warmupBucket == s.phi.windowSize {
+				threshold = 10
 			} else {
 				threshold = s.adjustedThreshold(participant)
 			}
 
-			log.Printf("%s - phi = %.2f | Δt = %d ms | %s -> %s | th = %.2f",
-				s.ServerName, phi, delta, s.ServerName, participant.name, threshold)
+			//fmt.Printf("%s - raw phi = %.2f | smoothed phi = %.2f | Δt = %d ms | %s -> %s | th = %.2f\n",
+			//	s.ServerName, phi, smoothed, delta, s.ServerName, participant.name, threshold)
 
-			if phi > threshold {
+			if smoothed > threshold {
 				participant.paDetection.dead = true
+				participant.paDetection.lastAttempt = time.Now()
 
 				// Participant marked dead event here
 				log.Printf("node is dead -------------------------------------------")
