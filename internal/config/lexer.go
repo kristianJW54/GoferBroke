@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -400,7 +399,6 @@ func sfTop(l *lexer) stateFunc {
 	}
 
 	if l.lookup[r]&check == 0 {
-		log.Printf("skipping junk = %s", string(r))
 		return sfSkip(l, sfTop)
 	}
 
@@ -412,7 +410,6 @@ func sfTop(l *lexer) stateFunc {
 	}
 
 	if l.lookup[r]&comment != 0 {
-		fmt.Println("processing comment")
 		l.push(sfTop)
 		return sfCommentStart
 	}
@@ -1032,12 +1029,12 @@ func sfComment(l *lexer) stateFunc {
 
 func (l *lexer) printCurrentToken() {
 
-	log.Printf("current token = %s", l.input[l.start:l.pos])
+	fmt.Printf("current token = %s\n", l.input[l.start:l.pos])
 
 }
 
 func (l *lexer) printPosition() {
-	log.Printf("start = %d | position = %d", l.start, l.pos)
+	fmt.Printf("start = %d | position = %d\n", l.start, l.pos)
 }
 
 func (l *lexer) isBool() bool {

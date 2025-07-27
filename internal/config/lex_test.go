@@ -3,7 +3,6 @@ package config
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/bits"
 	"strings"
 	"testing"
@@ -14,14 +13,14 @@ func TestBitMaskClassifications(t *testing.T) {
 
 	for ascii := 0; ascii <= 255; ascii++ {
 
-		log.Printf("%c", ascii)
+		fmt.Printf("%c\n", ascii)
 
 	}
 
 	pattern1 := identifier | digit
 	wantIndex := []int{7, 6}
 
-	log.Printf("ident = %08b", pattern1)
+	fmt.Printf("ident = %08b\n", pattern1)
 
 	var pos = 8
 	posIndex := make([]int, 2)
@@ -31,7 +30,7 @@ func TestBitMaskClassifications(t *testing.T) {
 		pos--
 
 		if pattern1&(1<<i) != 0 {
-			log.Printf("found bit at %d", pos)
+			fmt.Printf("found bit at %d\n", pos)
 			posIndex[i] = pos
 		}
 
@@ -57,7 +56,7 @@ func TestBitMaskClassifications(t *testing.T) {
 		t.Errorf("rune 'a' in lookup table is classified incorrectly - got %08b, want %08b", testLookupTable[testChar], pattern1)
 	}
 
-	log.Printf("got %08b, want %08b", testLookupTable[testChar], pattern1)
+	fmt.Printf("got %08b, want %08b\n", testLookupTable[testChar], pattern1)
 
 }
 
@@ -98,7 +97,7 @@ func TestBuildTable(t *testing.T) {
 
 	for _, char := range testWord {
 
-		log.Printf("%c - %08b - %s", char, table[char], BitMaskToString(table[char]))
+		fmt.Printf("%c - %08b - %s\n", char, table[char], BitMaskToString(table[char]))
 
 	}
 
@@ -154,13 +153,13 @@ func TestArrayEmit(t *testing.T) {
 			t.Fatal("lexer timeout")
 		default:
 			token := lex.nextToken()
-			log.Println(token)
+			fmt.Println(token)
 
 			tokenCount++
 			tokens = append(tokens, token.value)
 
 			if token.typ == tokenEOF {
-				log.Printf("total tokens = %v || tokens --> %+s", tokenCount, tokens)
+				fmt.Printf("total tokens = %v || tokens --> %+s\n", tokenCount, tokens)
 				return
 			}
 		}
@@ -191,13 +190,13 @@ func TestMapEmit(t *testing.T) {
 			t.Fatal("lexer timeout")
 		default:
 			token := lex.nextToken()
-			log.Println(token)
+			fmt.Println(token)
 
 			tokenCount++
 			tokens = append(tokens, token.value)
 
 			if token.typ == tokenEOF {
-				log.Printf("total tokens = %v || tokens --> %+s", tokenCount, tokens)
+				fmt.Printf("total tokens = %v || tokens --> %+s\n", tokenCount, tokens)
 				return
 			}
 		}
@@ -229,13 +228,13 @@ Cluster {}`
 			t.Fatal("lexer timeout")
 		default:
 			token := lex.nextToken()
-			log.Println(token)
+			fmt.Println(token)
 
 			tokenCount++
 			tokens = append(tokens, token.value)
 
 			if token.typ == tokenEOF {
-				log.Printf("total tokens = %v || tokens --> %+s", tokenCount, tokens)
+				fmt.Printf("total tokens = %v || tokens --> %+s\n", tokenCount, tokens)
 				return
 			}
 		}

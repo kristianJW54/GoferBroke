@@ -10,6 +10,42 @@ import (
 	"time"
 )
 
+// Test Ready ✅
+func TestRandomNodeSelection(t *testing.T) {
+	partArray := []string{
+		"part-1",
+		"part-2",
+		"part-3",
+		"part-4",
+	}
+
+	ntg := map[string]interface{}{
+		"part-1": struct{}{},
+		"part-3": struct{}{},
+	}
+
+	ns := 2
+	runs := 100
+
+	for i := 0; i < runs; i++ {
+		indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, ntg)
+		if err != nil {
+			t.Errorf("run %d: %v", i, err)
+		}
+
+		if len(indexes) != ns {
+			t.Errorf("run %d: expected %d indexes, got %d", i, ns, len(indexes))
+		}
+
+		for _, index := range indexes {
+			participant := partArray[index]
+			if _, skip := ntg[participant]; skip {
+				t.Errorf("run %d: selected excluded participant: %s", i, participant)
+			}
+		}
+	}
+}
+
 func makeTestDeltas(t *testing.T, numberOfDeltas int, versionBaseline int64, numberOfOutdated int, overLoadBaseline, numberOfOverloaded int) map[string]*Delta {
 
 	t.Helper()
@@ -123,7 +159,7 @@ func TestParticipantHeapDepthFirst(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	log.Println(ph[0].name)
+	fmt.Println(ph[0].name)
 
 	if ph[0].name != "third-node" {
 		t.Fatalf("participant heap should have prioritised third-node - got %s instead", ph[0].name)
@@ -193,14 +229,12 @@ func TestBuildDeltaOutdatedOnly(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	log.Printf("ph = %s - max version %v - peerMaxVersion %v", ph[0].name, ph[0].maxVersion, ph[0].peerMaxVersion)
+	fmt.Printf("ph = %s - max version %v - peerMaxVersion %v\n", ph[0].name, ph[0].maxVersion, ph[0].peerMaxVersion)
 
 	dl, _, err := gbs.buildDelta(&ph, 1000)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	log.Printf("length of dl - %v", len(dl[gbs.ServerName]))
 
 	if len(dl[gbs.ServerName]) != 2 {
 		t.Errorf("expected to get deltas list of 2 but got %v", len(dl[gbs.ServerName]))
@@ -227,10 +261,9 @@ func TestDeltaHeap(t *testing.T) {
 	for _, value := range keyValues {
 
 		dh[i] = &deltaQueue{
-			key:      value.Key,
-			overload: false,
-			version:  value.Version,
-			index:    i,
+			delta:   value,
+			version: value.Version,
+			index:   i,
 		}
 		i++
 	}
@@ -247,7 +280,7 @@ func TestDeltaHeap(t *testing.T) {
 			t.Errorf("Expected %d, got %d", assertion[i], result)
 			return
 		} else {
-			log.Printf("Version %d --> assertion %d", assertion[i], result)
+			fmt.Printf("Version %d --> assertion %d\n", assertion[i], result)
 		}
 	}
 }
@@ -264,14 +297,14 @@ func TestUpdateHeartBeat(t *testing.T) {
 
 	self := gbs.GetSelfInfo()
 
-	log.Printf("heartbeat - %d", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
+	fmt.Printf("heartbeat - %d\n", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
 
 	err := gbs.updateHeartBeat(time.Now().Unix())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Printf("new heartbeat - %d", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
+	fmt.Printf("new heartbeat - %d\n", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
 
 }
 
@@ -342,7 +375,7 @@ func TestClusterMapLocks(t *testing.T) {
 	close(taskQ)
 
 	wg.Wait()
-	log.Println("Tasks complete")
+	fmt.Println("Tasks complete")
 
 }
 
@@ -666,8 +699,6 @@ func TestAddGSADeltaToMap(t *testing.T) {
 		t.Errorf("gbs2 did not recieve the updated delta values from gbs - got %v, expected %v", keyCheck.Value, node3KeyValues["test:key2"].Value)
 	}
 
-	//log.Printf("keyCheck: version %v - value %s", keyCheck.Version, keyCheck.Value)
-
 }
 
 // Delta Handling Tests
@@ -719,7 +750,7 @@ func TestAddAndUpdateDelta(t *testing.T) {
 		t.Errorf("update delta failed: %v", err)
 	}
 
-	log.Printf("delta = %s", self.keyValues[key].Value)
+	fmt.Printf("delta = %s\n", self.keyValues[key].Value)
 
 	if delta, exists := self.keyValues[key]; !exists {
 		t.Errorf("delta does not exist")

@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	uuid2 "github.com/google/uuid"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"io"
-	"log"
 	"net"
 	"runtime"
 	"sync"
@@ -171,9 +171,6 @@ type readCache struct {
 	buffSize    int
 }
 
-// TODO Should the outbound be a general all purpose connection outbound?
-
-// TODO Should I have an inbound struct which has a pool and deals with processing inbound reads
 //===================================================================================
 // Outbound Node Write - For Per connection [Node] During Gossip Exchange
 //===================================================================================
@@ -245,8 +242,6 @@ func nbPoolPut(b []byte) {
 // Client creation
 //===================================================================================
 
-// TODO need init client with outbound data setup
-
 func (c *gbClient) initClient() {
 
 	s := c.srv
@@ -268,59 +263,35 @@ func (c *gbClient) initClient() {
 
 }
 
-// TODO Think about the locks we may need in this method
-func (s *GBServer) createClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
+func (s *GBServer) createClient(conn net.Conn, clientType int) *gbClient {
+
+	uuid := uuid2.New()
+	now := time.Now()
+	clientName := fmt.Sprintf("%s:%d", uuid, now.Unix())
 
 	client := &gbClient{
-		name:  name,
+		name:  clientName,
 		srv:   s,
 		gbc:   conn,
 		cType: clientType,
 	}
 
 	client.mu.Lock()
-
-	tcp, err := net.ResolveTCPAddr(client.gbc.RemoteAddr().Network(), client.gbc.RemoteAddr().String())
-	if err != nil {
-		log.Printf("error resolving addr: %v", err)
-	}
-
-	client.tcpAddr = tcp
-
 	client.initClient()
-
 	client.mu.Unlock()
 
-	//TODO:
-	// At the moment - tmpClientStore is NEEDED in order to effectively close clients on server shutdown
-	// This is important for fault detection as when a node/client goes down we won't know to close the connection unless
-	// we detect it or us as a server shuts down
-	//We also only get a read error once we close the connection - so we need to handle our connections in a robust way
-
-	s.tmpConnStore.Store(client.cid, client)
-
-	//TODO before starting the loops - handle TLS Handshake if needed
-	// If TLS is needed - the client is a temporary 'unsafe' client until handshake complete or rejected
+	s.clientStore.Store(clientName, client)
 
 	// Read Loop for connection - reading and parsing off the wire and queueing to write if needed
 	// Track the goroutine for the read loop using startGoRoutine
-	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("read loop for %s", name), func() {
-		defer conn.Close() // TODO Should this be here if closure is managed elsewhere?
+	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("read loop for %s", clientName), func() {
 		client.readLoop()
 	})
 
 	//Write loop -
-	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("write loop for %s", name), func() {
+	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("write loop for %s", clientName), func() {
 		client.writeLoop()
 	})
-
-	if initiated {
-		client.directionType = INITIATED
-		//log.Printf("%s logging initiated connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.LocalAddr())
-	} else {
-		client.directionType = RECEIVED
-		//log.Printf("%s logging received connection --> %s --> type: %d --> conn addr %s\n", s.ServerName, name, clientType, conn.RemoteAddr())
-	}
 
 	return client
 
@@ -342,20 +313,14 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 		return fmt.Errorf("client %s already exists in nodeConnStore: %+v", name, c.gbc)
 	}
 
-	//TODO --> use server ID without timestamp to detect whether a node has restarted if so, check addr to verify and then
-	// gossip digest to bring up to date, allow background node deleter to remove previous store when dead
-	// - ! Need to remove old version of two of the same node !
-
-	// If client not found we must check our cluster map for both server ID + Addr
-	// If it's in there then we must decide on what to do - gossip and update - remove old entry
-
 	switch c.cType {
 	case NODE:
 		s.nodeConnStore.Store(name, c)
 		c.flags.set(CONNECTED)
 	case CLIENT:
-		s.clientStore[cid] = c
-		c.flags.set(CONNECTED)
+		return fmt.Errorf("found client in tmpConnStore %s", name)
+	default:
+		return nil
 	}
 
 	return nil
@@ -368,8 +333,6 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 //---------------------------
 //Read Loop
-
-// TODO Need to add more robust connection handling - including closures and reconnects
 
 func (c *gbClient) readLoop() {
 
@@ -390,8 +353,6 @@ func (c *gbClient) readLoop() {
 
 	reader := bufio.NewReader(c.gbc)
 
-	// TODO: Look at back-pressure or flow control to prevent overwhelming the read loop
-
 	//------------------
 	//Beginning the read loop - read into buffer and adjust size if necessary - parse and process
 
@@ -404,17 +365,12 @@ func (c *gbClient) readLoop() {
 		n, err := reader.Read(buff)
 		if err != nil {
 			if err == io.EOF {
-				//log.Printf("%s -- connection closed", c.srv.ServerName)
-				// TODO need to do further check to see if our connection has dropped and implement reconnect strategy
 				// Maybe it reaches out to another node?
-				// Maybe it exits and then applies it's own reconnect with backoff retries
+				// Maybe it exits and then applies its own reconnect with backoff retries
 				// Will then need to log monitoring for full restart
 				//buff = nil
 				return
 			}
-			//log.Printf("%s -- read error: %s", c.srv.ServerName, err)
-			//TODO Handle client closures more effectively - based on type
-			// if client may want to reconnect and retry - if node we will want to use the phi accrual
 
 			c.handleReadError(err)
 
@@ -444,7 +400,6 @@ func (c *gbClient) readLoop() {
 			newBuff := make([]byte, c.inbound.buffSize)
 			copy(newBuff, buff[:n])
 			buff = newBuff
-			//log.Printf("increased buffer size to --> %d", len(buff))
 
 		} else if n < cap(buff)/2 && cap(buff) > MIN_BUFF_SIZE && c.inbound.expandCount > 2 {
 			c.inbound.buffSize = int(cap(buff) / 2)
@@ -466,12 +421,6 @@ func (c *gbClient) readLoop() {
 		} else if c.cType == NODE {
 			c.ParsePacket(buff[:n])
 		}
-
-		//log.Printf("%s -- read -- %s", c.srv.ServerName, buff[:n])
-		//log.Printf("bytes read --> %d", n)
-		//log.Printf("current buffer usage --> %d / %d", c.inbound.offset, len(buff))
-
-		// TODO Think about flushing and writing and any clean up after the read
 
 	}
 
@@ -525,8 +474,6 @@ func (c *gbClient) queueOutbound(data []byte) {
 func (c *gbClient) flushSignal() {
 	if c.outbound.flushSignal != nil {
 		c.outbound.flushSignal.Signal()
-	} else {
-		log.Println("flushSignal: No flushSignal available")
 	}
 }
 
@@ -599,7 +546,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 	// Write errors
 	if err != nil {
-		log.Printf("flushWriteOutbound: Write error: %v", err)
+		fmt.Printf("flushWriteOutbound: Write error: %v\n", err)
 		c.handleWriteError(err)
 		return true
 	}
@@ -616,9 +563,6 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 //---------------------------
 //Write Loop
-
-//TODO sync.Cond requires that the associated lock be held when calling Wait and Signal.
-// releases the lock temporarily while waiting and reacquires it before returning.
 
 // To exit out of the wait loop gracefully with context - we need to wait on the context as a condition and once cancelled
 // Broadcast will be called to signal all waiting go-routines to exit once the condition of context cancellation has been
@@ -664,14 +608,6 @@ func (c *gbClient) writeLoop() {
 //--------------------------
 // Queue Proto
 
-//// Lock should be held
-//func (c *gbClient) qProto(proto []byte, flush bool) {
-//	c.queueOutbound(proto)
-//	if c.outbound.flushSignal != nil && flush {
-//		c.outbound.flushSignal.Signal()
-//	}
-//}
-
 func (c *gbClient) enqueueProtoAndFlush(data []byte, doFlush bool) {
 	if c.gbc == nil {
 		return
@@ -694,7 +630,7 @@ func (c *gbClient) enqueueProto(data []byte) {
 }
 
 //===================================================================================
-// Node Response Handling
+// Response Handling
 //===================================================================================
 
 type responsePayload struct {
@@ -745,16 +681,11 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	select {
 	case <-rsp.ctx.Done():
-		// Context canceled, return immediately
-		//log.Printf("waitForResponse - context canceled for response ID %d", rsp.id)
-		return responsePayload{}, rsp.ctx.Err()
-	case writeErr := <-c.errChan:
-		return responsePayload{}, fmt.Errorf("write error: %w", writeErr)
-	case readErr := <-c.errChan:
-		return responsePayload{}, fmt.Errorf("read error: %w", readErr)
+		return responsePayload{}, fmt.Errorf("response timeout: %w", rsp.ctx.Err())
+
 	case msg := <-rsp.ch:
-		//log.Printf("waitForResponse - received response for ID %d: %s", rsp.id, msg)
 		return msg, nil
+
 	case err := <-rsp.err:
 		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, err, "")
 	}
@@ -870,17 +801,15 @@ func (c *gbClient) processMessage(message []byte) {
 // Client Commands
 //===================================================================================
 
+// TODO Add command list here and regex on command for parsing and failing early
+
 func (c *gbClient) dispatchClientCommands(message []byte) {
 
 	// Need a switch on commands
 	switch c.ph.command {
-	case 'V':
-		log.Printf("command received: %v", string(c.ph.command))
-		// Method for handling delta
-		err := c.processDelta(message)
-		if err != nil {
-			log.Printf("error processing delta: %v", err)
-		}
+	//e.g
+	//case STREAM_LOG ('stream log'):
+	// --->
 	}
 }
 
@@ -888,7 +817,7 @@ func (c *gbClient) dispatchClientCommands(message []byte) {
 func (c *gbClient) processDelta(message []byte) error {
 
 	srv := c.srv
-	log.Printf("%s processing command", srv.PrettyName())
+	fmt.Printf("%s processing command\n", srv.PrettyName())
 
 	// Will need to copy message buf and msg length to avoid race conditions with the parser setting to nil
 	// TODO Consider more efficient way of reducing allocations - maybe another pool of buffers? for inbound?
@@ -905,7 +834,7 @@ func (c *gbClient) processDelta(message []byte) error {
 	go func() {
 		_, err := srv.parseClientDelta(message, int(msgLen), keyLen, valueLen)
 		if err != nil {
-			log.Printf("error parsing client delta message: %v", err)
+			fmt.Printf("error parsing client delta message: %v\n", err)
 		}
 	}()
 

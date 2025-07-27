@@ -2,8 +2,8 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
-	"log"
 )
 
 type EventErrorType int
@@ -77,7 +77,7 @@ func processTestError(ctx *errorContext, e *ErrorEvent, time int64, message stri
 	switch e.Severity {
 
 	case CollectAndAct:
-		log.Println("got test error with a severity of CollectAndAct")
+		fmt.Println("got test error with a severity of CollectAndAct")
 		return nil
 	default:
 		return nil
@@ -90,7 +90,7 @@ func processConnectToSeedError(ctx *errorContext, e *ErrorEvent, time int64, mes
 	switch e.Severity {
 
 	case CollectAndAct:
-		log.Println("got test error with a severity of CollectAndAct")
+		fmt.Println("got test error with a severity of CollectAndAct")
 		return nil
 	case Critical:
 		if ctx.fatalErr != nil {
@@ -100,7 +100,7 @@ func processConnectToSeedError(ctx *errorContext, e *ErrorEvent, time int64, mes
 				// Error sent
 			default:
 				// Channel full or already handled
-				log.Println("Fatal error not sent: channel full")
+				fmt.Println("Fatal error not sent: channel full")
 			}
 		}
 

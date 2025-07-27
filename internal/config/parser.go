@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 )
@@ -208,7 +207,7 @@ func (p *parser) parseToken() (token, error) {
 
 	case tokenKey:
 		if err := p.parseKey(t); err != nil {
-			log.Printf("error parsing key - %s", err)
+			fmt.Printf("error parsing key - %s\n", err)
 		}
 
 	// Account for all starts as potential nested children
@@ -382,7 +381,6 @@ func (p *parser) parseList(t token) error {
 			continue
 
 		case next.typ == tokenBool:
-			log.Printf("-------------------parsing bool = %v", next.value)
 			p.next()
 			boolValue, err := strconv.ParseBool(next.value)
 			if err != nil {

@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"testing"
 	"time"
@@ -168,7 +167,7 @@ func TestSerialiseDiscoveryRequest(t *testing.T) {
 		t.Fatalf("Error deserialising known addresses: %v", err)
 	}
 
-	log.Printf("data = %+s", parts)
+	fmt.Printf("data = %+s\n", parts)
 
 	// First element is the sender
 	//gbs.serialiseDiscoveryResponse(parts)
@@ -190,14 +189,14 @@ func TestDiscoveryResponse(t *testing.T) {
 		knownAddr[name][1] = gbs.clusterMap.participants[name].keyValues[MakeDeltaKey(ADDR_DKG, "CLOUD")].Key
 	}
 
-	log.Printf("data = %+s", knownAddr)
+	fmt.Printf("data = %+s\n", knownAddr)
 
 	data, err := gbs.serialiseDiscoveryAddrs(knownAddr)
 	if err != nil {
 		t.Fatalf("Error serialising known addresses: %v", err)
 	}
 
-	log.Printf("addresses = %+v", data)
+	fmt.Printf("addresses = %+v\n", data)
 
 	addrMap, err := deserialiseDiscovery(data)
 	if err != nil {
@@ -205,7 +204,7 @@ func TestDiscoveryResponse(t *testing.T) {
 	}
 
 	for key, value := range addrMap.dv {
-		log.Printf("addr = %s%+v", key, value.addr)
+		fmt.Printf("addr = %s%+v\n", key, value.addr)
 	}
 
 }
@@ -292,12 +291,12 @@ func TestDiscoveryResponseTable(t *testing.T) {
 				if _, exists := tt.checkAddrMap[name]; !exists {
 					t.Errorf("node name does not exist: %s", name)
 				}
-				log.Printf("got name %s", name)
+				fmt.Printf("got name %s\n", name)
 				for key, addr := range value.addr {
 					if key, exists := tt.checkAddrMap[name][key]; !exists {
 						t.Errorf("address not found for key: %s", key)
 					}
-					log.Printf("got address key %s - value: %s", key, addr)
+					fmt.Printf("got address key %s - value: %s\n", key, addr)
 					if addr != tt.checkAddrMap[name][key] {
 						t.Errorf("address mismatch: got %s, want %s", addr, tt.checkAddrMap[name][key])
 					}
@@ -332,7 +331,7 @@ func TestSerialiseConfigDigest(t *testing.T) {
 		t.Fatalf("Error serialising config: %v", err)
 	}
 
-	log.Printf("digest = %+v", (*fd)[name])
+	fmt.Printf("digest = %+v\n", (*fd)[name])
 
 	entry, ok := (*fd)[gbs.ServerName]
 	if !ok || entry == nil {
@@ -402,15 +401,15 @@ func TestSerialiseDigest(t *testing.T) {
 
 	cereal, _, err := gbs.serialiseClusterDigest()
 	if err != nil {
-		log.Println("error ", err)
+		fmt.Println("error ", err)
 	}
 
-	log.Printf("serialised digest = %v", cereal)
+	fmt.Printf("serialised digest = %v\n", cereal)
 
 	_, digest, err := deSerialiseDigest(cereal)
 
 	for _, value := range *digest {
-		log.Printf("%v:%v", value.nodeName, value.maxVersion)
+		fmt.Printf("%v:%v\n", value.nodeName, value.maxVersion)
 	}
 
 }
@@ -483,20 +482,20 @@ func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 		subsetSize += 1 + len(node) + 8
 	}
 
-	log.Printf("subset array = %+v", subsetArray)
+	fmt.Printf("subset array = %+v\n", subsetArray)
 
 	newDigest, err := gbs.serialiseClusterDigestWithArray(subsetArray, subsetSize)
 	if err != nil {
-		log.Println("error ", err)
+		fmt.Println("error ", err)
 	}
 
 	_, digest, err := deSerialiseDigest(newDigest)
 	if err != nil {
-		log.Println("error ", err)
+		fmt.Println("error ", err)
 	}
 
 	for _, value := range *digest {
-		log.Printf("%v:%v", value.nodeName, value.maxVersion)
+		fmt.Printf("%v:%v\n", value.nodeName, value.maxVersion)
 	}
 
 }
@@ -547,9 +546,9 @@ func TestGSASerialisation(t *testing.T) {
 	}
 
 	for n, fdValue := range cd.delta {
-		log.Printf("delta check")
+		fmt.Printf("delta check\n")
 		for k, v := range fdValue.keyValues {
-			log.Printf("%s --> key %s = %+v", n, k, v)
+			fmt.Printf("%s --> key %s = %+v\n", n, k, v)
 		}
 	}
 
@@ -594,11 +593,11 @@ func TestVersion(t *testing.T) {
 	num2 := time.Now().Unix()
 
 	if num1 > num2 {
-		log.Printf("OH NO")
+		fmt.Printf("OH NO\n")
 	}
 
 	num1++
 
-	log.Printf("num1 = %d", num1)
+	fmt.Printf("num1 = %d\n", num1)
 
 }

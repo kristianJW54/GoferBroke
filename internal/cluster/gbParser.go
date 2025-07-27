@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"encoding/binary"
-	"log"
+	"fmt"
 )
 
 const (
@@ -62,8 +62,6 @@ type parsedHeader struct {
 
 func (c *gbClient) ProcessHeaderFromParser(header []byte) {
 
-	//log.Printf("bytes passed to header %v", header)
-
 	if len(header) > 4 {
 		c.ph.version = header[0]
 		c.ph.command = header[1]
@@ -77,7 +75,7 @@ func (c *gbClient) ProcessHeaderFromParser(header []byte) {
 		//c.header.headerLength = binary.BigEndian.Uint16(headerLength) - 2
 
 	} else {
-		log.Printf("header length mismatch - got %v, expected %v", int(c.ph.headerLength), len(header))
+		fmt.Printf("header length mismatch - got %v, expected %v\n", int(c.ph.headerLength), len(header))
 		return
 	}
 
@@ -127,7 +125,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 					c.argBuf = nil
 				} else {
 					if c.position > i-c.drop {
-						log.Printf("invalid header range: position=%d, i=%d, drop=%d", c.position, i, c.drop)
+						fmt.Printf("invalid header range: position=%d, i=%d, drop=%d\n", c.position, i, c.drop)
 						c.state = Start
 						c.argBuf = nil
 						c.drop = 0
@@ -196,7 +194,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 		case StateREnd:
 
 			if b != '\r' {
-				log.Printf("nope -- b = %v", b)
+				fmt.Printf("nope -- b = %v\n", b)
 			}
 
 			if c.msgBuf != nil {
@@ -208,7 +206,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 		case StateNEnd:
 
 			if b != '\n' {
-				log.Printf("nope -- b = %v", b)
+				fmt.Printf("nope -- b = %v\n", b)
 				return
 			}
 
@@ -241,7 +239,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 			rem := len(packet[c.position:])
 
 			if rem > int(c.ph.msgLength)+len(CLRF) {
-				log.Printf("error in parser")
+				fmt.Printf("error in parser\n")
 				return
 			}
 

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"fmt"
 	"testing"
 )
 
@@ -21,9 +21,7 @@ func TestParserToken(t *testing.T) {
 		t.Error(err)
 	}
 
-	//log.Printf("%T - %s", token.Nodes[0], token.Nodes[0])
-
-	log.Printf("%v number of nodes in tree", len(token.Nodes))
+	fmt.Printf("%v number of nodes in tree\n", len(token.Nodes))
 
 	for _, node := range token.Nodes {
 		walkNode(node, "")
@@ -40,7 +38,7 @@ func TestParserWithTestFile(t *testing.T) {
 		t.Error(err)
 	}
 
-	log.Printf("%v number of nodes in tree", len(cfg.Nodes))
+	fmt.Printf("%v number of nodes in tree\n", len(cfg.Nodes))
 
 	for _, node := range cfg.Nodes {
 		walkNode(node, "")
@@ -57,7 +55,7 @@ func TestParserWithBasicFile(t *testing.T) {
 		t.Error(err)
 	}
 
-	log.Printf("%v number of nodes in tree", len(cfg.Nodes))
+	fmt.Printf("%v number of nodes in tree\n", len(cfg.Nodes))
 
 	for _, node := range cfg.Nodes {
 		walkNode(node, "")
@@ -68,33 +66,33 @@ func TestParserWithBasicFile(t *testing.T) {
 func walkNode(n Node, indent string) {
 	switch node := n.(type) {
 	case *KeyValueNode:
-		log.Printf("%sKeyValueNode → %s", indent, node.Key)
+		fmt.Printf("%sKeyValueNode → %s\n", indent, node.Key)
 		walkNode(node.Value, indent+"  ")
 
 	case *StringNode:
-		log.Printf("%sString → %s", indent, node.Value)
+		fmt.Printf("%sString → %s\n", indent, node.Value)
 
 	case *BoolNode:
-		log.Printf("%sBool → %v", indent, node.Value)
+		fmt.Printf("%sBool → %v\n", indent, node.Value)
 
 	case *DigitNode:
-		log.Printf("%sDigit → %d", indent, node.Value)
+		fmt.Printf("%sDigit → %d\n", indent, node.Value)
 
 	case *ListNode:
-		log.Printf("%sList → %d item(s)", indent, len(node.Items))
+		fmt.Printf("%sList → %d item(s)\n", indent, len(node.Items))
 		for i, item := range node.Items {
-			log.Printf("%s  [Item %d]", indent, i)
+			fmt.Printf("%s  [Item %d]\n", indent, i)
 			walkNode(item, indent+"    ")
 		}
 
 	case *ObjectNode:
-		log.Printf("%sObject → %d field(s)", indent, len(node.Children))
+		fmt.Printf("%sObject → %d field(s)\n", indent, len(node.Children))
 		for _, kv := range node.Children {
 			walkNode(kv, indent+"  ")
 		}
 
 	default:
-		log.Printf("%sUnknown node type: %T", indent, node)
+		fmt.Printf("%sUnknown node type: %T\n", indent, node)
 	}
 }
 
@@ -113,7 +111,7 @@ func TestASTPathValues(t *testing.T) {
 	}
 
 	for i, paths := range av {
-		log.Printf("%d -> path = %s", i, paths.Path)
+		fmt.Printf("%d -> path = %s\n", i, paths.Path)
 	}
 
 }

@@ -3,7 +3,6 @@ package cluster
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"reflect"
 	"testing"
 )
@@ -41,7 +40,7 @@ func TestKeyPathFlatten(t *testing.T) {
 		t.Errorf("Error getting by path: %v", err)
 	}
 
-	log.Println(result)
+	fmt.Println(result)
 
 }
 
@@ -80,7 +79,7 @@ func TestSliceConfigSchema(t *testing.T) {
 
 	schema := BuildConfigSchema(cfg)
 
-	log.Printf("Old port = %s", cfg.SeedServers[1].Port)
+	fmt.Printf("Old port = %s\n", cfg.SeedServers[1].Port)
 
 	newPort := "5000"
 
@@ -92,7 +91,7 @@ func TestSliceConfigSchema(t *testing.T) {
 	if cfg.SeedServers[1].Port != newPort {
 		t.Errorf("New port is %s, wanted %s", cfg.SeedServers[1].Port, newPort)
 	}
-	log.Printf("New port = %s", cfg.SeedServers[1].Port)
+	fmt.Printf("New port = %s\n", cfg.SeedServers[1].Port)
 
 }
 
@@ -355,7 +354,7 @@ func TestConfigCheckSum(t *testing.T) {
 		t.Errorf("Config checksums should be different")
 	}
 
-	log.Printf("cs --> %s", cs)
-	log.Printf("cs2 --> %s", cs2)
+	fmt.Printf("cs --> %s\n", cs)
+	fmt.Printf("cs2 --> %s\n", cs2)
 
 }

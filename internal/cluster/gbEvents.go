@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
-	"log"
+	"log/slog"
 	"sync"
 )
 
@@ -201,7 +201,8 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("Panic in event handler [%s]: %v", ParseEventEnumToString(eventType), r)
+				s.logger.Warn("panic in event handler",
+					slog.String("event_type", ParseEventEnumToString(eventType)))
 			}
 		}()
 
@@ -209,15 +210,15 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 			select {
 			case event := <-ch:
 				if err := handler(event); err != nil {
-					log.Printf("Error handling event [%s]: %v", ParseEventEnumToString(eventType), err)
+					s.logger.Error("error handling event",
+						slog.String("event_type", ParseEventEnumToString(eventType)),
+						slog.String("error", err.Error()))
 				}
 			case <-ctx.Done():
-				log.Printf("Context cancelled, stopping event handler [%s]", ParseEventEnumToString(eventType))
 				return
 			}
 		}
 	}()
-
 	return "", nil
 }
 
@@ -240,7 +241,10 @@ func (s *GBServer) DispatchEvent(event Event) {
 			case handler.eventCh <- event:
 				//Delivered
 			default:
-				log.Printf("event dropped")
+				s.logger.Warn("event dropped",
+					slog.String("event type", ParseEventEnumToString(event.EventType)),
+					slog.Int64("event time", event.Time),
+				)
 			}
 
 		}
@@ -281,7 +285,7 @@ func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 		return fmt.Errorf("invalid payload for DeltaUpdateEvent")
 	}
 
-	log.Printf("Delta %s updated: \nPrevious value: %s\nNew value: %s\n", payload.DeltaKey, payload.PreviousValue, payload.CurrentValue)
+	fmt.Printf("Delta %s updated: \nPrevious value: %s\nNew value: %s\n", payload.DeltaKey, payload.PreviousValue, payload.CurrentValue)
 
 	return nil
 

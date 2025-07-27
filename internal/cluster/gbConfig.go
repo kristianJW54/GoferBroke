@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
 	cfg "github.com/kristianJW54/GoferBroke/internal/config"
-	"log"
 	"math"
 	"reflect"
 	"strconv"
@@ -162,10 +162,21 @@ type InternalOptions struct {
 	DisableInternalGossipSystemUpdate     bool
 	DisableUpdateServerTimeStampOnStartup bool
 
+	// Logging
+	DefaultLoggerEnabled bool
+	LogOutput            string
+	LogToBuffer          bool
+	LogBufferOutput      string
+	LogBufferSize        int
+	LogChannelSize       int
+
 	// TLS
 	CACertFilePath string
 	CertFilePath   string
 	KeyFilePath    string
+
+	//Startup
+	DisableStartupMessage bool
 
 	// Need logging config also
 }
@@ -187,9 +198,18 @@ func InitDefaultNodeConfig() *GbNodeConfig {
 			DisableUpdateServerTimeStampOnStartup: false,
 			DisableInternalGossipSystemUpdate:     false,
 
+			DefaultLoggerEnabled: true,
+			LogOutput:            "stderr",
+			LogToBuffer:          false,
+			LogBufferOutput:      "json",
+			LogBufferSize:        100,
+			LogChannelSize:       200,
+
 			CACertFilePath: "",
 			CertFilePath:   "",
 			KeyFilePath:    "",
+
+			DisableStartupMessage: false,
 		},
 	}
 }
@@ -267,7 +287,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 	v = deref(v)
 
 	if v.Kind() != reflect.Struct {
-		log.Printf("not a struct: %s", v.Kind())
 		return
 	}
 
@@ -816,7 +835,7 @@ func handleMap(s *configState) (configStateFunc, error) {
 		if s.mode == modeSet {
 			// use Elem type of the map to validate type, not val.Type() (which could be invalid)
 			if !newVal.Type().AssignableTo(m.Type().Elem()) {
-				log.Printf("[SET ERROR] path=%s cannot assign value of type %s to map with elem type %s",
+				fmt.Printf("[SET ERROR] path=%s cannot assign value of type %s to map with elem type %s\n",
 					s.prefix, newVal.Type(), m.Type().Elem())
 				return nil, fmt.Errorf("cannot assign %T to %s", s.value, m.Type().Elem())
 			}
@@ -1091,7 +1110,7 @@ func encodeReflectValue(v reflect.Value) ([]byte, error) {
 func decodeDeltaValue(d *Delta) (any, error) {
 	typ, ok := deltaTypeToReflect[d.ValueType]
 	if !ok {
-		return nil, fmt.Errorf("unknown delta type: %d", d.ValueType)
+		return nil, Errors.ChainGBErrorf(Errors.DecodeDeltaErr, nil, "unknown delta type - %d", d.ValueType)
 	}
 	return decodeFromBytes(d.Value, typ)
 }
@@ -1103,7 +1122,7 @@ func decodeFromBytes(data []byte, typ reflect.Type) (any, error) {
 
 	case reflect.Bool:
 		if len(data) != 1 {
-			return nil, fmt.Errorf("invalid bool encoding")
+			return nil, Errors.ChainGBErrorf(Errors.DecodeDeltaErr, nil, "invalid bool encoding - got %d, expected 1", len(data))
 		}
 		return data[0] == 1, nil
 
@@ -1133,7 +1152,7 @@ func decodeFromBytes(data []byte, typ reflect.Type) (any, error) {
 		return math.Float64frombits(binary.BigEndian.Uint64(data)), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported kind: %s", typ.Kind())
+		return nil, Errors.ChainGBErrorf(Errors.DecodeDeltaErr, nil, "unknown delta kind - %s", typ.Kind())
 	}
 }
 

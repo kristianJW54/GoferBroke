@@ -3,10 +3,37 @@ package cluster
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
+	"github.com/kristianJW54/GoferBroke/internal"
+	"net/http"
+	_ "net/http/pprof"
+	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 )
+
+func startPprofServer(ip, port string) {
+	go func() {
+		addr := fmt.Sprintf("%s:%s", ip, port)
+		fmt.Printf("[pprof] HTTP server running at: http://%s/debug/pprof/\n", addr)
+
+		fmt.Println("[pprof] Available endpoints:")
+		fmt.Printf("  📈 CPU Profile:        http://%s/debug/pprof/profile?seconds=30\n", addr)
+		fmt.Printf("  🧠 Heap Profile:       http://%s/debug/pprof/heap\n", addr)
+		fmt.Printf("  🕳️ Block Profile:      http://%s/debug/pprof/block\n", addr)
+		fmt.Printf("  🔒 Mutex Profile:      http://%s/debug/pprof/mutex\n", addr)
+		fmt.Printf("  🔍 Goroutines:         http://%s/debug/pprof/goroutine?debug=2\n", addr)
+		fmt.Printf("  📉 Execution Trace:    http://%s/debug/pprof/trace?seconds=5\n", addr)
+
+		if err := http.ListenAndServe(addr, nil); err != nil {
+			fmt.Printf("[pprof] failed to start: %v\n", err)
+		}
+	}()
+}
+
+func init() {
+	runtime.SetBlockProfileRate(1) // Sample every blocking event
+}
 
 type grTracking struct {
 	numRoutines  int64
@@ -26,9 +53,6 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 		id := atomic.AddInt64(&g.index, 1)
 		atomic.AddInt64(&g.numRoutines, 1)
 
-		// Log the start of the goroutine
-		//log.Printf("%s Starting go-routine %v - %v", serverName, name, id)
-
 		// Store the routine's information in the map
 		g.routineMap.Store(id, name)
 
@@ -46,7 +70,6 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 				// If tracking is enabled, decrement the number of routines and remove from the map
 				atomic.AddInt64(&g.numRoutines, -1)
 				g.routineMap.Delete(id)
-				//log.Printf("%s Ending go-routine %v - %v", serverName, name, id)
 
 			}()
 
@@ -62,11 +85,11 @@ func (g *grTracking) startGoRoutine(serverName, name string, f func()) {
 }
 
 func (g *grTracking) logActiveGoRoutines() {
-	log.Printf("Go routines left in tracker: %v", atomic.LoadInt64(&g.numRoutines))
-	log.Println("Go routines in tracker:")
+	fmt.Printf("Go routines left in tracker: %v\n", atomic.LoadInt64(&g.numRoutines))
+	fmt.Println("Go routines in tracker:")
 
 	g.routineMap.Range(func(key, value interface{}) bool {
-		log.Printf("Goroutine -- %v %s\n", key, value)
+		fmt.Printf("Goroutine -- %v %s\n", key, value)
 		return true // continue iteration
 	})
 }
@@ -77,6 +100,37 @@ func percMakeup(known, want int) uint8 {
 		return 0 // Prevent division by zero
 	}
 	return uint8((known * 100) / want)
+}
+
+func printStartup(s *GBServer) {
+
+	fmt.Printf(`
+========================================================================
+	   ______      ____          ____             __           
+	  / ____/___  / __/__  _____/ __ )_________  / /_____      
+	 / / __/ __ \/ /_/ _ \/ ___/ __  / ___/ __ \/ //_/ _ \     
+	/ /_/ / /_/ / __/  __/ /  / /_/ / /  / /_/ / ,< /  __/     
+	\____/\____/_/  \___/_/  /_____/_/   \____/_/|_|\___/      
+	
+========================================================================
+	`)
+	fmt.Println()
+	fmt.Printf("  Go Version         : %s\n", runtime.Version())
+	fmt.Printf("  GoferBroke Version : %s\n", internal.Version)
+	fmt.Printf("  GoferBroke Commit  : %s\n", internal.Commit)
+	fmt.Printf("  Server Created on  : %s\n", time.Now().Format(time.DateTime))
+	fmt.Printf("  Name of node       : %s\n", s.name)
+	fmt.Printf("  Part of cluser     : %s\n", s.gbClusterConfig.Name)
+	fmt.Printf("  Configured addr    : %s\n", s.boundTCPAddr)
+	fmt.Printf("  Host               : %s\n", s.sm.hostName)
+	fmt.Printf("  Host ID            : %s\n", s.sm.hostID)
+	fmt.Printf("  Platform           : %s\n", s.sm.platform)
+	fmt.Printf("  Platform Family    : %s\n", s.sm.platformFamily)
+	fmt.Printf("  Total Memory       : %d\n", s.sm.totalMemory)
+	fmt.Printf("  CPU                : %s\n", s.sm.modelName)
+	fmt.Printf("  Cores              : %d\n", s.sm.cores)
+	fmt.Println()
+
 }
 
 //==========================================================================================

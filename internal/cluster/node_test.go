@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"fmt"
-	"log"
 	"slices"
 	"sync"
 	"testing"
@@ -66,7 +65,7 @@ func TestBuildAddrMap(t *testing.T) {
 			}
 
 			for name, value := range am {
-				log.Printf("name: %s", name)
+				fmt.Printf("name: %s\n", name)
 				if _, exists := tt.addrMapCheck[name]; !exists {
 					t.Errorf("%s not found in addr map", name)
 				}
@@ -74,7 +73,7 @@ func TestBuildAddrMap(t *testing.T) {
 					if !slices.Contains(tt.addrMapCheck[name], addr) {
 						t.Errorf("%s not found in addr map", name)
 					}
-					log.Println("addr:", addr)
+					fmt.Println("addr:\n", addr)
 				}
 			}
 
@@ -89,7 +88,7 @@ func TestPercDiff(t *testing.T) {
 
 	res := percMakeup(knownCount, connCount)
 
-	log.Println(res)
+	fmt.Println(res)
 
 }
 
@@ -178,7 +177,7 @@ func TestGetRandomSeedToDial(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		log.Printf("Seed address: %s", addr.resolved.String())
+		fmt.Printf("Seed address: %s\n", addr.resolved.String())
 
 		if addr.resolved.String() == gbs.advertiseAddress.String() {
 			t.Errorf("retrieved seed addr should NOT be our own")
@@ -321,9 +320,9 @@ func TestGetClusterConfigUpdateExchange(t *testing.T) {
 
 	self := gbs2.GetSelfInfo()
 	for k, v := range self.keyValues {
-		log.Printf("k = %s, v = %v", k, v.Version)
+		fmt.Printf("k = %s, v = %v\n", k, v.Version)
 	}
-	log.Printf("gbs2 name = %s", gbs2.gbClusterConfig.Name)
+	fmt.Printf("gbs2 name = %s\n", gbs2.gbClusterConfig.Name)
 
 	gbs2.Shutdown()
 	gbs.Shutdown()

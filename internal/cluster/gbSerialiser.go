@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
-	"log"
 	"time"
 )
 
@@ -502,8 +501,6 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]Delta, deltaSize
 	length += 1
 	length += len(s.ServerName)
 
-	log.Printf("length before adding deltasize = %d - %d", length, deltaSize)
-
 	length += deltaSize
 
 	deltaBuf := make([]byte, length)
@@ -598,8 +595,6 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 	// Extract senders name
 	senderLen := int(delta[offset])
 	senderName := delta[offset+1 : offset+1+senderLen]
-
-	//log.Printf("senderLen - %d | senderName - %d", senderLen, senderName)
 
 	offset++
 	offset += senderLen

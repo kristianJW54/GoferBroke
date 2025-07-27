@@ -36,6 +36,7 @@ func main() {
 	clusterNetwork := flag.String("clusterNetwork", "LOCAL", "Network type [PUBLIC, PRIVATE, LOCAL]")
 	nodeFileConfig := flag.String("nodeConfig", "", "Configuration file for this node")
 	clusterFileConfig := flag.String("clusterConfig", "", "Configuration file for this cluster")
+	profilingPort := flag.String("profilingPort", "", "Profiling port")
 
 	flag.Var(&routes, "routes", "Route addresses - can be specified multiple times")
 
@@ -70,9 +71,10 @@ func main() {
 		*addrFlag,
 		*nodeFileConfig,
 		*clusterFileConfig,
+		*profilingPort,
 	); err != nil {
 		log.Fatalf("Error running server: %v\n", err)
 	}
 
-	log.Printf("[BOOT] Mode: %s, Name: %s, Addr: %s", *modeFlag, *nameFlag, *addrFlag)
+	fmt.Printf("[BOOT] Mode: %s, Name: %s, Addr: %s\n", *modeFlag, *nameFlag, *addrFlag)
 }

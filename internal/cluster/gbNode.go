@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
-	"log"
 	"math/rand"
 	"net"
 	"slices"
@@ -114,14 +113,12 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
 	resp := client.qProtoWithResponse(ctx, reqID, pay, true)
 
-	r, err := client.waitForResponseAndBlock(resp)
+	_, err = client.waitForResponseAndBlock(resp)
 	if err != nil {
 		return s.handleClusterConfigChecksumResponse(client, err)
 	}
 
 	// IF we get an ok response we return and continue
-
-	log.Printf("config response = %s", string(r.msg))
 
 	return nil
 
@@ -138,7 +135,6 @@ func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr
 		for _, ge := range gbErrors {
 			if ge.Code == Errors.CONFIG_AVAILABLE_CODE {
 				// Handle here...
-				log.Printf("applying new config...")
 				err := s.sendClusterConfigDigest(client)
 				if err != nil {
 					return err
@@ -342,7 +338,7 @@ func (s *GBServer) connectToSeed() error {
 	}
 
 	if conn == nil {
-		log.Printf("seed not reachable -- should be checking error types here to determine next steps...[TODO]")
+		fmt.Printf("seed not reachable -- should be checking error types here to determine next steps...[TODO]\n")
 		// TODO Maybe return a specific error which we can match on and then do a retry
 		return nil
 	}
@@ -355,8 +351,6 @@ func (s *GBServer) connectToSeed() error {
 	// Config check to fail early
 
 	client := s.createNodeClient(conn, "tmpClient", true, NODE)
-
-	log.Printf("checking cluster config...")
 	err = s.sendClusterCgfChecksum(client)
 	if err != nil {
 		return err
@@ -406,7 +400,6 @@ func (s *GBServer) connectToSeed() error {
 			}
 
 			// We also need to the ID to the seed addr list
-			log.Printf("adding id -- %s to seed addr list with addr --> %s", name, conn.RemoteAddr().String())
 			err = s.addIDToSeedAddrList(name, conn.RemoteAddr())
 			if err != nil {
 				return fmt.Errorf("connect to seed - adding seed id to addr list - %v", err)
@@ -447,7 +440,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("[DEBUG] Already connected to node %s, skipping dial", node)
+		fmt.Printf("[DEBUG] Already connected to node %s, skipping dial\n", node)
 		return nil
 	}
 
@@ -477,7 +470,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	nodeAddr := net.JoinHostPort(ip.String(), port)
 
-	log.Printf("connecting to node %s at %s", node, nodeAddr)
+	fmt.Printf("connecting to node %s at %s\n", node, nodeAddr)
 
 	// Dial here
 	conn, err := net.Dial("tcp", nodeAddr)
@@ -668,8 +661,6 @@ func (s *GBServer) updateSelfInfo(keyGroup, key string, valueType uint8, value a
 
 	if delta, exists := self.keyValues[MakeDeltaKey(keyGroup, key)]; exists {
 
-		log.Printf("found")
-
 		v, err := encodeValue(valueType, value)
 		if err != nil {
 			return err
@@ -775,7 +766,7 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 
 		for key, value := range n.keyValues {
 			if value.KeyGroup == ADDR_DKG {
-				log.Printf("tcpKey = %v", key)
+				fmt.Printf("tcpKey = %v\n", key)
 
 				if uint16(sizeEstimate+len(key)) > DEFAULT_MAX_DISCOVERY_SIZE {
 					return addrMap, nil
@@ -825,15 +816,13 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 		defer cancel()
 		if err != nil {
-			log.Printf("error in onboardNewJoiner: %v", err)
+			fmt.Printf("error in onboardNewJoiner: %v\n", err)
 		}
-
-		log.Printf("resp ===== in new on board = %s", bytes.msg)
 
 		//log.Printf("response from onboardNewJoiner: %v", string(bytes))
 		err = c.srv.moveToConnected(c.cid, cd.sender)
 		if err != nil {
-			log.Printf("MoveToConnected failed in process info message: %v", err)
+			fmt.Printf("MoveToConnected failed in process info message: %v\n", err)
 		}
 
 		c.srv.incrementNodeConnCount()
@@ -869,7 +858,7 @@ func (s *GBServer) getRandomSeedToDial() (*seedEntry, error) {
 	}
 
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no available seed candidates to connect to")
+		return nil, Errors.ChainGBErrorf(Errors.RandomSeedErr, nil, "seed entry list empty")
 	}
 
 	return candidates[rand.Intn(len(candidates))], nil
@@ -885,11 +874,9 @@ func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 		return conn.(*gbClient), nil
 	}
 
-	log.Printf("No connection to original seed. Falling back to other seeds...")
+	fmt.Printf("No connection to original seed. Falling back to other seeds...\n")
 
 	var candidates []string
-
-	log.Printf("name = %s", s.String())
 
 	if s.isSeed {
 		// Exclude self from candidate list
@@ -1004,7 +991,7 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 	case ERR_RESP:
 		c.processErrResp(message)
 	default:
-		log.Printf("unknown command %v", c.ph.command)
+		fmt.Printf("unknown command %v\n", c.ph.command)
 	}
 
 }
@@ -1016,11 +1003,11 @@ func (c *gbClient) processErr(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil || rsp.ctx.Err() != nil {
-		log.Printf("response channel closed or context expired for reqID %d", reqID)
+		fmt.Printf("response channel closed or context expired for reqID %d\n", reqID)
 		return
 	}
 
@@ -1033,7 +1020,7 @@ func (c *gbClient) processErr(message []byte) {
 	case rsp.err <- msgErr: // Non-blocking
 		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
-		log.Printf("Warning: response channel full for reqID %d", reqID)
+		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 	}
 
 }
@@ -1045,11 +1032,11 @@ func (c *gbClient) processErrResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil || rsp.ctx.Err() != nil {
-		log.Printf("response channel closed or context expired for reqID %d", respID)
+		fmt.Printf("response channel closed or context expired for reqID %d\n", respID)
 		return
 	}
 
@@ -1062,7 +1049,7 @@ func (c *gbClient) processErrResp(message []byte) {
 	case rsp.err <- msgErr: // Non-blocking
 		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
-		log.Printf("Warning: response channel full for respID %d", respID)
+		fmt.Printf("Warning: response channel full for respID %d\n", respID)
 	}
 
 }
@@ -1137,7 +1124,7 @@ func (c *gbClient) processCfgRecon(message []byte) {
 	err = c.sendClusterConfigDelta(fd, name)
 	if err != nil {
 		// TODO Need internal event error here
-		log.Printf("sendClusterConfigDelta failed: %v", err)
+		fmt.Printf("sendClusterConfigDelta failed: %v\n", err)
 	}
 
 	return
@@ -1151,12 +1138,7 @@ func (c *gbClient) processCfgReconResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
-	}
-
-	if rsp == nil {
-		log.Printf("i am nil?")
-		return
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	msg := make([]byte, len(message))
@@ -1165,7 +1147,7 @@ func (c *gbClient) processCfgReconResp(message []byte) {
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		log.Printf("Warning: response channel full for reqID %d", reqID)
+		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
@@ -1175,14 +1157,13 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 
 	tmpC, err := deserialiseDelta(message)
 	if err != nil {
-		log.Printf("deserialise Delta failed: %v", err)
+		fmt.Printf("deserialise Delta failed: %v\n", err)
 		// Send err response
 	}
 
-	// TODO Do we need to do a seed check on ourselves first?
 	err = c.seedSendSelf(tmpC)
 	if err != nil {
-		log.Printf("onboardNewJoiner failed: %v", err)
+		fmt.Printf("onboardNewJoiner failed: %v\n", err)
 	}
 
 	// We have to do this last because we will end up sending back the nodes own info
@@ -1196,7 +1177,7 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 		if _, exists := cm.participants[key]; !exists {
 			err := c.srv.addParticipantFromTmp(key, value)
 			if err != nil {
-				log.Printf("AddParticipantFromTmp failed: %v", err)
+				fmt.Printf("AddParticipantFromTmp failed: %v\n", err)
 				//send err response
 			}
 		}
@@ -1215,7 +1196,7 @@ func (c *gbClient) processSelfInfo(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil {
@@ -1228,7 +1209,7 @@ func (c *gbClient) processSelfInfo(message []byte) {
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		log.Printf("Warning: response channel full for reqID %d", reqID)
+		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
@@ -1241,7 +1222,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	// First de-serialise the discovery request
 	known, err := deserialiseKnownAddressNodes(message)
 	if err != nil {
-		log.Printf("deserialise KnownAddressNodes failed: %v", err)
+		fmt.Printf("deserialise KnownAddressNodes failed: %v\n", err)
 		return
 	}
 
@@ -1258,7 +1239,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	// Echo back the reqID
 	pay, err := prepareRequest(cereal, 1, DISCOVERY_RES, reqID, uint16(0))
 	if err != nil {
-		log.Printf("prepareRequest failed: %v", err)
+		fmt.Printf("prepareRequest failed: %v\n", err)
 	}
 
 	c.mu.Lock()
@@ -1277,7 +1258,7 @@ func (c *gbClient) processDiscoveryRes(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil {
@@ -1291,7 +1272,7 @@ func (c *gbClient) processDiscoveryRes(message []byte) {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for reqID %d", reqID)
+		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
@@ -1304,13 +1285,13 @@ func (c *gbClient) processHandShake(message []byte) {
 
 	tmpC, err := deserialiseDelta(message)
 	if err != nil {
-		log.Printf("deserialise Delta failed: %v", err)
+		fmt.Printf("deserialise Delta failed: %v\n", err)
 		// Send err response
 	}
 
 	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(reqID), 0)
 	if err != nil {
-		log.Printf("prepareSelfInfoSend failed: %v", err)
+		fmt.Printf("prepareSelfInfoSend failed: %v\n", err)
 	}
 
 	c.mu.Lock()
@@ -1321,7 +1302,7 @@ func (c *gbClient) processHandShake(message []byte) {
 		if _, exists := c.srv.clusterMap.participants[key]; !exists {
 			err := c.srv.addParticipantFromTmp(key, value)
 			if err != nil {
-				log.Printf("AddParticipantFromTmp failed: %v", err)
+				fmt.Printf("AddParticipantFromTmp failed: %v\n", err)
 				//send err response
 			}
 		}
@@ -1331,7 +1312,7 @@ func (c *gbClient) processHandShake(message []byte) {
 	// Move the tmpClient to connected as it has provided its info which we have now stored
 	err = c.srv.moveToConnected(c.cid, tmpC.sender)
 	if err != nil {
-		log.Printf("MoveToConnected failed in process info message: %v", err)
+		fmt.Printf("MoveToConnected failed in process info message: %\n", err)
 	}
 
 	// TODO Monitor the server lock here and be mindful
@@ -1349,7 +1330,7 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil {
@@ -1363,7 +1344,7 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for reqID %d", reqID)
+		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
@@ -1377,11 +1358,11 @@ func (c *gbClient) processOK(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil || rsp.ctx.Err() != nil {
-		log.Printf("response channel closed or context expired for reqID %d", reqID)
+		fmt.Printf("response channel closed or context expired for reqID %d\n", reqID)
 		return
 	}
 
@@ -1392,7 +1373,7 @@ func (c *gbClient) processOK(message []byte) {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for reqID %d", reqID)
+		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
@@ -1406,7 +1387,7 @@ func (c *gbClient) processOKResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil {
@@ -1420,7 +1401,7 @@ func (c *gbClient) processOKResp(message []byte) {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		log.Printf("Warning: response channel full for respID %d", respID)
+		fmt.Printf("Warning: response channel full for respID %d\n", respID)
 		return
 	}
 
@@ -1438,34 +1419,39 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	sender, d, err := deSerialiseDigest(message)
 	if err != nil {
-		log.Printf("error serialising digest - %v", err)
+		fmt.Printf("error serialising digest - %v\n", err)
 	}
 
 	senderName := sender
 
 	err = c.srv.recordPhi(senderName)
 	if err != nil {
-		log.Printf("recordPhi failed: %v", err)
+		fmt.Printf("recordPhi failed: %v\n", err)
 	}
 
-	//Does the sending node need to defer?
-	//If it does - then we must construct an error response, so it can exit out of it's round
-	deferGossip, err := c.srv.deferGossipRound(senderName)
-	if err != nil {
-		log.Printf("error deferring gossip - %v", err)
-		return
-	}
+	// Big lesson here (which is why I'm leaving it in):
+	// When two nodes attempt to gossip with each other at the same time - I was trying to implement a defer mechanic
+	// The node with the highest timestamp wins and makes the other defer by sending an error
+	// This would randomly cause gossip round durations to spike and after a while the two nodes would get locked
+	// in a context deadline loop
+	// Lesson = Let the damn nodes gossip boi
 
-	if deferGossip {
-		c.sendErr(c.ph.reqID, uint16(0), Errors.GossipDeferredErr.Net())
-		return
-	}
+	//deferGossip, err := c.srv.deferGossipRound(senderName)
+	//if err != nil {
+	//	fmt.Printf("error deferring gossip - %v\n", err)
+	//	return
+	//}
+	//
+	//if deferGossip {
+	//	c.sendErr(c.ph.reqID, uint16(0), Errors.GossipDeferredErr.Net())
+	//	return
+	//}
 
 	srv := c.srv
 
 	err = c.sendGossSynAck(srv.ServerName, d)
 	if err != nil {
-		log.Printf("sendGossSynAck failed: %v", err)
+		fmt.Printf("sendGossSynAck failed: %v\n", err)
 	}
 
 	return
@@ -1480,7 +1466,7 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil {
@@ -1493,7 +1479,7 @@ func (c *gbClient) processGossSynAck(message []byte) {
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		log.Printf("Warning: response channel full for reqID %d", c.ph.reqID)
+		fmt.Printf("Warning: response channel full for reqID %d\n", c.ph.reqID)
 		return
 	}
 
@@ -1507,11 +1493,11 @@ func (c *gbClient) processGossAck(message []byte) {
 
 	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
-		log.Printf("getResponseChannel failed: %v", err)
+		fmt.Printf("getResponseChannel failed: %v\n", err)
 	}
 
 	if rsp == nil {
-		log.Printf("[WARN] No response channel found for respID %d", respID)
+		fmt.Printf("[WARN] No response channel found for respID %d\n", respID)
 		return
 	}
 
@@ -1521,7 +1507,7 @@ func (c *gbClient) processGossAck(message []byte) {
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		log.Printf("Warning: response channel full for respID %d", respID)
+		fmt.Printf("Warning: response channel full for respID %d\n", respID)
 		return
 	}
 

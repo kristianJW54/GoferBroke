@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
-	"log"
 	"testing"
 )
 
@@ -12,7 +11,7 @@ func TestGBErrors(t *testing.T) {
 	// Step 1: Create deepest GBError
 	base := Errors.GossipDeferredErr
 
-	log.Println("base = ", base)
+	fmt.Println("base = ", base)
 
 	// Step 3: Chain a formatted GBError on top (ConfigChecksumFailErr)
 	top := Errors.ChainGBErrorf(
@@ -22,14 +21,14 @@ func TestGBErrors(t *testing.T) {
 	)
 
 	// Step 4: Print result
-	log.Println(top.Error())
+	fmt.Println(top.Error())
 
 	// Step 5: Extract and parse
 	errs := Errors.ExtractGBErrors(top)
 	gbErrs := Errors.UnwrapGBErrors(errs)
 
 	for i, g := range gbErrs {
-		log.Printf("Parsed %d: %+v", i, g)
+		fmt.Printf("Parsed %d: %+v\n", i, g)
 	}
 }
 
@@ -40,14 +39,14 @@ func TestGBErrorSandwichWrap(t *testing.T) {
 
 	wantErrCount := 3
 
-	log.Println("Full Error Output:\n", err2)
+	fmt.Println("Full Error Output:\n", err2)
 
 	_ = Errors.HandleError(err2, func(gbErrors []*Errors.GBError) error {
 		if len(gbErrors) != wantErrCount {
 			return fmt.Errorf("expected %d GB errors, got %d", wantErrCount, len(gbErrors))
 		}
 		for _, gbErr := range gbErrors {
-			log.Printf("gbErr: %+v\n", gbErr)
+			fmt.Printf("gbErr: %+v\n", gbErr)
 		}
 		return nil
 	})
@@ -69,24 +68,24 @@ func TestWrappedErrorConfigExample(t *testing.T) {
 		checksum1, checksum2, checksum3,
 	)
 
-	log.Println(testErr.Error())
+	fmt.Println(testErr.Error())
 
 	errs := Errors.ExtractGBErrors(testErr)
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 GBError, got %d", len(errs))
 	}
 
-	log.Printf("error extracted = %v", errs[0])
+	fmt.Printf("error extracted = %v\n", errs[0])
 
 	finalErr := Errors.UnwrapGBErrors(errs)
 
-	log.Println(finalErr[0])
+	fmt.Println(finalErr[0])
 
 	handledErr := Errors.HandleError(testErr, func(gbErrors []*Errors.GBError) error {
 
 		for _, gbError := range gbErrors {
 			if errors.Is(gbError, Errors.ConfigChecksumFailErr) {
-				log.Printf("found the error I was looking for :)")
+				fmt.Printf("found the error I was looking for :)\n")
 				// Do something
 				return gbError
 			}
@@ -96,7 +95,7 @@ func TestWrappedErrorConfigExample(t *testing.T) {
 
 	})
 
-	log.Println(handledErr)
+	fmt.Println(handledErr)
 
 }
 
@@ -105,20 +104,20 @@ func TestWrapAndFmtError(t *testing.T) {
 	err2 := fmt.Errorf("calling from test: %w", err1)
 
 	help := errors.Unwrap(err2)
-	log.Println(help)
+	fmt.Println(help)
 
 	// Use Chain, not Wrap
 	err3 := Errors.ChainGBErrorf(Errors.ConfigChecksumFailErr, help, "")
 
-	log.Printf("error 3 %s", err3.Error())
+	fmt.Printf("error 3 %s\n", err3.Error())
 
 	err4 := Errors.ChainGBErrorf(Errors.NodeNotFoundErr, err3, "hello :)")
 
-	log.Printf("full error = %s", err4)
+	fmt.Printf("full error = %s\n", err4)
 
 	_ = Errors.HandleError(err4, func(chain []*Errors.GBError) error {
 		for _, ge := range chain {
-			log.Printf("found an error --> %v", ge)
+			fmt.Printf("found an error --> %v\n", ge)
 		}
 		return nil
 	})

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"github.com/kristianJW54/GoferBroke/internal/cluster"
-	"log"
 	"net"
 )
 
@@ -115,7 +114,7 @@ func (cc *ClusterConfig) InitConfig() error {
 
 	cc.config = cfg
 
-	log.Printf("seeds = %+v", cc.SeedServers)
+	fmt.Printf("seeds = %+v\n", cc.SeedServers)
 
 	return nil
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"testing"
 	"time"
 )
@@ -171,7 +170,7 @@ func TestAsyncErrorEvent(t *testing.T) {
 	// Monitor stop
 	select {
 	case <-wait:
-		log.Println("error received, stopping process")
+		fmt.Println("error received, stopping process")
 		processStopped = true
 		return
 	case <-ctx.Done():

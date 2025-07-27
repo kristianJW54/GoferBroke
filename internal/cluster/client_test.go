@@ -45,18 +45,15 @@ package cluster
 //	hdr[0] = deltaMessage[0]
 //	offset += 1
 //	binary.BigEndian.PutUint16(hdr[offset:], uint16(len(deltaMessage)))
-//	log.Printf("length of deltaMessage: %v\n", uint16(len(deltaMessage)))
 //	offset += 2
 //	// Adding in key length
 //	hdr[offset] = uint8(len(key))
-//	log.Printf("key length: %d\n", len(key))
 //	offset += 1
 //	// Adding in value length
 //	binary.BigEndian.PutUint16(hdr[offset:], uint16(len(value)))
 //	offset += 2
 //	copy(hdr[len(hdr)-2:], "\r\n") // Adding CLRF at the end
 //	offset += 2
-//	log.Printf("header 1 = %v", hdr)
 //	formattedMessage := append(hdr, []byte(deltaMessage)...)
 //
 //	// Send the message over the connection
@@ -84,7 +81,6 @@ package cluster
 //	offset2 += 2
 //	copy(hdr2[len(hdr2)-2:], "\r\n") // Adding CLRF at the end
 //	offset2 += 2
-//	log.Printf("header 1 = %v", hdr2)
 //	formattedMessage2 := append(hdr2, []byte(deltaMessage2)...)
 //
 //	//time.Sleep(1 * time.Second)

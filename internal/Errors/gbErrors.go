@@ -3,7 +3,6 @@ package Errors
 import (
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -315,7 +314,7 @@ func RecoverFromPanic() error {
 	if r := recover(); r != nil {
 		// Convert the recovered panic into a structured GBError
 		sysErr := WrapSystemError(fmt.Errorf("panic recovered: %v", r))
-		log.Println("Recovered from panic:", sysErr) // Optional logging
+		fmt.Println("Recovered from panic:", sysErr) // Optional logging
 		return sysErr
 	}
 	return nil
@@ -366,6 +365,10 @@ const (
 	ADDING_CONFIG_UPDATE_SELF         = 74
 	WANT_CONFIG_GROUP                 = 75
 	CONFIG_DIGEST_CODE                = 76
+	RANDOM_SEED_CODE                  = 77
+	GET_NODE_CONN_CODE                = 78
+	RESOLVE_SEED_ADDR_CODE            = 79
+	DECODE_DELTA_CODE                 = 80
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -409,9 +412,13 @@ var KnownInternalErrors = map[int]*GBError{
 	CONNECT_TO_SEED_CODE:              &GBError{Code: CONNECT_TO_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "connecting to seed error"},
 	GET_CONFIG_DELTAS_FOR_RECON_CODE:  &GBError{Code: GET_CONFIG_DELTAS_FOR_RECON_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error finding config deltas above version"},
 	SERIALISE_DELTA_CODE:              &GBError{Code: SERIALISE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "serialise delta failed"},
-	ADDING_CONFIG_UPDATE_SELF:         &GBError{Code: ADDING_CONFIG_UPDATE_SELF, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to update own config from GSA Update"},
+	ADDING_CONFIG_UPDATE_SELF:         &GBError{Code: ADDING_CONFIG_UPDATE_SELF, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to update own config"},
 	WANT_CONFIG_GROUP:                 &GBError{Code: WANT_CONFIG_GROUP, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "should receive a config group delta"},
 	CONFIG_DIGEST_CODE:                &GBError{Code: CONFIG_DIGEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "sending config digest failed"},
+	RANDOM_SEED_CODE:                  &GBError{Code: RANDOM_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to generate random seed"},
+	GET_NODE_CONN_CODE:                &GBError{Code: GET_NODE_CONN_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to get node from nodeConnStore"},
+	RESOLVE_SEED_ADDR_CODE:            &GBError{Code: RESOLVE_SEED_ADDR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to resolve seed address"},
+	DECODE_DELTA_CODE:                 &GBError{Code: DECODE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to decode delta"},
 }
 
 var (
@@ -436,6 +443,10 @@ var (
 	SelfConfigUpdateErr     = KnownInternalErrors[ADDING_CONFIG_UPDATE_SELF]
 	ConfigGroupErr          = KnownInternalErrors[WANT_CONFIG_GROUP]
 	ConfigDigestErr         = KnownInternalErrors[CONFIG_DIGEST_CODE]
+	RandomSeedErr           = KnownInternalErrors[RANDOM_SEED_CODE]
+	NodeConnStoreErr        = KnownInternalErrors[GET_NODE_CONN_CODE]
+	ResolveSeedAddrErr      = KnownInternalErrors[RESOLVE_SEED_ADDR_CODE]
+	DecodeDeltaErr          = KnownInternalErrors[DECODE_DELTA_CODE]
 )
 
 var (

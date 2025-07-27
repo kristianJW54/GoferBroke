@@ -2,45 +2,174 @@ package cluster
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
-	"log"
-	"net"
+	"strings"
 	"testing"
 	"time"
 )
 
+// Test Ready ✅
 func TestServerNameLengthError(t *testing.T) {
 
-	lc := net.ListenConfig{}
+	nodeCfg := `
+				Name = "iamaverylongnamewhichshouldneverbeallowedtobeconfiguredbecauseigetauuidanywaysonowimjustbeinggreedy"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True	
+				}
 
-	ip := "127.0.0.1" // Use the full IP address
-	port := "8081"
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
 
-	// Initialize config with the seed server address
-	config := &GbClusterConfig{
-		SeedServers: []*Seeds{
-			{
-				Host: ip,
-				Port: port,
-			},
-		},
-		Cluster: &ClusterOptions{
-			ClusterNetworkType: C_LOCAL,
-		},
-	}
-
-	nodeConfig := &GbNodeConfig{
-		Internal: &InternalOptions{},
-	}
-
-	_, err := NewServer("test-server", config, nil, nodeConfig, "localhost", "8081", "8080", lc)
+	_, err := NewServerFromConfigString(nodeCfg, cfg)
 	if err == nil {
-		t.Errorf("TestServerNameLengthError should have returned an error")
+		t.Errorf("expected error of exceed name length")
+		return
+	}
+}
+
+// Test Ready ✅
+func TestNewServerFunction(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+				}
+
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
 	}
 
-	log.Printf("error = %v", err)
+	if gbs.addr != "localhost:8081" {
+		t.Errorf("expected bound TCP address to be localhost:8081")
+	}
+
+	if !gbs.isSeed {
+		t.Errorf("expected isSeed to be true")
+	}
+
+	if gbs.gbClusterConfig.Cluster.ClusterNetworkType != C_LOCAL {
+		t.Errorf("expected ClusterNetworkType to be 4 got %d", gbs.gbClusterConfig.Cluster.ClusterNetworkType)
+	}
 
 }
+
+// Test Ready ✅
+func TestWrongServerMode(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+
+				// We should error here because we are saying we are not a seed but we have the same seed addr in cluster config
+				IsSeed = False
+
+				Internal { 
+					DisableGossip = True
+					DisableStartupMessage = True
+				}
+
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	_, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err == nil {
+		t.Errorf("expected an error")
+	} else {
+		if !strings.Contains(err.Error(), "server is NOT configured as a seed, but matches a listed seed address — change config to mark it as a seed OR use a different address") {
+			t.Errorf("expected error to contain 'invalid server mode', got: %v", err)
+		}
+	}
+
+}
+
+// Test Ready ✅
+func TestServerStartup(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+					LogToBuffer = False
+				}
+
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs.StartServer()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if gbs.nodeListener == nil {
+		t.Errorf("node listener was not created")
+	}
+	if gbs.ServerName == "" {
+		t.Errorf("server name was not created")
+	}
+	if gbs.flags.isSet(SHUTTING_DOWN) {
+		t.Errorf("expected server to not be shutting down during start")
+	}
+
+	gbs.Shutdown()
+
+}
+
+func TestDialSeed(t *testing.T) {}
+
+func TestInitParticipant(t *testing.T) {}
+
+// Live Unit Tests
 
 func TestServerRunningTwoNodes(t *testing.T) {
 
@@ -94,37 +223,15 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	for k, v := range gbs.clusterMap.participants {
-		log.Printf("name = %s", k)
+		fmt.Printf("name = %s\n", k)
 		for k, value := range v.keyValues {
-			log.Printf("%s-%+s", k, value.Value)
+			fmt.Printf("%s-%+s\n", k, value.Value)
 		}
 	}
 
 	gbs.logActiveGoRoutines()
 	gbs2.logActiveGoRoutines()
 	//gbs3.logActiveGoRoutines()
-
-}
-
-func TestRandomNodeSelection(t *testing.T) {
-
-	partArray := []string{
-		"part-1",
-		"part-2",
-		"part-3",
-		"part-4",
-	}
-
-	ns := 2
-
-	indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, partArray[0])
-	if err != nil {
-		t.Errorf("%v", err)
-	}
-
-	for _, index := range indexes {
-		log.Printf("part selected = %s", partArray[index])
-	}
 
 }
 
@@ -265,11 +372,11 @@ func TestServerShutDownConfigUpdate(t *testing.T) {
 	select {
 	case err := <-gbs2.fatalErrorCh:
 		if err != nil {
-			log.Printf("%v", err)
+			fmt.Printf("%v\n", err)
 		}
 	case err := <-gbs.fatalErrorCh:
 		if err != nil {
-			log.Printf("%v", err)
+			fmt.Printf("%v\n", err)
 		}
 	case <-time.After(5 * time.Second):
 		gbs.Shutdown()

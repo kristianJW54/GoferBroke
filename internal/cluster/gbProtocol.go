@@ -78,8 +78,6 @@ func (nph *nodePacketHeader) serializeHeader() ([]byte, error) {
 	header[10] = '\r'
 	header[11] = '\n'
 
-	//log.Println("Header:", header)
-
 	return header, nil
 
 }

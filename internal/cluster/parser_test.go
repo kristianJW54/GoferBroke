@@ -1,7 +1,7 @@
 package cluster
 
 import (
-	"log"
+	"fmt"
 	"testing"
 )
 
@@ -50,7 +50,7 @@ func TestParser(t *testing.T) {
 		parser: p,
 	}
 
-	log.Printf("FULL LENGTH = %v", len(testGSA))
+	fmt.Printf("FULL LENGTH = %v\n", len(testGSA))
 
 	testPacket := testGSA
 
@@ -65,9 +65,9 @@ func TestParser(t *testing.T) {
 	packets := [][]byte{broken1, broken2, broken3}
 
 	for i, packet := range packets {
-		log.Printf("---- PACKET %d ----", i)
+		fmt.Printf("---- PACKET %d ----\n", i)
 		c.ParsePacket(packet)
-		log.Printf("state --> %v", c.parser.state)
+		fmt.Printf("state --> %v\n", c.parser.state)
 	}
 }
 
