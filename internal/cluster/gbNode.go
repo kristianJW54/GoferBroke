@@ -666,8 +666,9 @@ func (s *GBServer) updateSelfInfo(keyGroup, key string, valueType uint8, value a
 			return err
 		}
 
-		//self.pm.Lock()
+		self.pm.Lock()
 		delta.Value = v
+
 		if delta.KeyGroup == CONFIG_DKG {
 			err := s.updateClusterConfigDeltaAndSelf(delta.Key, delta)
 			if err != nil {
@@ -677,7 +678,7 @@ func (s *GBServer) updateSelfInfo(keyGroup, key string, valueType uint8, value a
 		} else {
 			delta.Version = time.Now().Unix()
 		}
-		//self.pm.Unlock()
+		self.pm.Unlock()
 
 		return nil
 

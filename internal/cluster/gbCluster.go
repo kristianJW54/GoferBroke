@@ -515,7 +515,6 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 								participant.pm.Unlock()
 
 								// Event call for new delta added
-								// TODO We could use this to build an update rate and inform gossip interval times?
 								s.DispatchEvent(Event{
 									EventType: NewDeltaAdded,
 									Time:      time.Now().Unix(),
@@ -523,7 +522,7 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 										DeltaKey:   k,
 										DeltaValue: bytes.Clone(v.Value),
 									},
-									Message: "New delta added",
+									Message: "New delta added", // Using this string in server test - careful if changing
 								})
 								return nil
 							}

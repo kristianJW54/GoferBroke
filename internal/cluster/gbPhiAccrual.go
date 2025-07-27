@@ -187,8 +187,6 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
 		if !s.phi.phiOK || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
-
-			fmt.Printf("waiting for gossip signal...\n")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
 
 		}

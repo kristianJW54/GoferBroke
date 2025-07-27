@@ -214,8 +214,9 @@ type GBServer struct {
 	discoveryPhase  bool
 
 	//Events
-	event        *EventDispatcher
-	fatalErrorCh chan error
+	pendingHandlerRegs []HandlerRegistrationFunc
+	event              *EventDispatcher
+	fatalErrorCh       chan error
 
 	flags serverFlags
 
@@ -405,8 +406,9 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		clientTCPAddr:    clientAddr,
 		reachability:     1, // TODO : Yet to implement
 
-		event:        ed,
-		fatalErrorCh: make(chan error, 1),
+		pendingHandlerRegs: make([]HandlerRegistrationFunc, 0, 2),
+		event:              ed,
+		fatalErrorCh:       make(chan error, 1),
 
 		listenConfig:        lc,
 		ServerContext:       ctx,
@@ -908,12 +910,13 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 	p.keyValues[MakeDeltaKey(reachDelta.KeyGroup, reachDelta.Key)] = reachDelta
 
 	// Add the _NODE_CONNS_ delta
-	numNodeConnBytes := make([]byte, 1)
-	numNodeConnBytes[0] = 0
+	numConns := uint16(0)
+	numNodeConnBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(numNodeConnBytes, numConns)
 	nodeConnsDelta := &Delta{
 		KeyGroup:  SYSTEM_DKG,
 		Key:       _NODE_CONNS_,
-		ValueType: D_INT_TYPE,
+		ValueType: D_UINT16_TYPE,
 		Version:   t,
 		Value:     numNodeConnBytes,
 	}
@@ -945,7 +948,7 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 //=======================================================
 
 // AcceptLoop sets up a context and listener and then calls an internal acceptConnections method
-func (s *GBServer) AcceptLoop(name string) {
+func (s *GBServer) AcceptLoop(name string) error {
 
 	s.serverLock.Lock()
 
@@ -954,24 +957,22 @@ func (s *GBServer) AcceptLoop(name string) {
 
 	l, err := s.listenConfig.Listen(s.ServerContext, s.clientTCPAddr.Network(), s.clientTCPAddr.String())
 	if err != nil {
-		fmt.Printf("Error creating listener: %s\n", err)
+		return err
 	}
 
 	// Add listener to the server
 	s.listener = l
 
 	// Can begin go-routine for accepting connections
-	go s.acceptConnection(l, "client-test",
+	go s.acceptConnection(l, "client-loop",
 		func(conn net.Conn) {
 			s.createClient(conn, CLIENT)
 		},
 		func(err error) bool {
 			select {
 			case <-ctx.Done():
-				//log.Println("accept loop context canceled -- exiting loop")
 				return true
 			default:
-				//log.Printf("accept loop context error -- %s\n", err)
 				return false
 			}
 		})
@@ -981,9 +982,10 @@ func (s *GBServer) AcceptLoop(name string) {
 	s.logger.Info("client accept loop started",
 		slog.Time("time", time.Now()),
 		slog.String("listener address", s.clientTCPAddr.String()))
-}
 
-//TODO Figure out how to manage routines and shutdown signals
+	return nil
+
+}
 
 // AcceptNodeLoop sets up a context and listener and then calls an internal acceptConnection method
 func (s *GBServer) AcceptNodeLoop(name string) error {
@@ -991,21 +993,17 @@ func (s *GBServer) AcceptNodeLoop(name string) error {
 	s.serverLock.Lock()
 
 	ctx, cancel := context.WithCancel(s.ServerContext)
-	defer cancel() //TODO Need to think about context cancel for connection handling and retry logic/node disconnect
-
-	//log.Printf("Starting node accept loop -- %s\n", name)
-
-	//log.Printf("Creating node listener on %s\n", s.nodeTCPAddr.String())
+	defer cancel()
 
 	nl, err := s.listenConfig.Listen(s.ServerContext, s.boundTCPAddr.Network(), s.boundTCPAddr.String())
 	if err != nil {
-		return err // TODO Need GBError here
+		return err
 	}
 
 	s.nodeListener = nl
 
 	s.startGoRoutine(s.PrettyName(), "accept-connection routine", func() {
-		s.acceptConnection(nl, "node-test",
+		s.acceptConnection(nl, "node-loop",
 			func(conn net.Conn) {
 				s.createNodeClient(conn, "node-client", false, NODE)
 			},
@@ -1014,7 +1012,6 @@ func (s *GBServer) AcceptNodeLoop(name string) error {
 				case <-ctx.Done():
 					return true
 				default:
-					//log.Printf("accept loop context error -- %s\n", err)
 					return false
 				}
 			})
@@ -1030,7 +1027,6 @@ func (s *GBServer) AcceptNodeLoop(name string) error {
 
 	if !s.isSeed || len(s.gbClusterConfig.SeedServers) > 1 {
 		// If we're not the original (seed) node, connect to the seed server
-		//go s.connectToSeed()
 		s.startGoRoutine(s.PrettyName(), "connect to seed routine", func() {
 			err := s.connectToSeed()
 			if err != nil {
@@ -1097,6 +1093,12 @@ func (s *GBServer) registerAndStartInternalHandlers() error {
 
 	defer s.startupSync.Done()
 
+	for _, reg := range s.pendingHandlerRegs {
+		if err := reg(s); err != nil {
+			s.logger.Error("failed to register external handler", "err", err)
+		}
+	}
+
 	errCtx := &errorContext{
 		s.ServerContext,
 		&errorController{s: s},
@@ -1116,6 +1118,12 @@ func (s *GBServer) registerAndStartInternalHandlers() error {
 	}
 
 	// Next handler process here
+
+	//if _, err := s.AddHandler(s.ServerContext, NewDeltaAdded, true, func(event Event) error {
+	//	return s.event.HandleDeltaAddedEvent(event)
+	//}); err != nil {
+	//	return err
+	//}
 
 	//--
 
@@ -1184,6 +1192,13 @@ func (s *GBServer) releaseReqID(id uint16) {
 func (s *GBServer) incrementNodeConnCount() {
 	// Atomically increment node connections
 	atomic.AddInt64(&s.numNodeConnections, 1)
+
+	// Update our delta also
+	err := s.updateSelfInfo(SYSTEM_DKG, _NODE_CONNS_, D_UINT16_TYPE, uint16(s.numNodeConnections))
+	if err != nil {
+		s.logger.Error("error updating our delta node count", "err", err)
+	}
+
 	// Check and update gossip condition
 	s.checkGossipCondition()
 }
@@ -1193,6 +1208,12 @@ func (s *GBServer) incrementNodeConnCount() {
 func (s *GBServer) decrementNodeConnCount() {
 	// Atomically decrement node connections
 	atomic.AddInt64(&s.numNodeConnections, -1)
+
+	// Update our delta also
+	err := s.updateSelfInfo(SYSTEM_DKG, _NODE_CONNS_, D_UINT16_TYPE, uint16(s.numNodeConnections))
+	if err != nil {
+		s.logger.Error("error updating our delta node count", "err", err)
+	}
 	// Check and update gossip condition
 	s.checkGossipCondition()
 }

@@ -2,8 +2,9 @@ package cluster
 
 import (
 	"bytes"
-	"fmt"
+	"encoding/binary"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,7 @@ func TestWrongServerMode(t *testing.T) {
 				Internal { 
 					DisableGossip = True
 					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
@@ -165,76 +167,258 @@ func TestServerStartup(t *testing.T) {
 
 }
 
-func TestDialSeed(t *testing.T) {}
+// Test Ready ✅
+func TestInitParticipant(t *testing.T) {
 
-func TestInitParticipant(t *testing.T) {}
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
 
-// Live Unit Tests
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
 
-func TestServerRunningTwoNodes(t *testing.T) {
-
-	clusterPath := "../../Configs/cluster/default_cluster_config.conf"
-
-	seedFilePath := "../../Configs/node/basic_seed_config.conf"
-	nodeFilePath := "../../Configs/node/basic_node_config.conf"
-
-	//	node3Cfg := `
-	//			Name = "node-3"
-	//			Host = "localhost"
-	//			Port = "8083"
-	//			IsSeed = False`
-	//
-	//	cfg := `Name = "default-local-cluster"
-	//SeedServers = [
-	//    {Host: "localhost", Port: "8081"},
-	//]
-	//Cluster {
-	//    ClusterNetworkType = "LOCAL"
-	//    NodeSelectionPerGossipRound = 1
-	//}`
-	//
-	//	gbs3, err := NewServerFromConfigString(node3Cfg, cfg)
-	//	if err != nil {
-	//		t.Error(err)
-	//	}
-
-	gbs, err := NewServerFromConfigFile(seedFilePath, clusterPath)
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
 	if err != nil {
-		t.Errorf("%v", err)
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	p, _ := gbs.initSelfParticipant()
+
+	if _, exists := p.keyValues[MakeDeltaKey(ADDR_DKG, _ADDRESS_)]; !exists {
+		t.Errorf("expected to find address key initialised")
+	}
+	if name, exists := p.keyValues[MakeDeltaKey(CONFIG_DKG, "Name")]; !exists {
+		t.Errorf("expected to find cluster config key initialised")
+	} else if string(name.Value) != "default-local-cluster" {
+		t.Errorf("expected cluster config key to be default-local-cluster")
+	}
+
+}
+
+// Test Ready ✅
+func TestIncrementNodeConnCount(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	selfInfo, err := gbs.initSelfParticipant()
+	if err != nil {
 		return
 	}
-	gbs2, err := NewServerFromConfigFile(nodeFilePath, clusterPath)
+	gbs.clusterMap = *initClusterMap(gbs.ServerName, gbs.boundTCPAddr, selfInfo)
+
+	gbs.incrementNodeConnCount()
+
+	connCount := gbs.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(SYSTEM_DKG, _NODE_CONNS_)].Value
+
+	if binary.BigEndian.Uint16(connCount) != uint16(1) {
+		t.Errorf("expected connection count to be 1, got %d", connCount)
+	}
+
+	gbs.incrementNodeConnCount()
+	gbs.incrementNodeConnCount()
+	gbs.incrementNodeConnCount()
+
+	connCount = gbs.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(SYSTEM_DKG, _NODE_CONNS_)].Value
+	if binary.BigEndian.Uint16(connCount) != 4 {
+		t.Errorf("expected connection count to be 4, got %d", binary.BigEndian.Uint16(connCount))
+	}
+
+}
+
+// Test Ready ✅
+func TestDecreaseNodeConnCount(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
 	if err != nil {
-		t.Errorf("%v", err)
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	selfInfo, err := gbs.initSelfParticipant()
+	if err != nil {
 		return
+	}
+	gbs.clusterMap = *initClusterMap(gbs.ServerName, gbs.boundTCPAddr, selfInfo)
+
+	gbs.incrementNodeConnCount()
+	gbs.incrementNodeConnCount()
+	gbs.incrementNodeConnCount()
+	gbs.incrementNodeConnCount()
+
+	gbs.decrementNodeConnCount()
+
+	count := gbs.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(SYSTEM_DKG, _NODE_CONNS_)].Value
+	if binary.BigEndian.Uint16(count) != uint16(3) {
+		t.Errorf("expected connection count to be 3, got %d", count)
+	}
+	if gbs.numNodeConnections != 3 {
+		t.Errorf("expected number of connections to be 3, got %d", gbs.numNodeConnections)
+	}
+
+}
+
+// Test Ready ✅
+func TestUpdateHeartBeat(t *testing.T) {
+
+	keyValues := map[string]*Delta{
+		"system:heartbeat": &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
+		"system:tcp":       &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
+	}
+
+	// Initialize config with the seed server address
+	gbs := GenerateDefaultTestServer("test-1", keyValues, 0)
+
+	self := gbs.GetSelfInfo()
+
+	oldHeartBeat := self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version
+
+	err := gbs.updateHeartBeat(time.Now().Unix())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	newHeartBeat := self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version
+
+	if newHeartBeat == oldHeartBeat {
+		t.Errorf("new heart beat version not updated")
+	}
+
+}
+
+//==============================
+// Live Unit Tests
+//==============================
+
+// Test Ready ✅
+func TestServerRunningTwoNodes(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
 	}
 
 	go gbs.StartServer()
-	time.Sleep(1 * time.Second)
 	go gbs2.StartServer()
-	//go gbs3.StartServer()
 
 	time.Sleep(5 * time.Second)
 
 	gbs2.Shutdown()
-	//gbs3.Shutdown()
-	//time.Sleep(1 * time.Second)
 	gbs.Shutdown()
-	time.Sleep(1 * time.Second)
 
-	for k, v := range gbs.clusterMap.participants {
-		fmt.Printf("name = %s\n", k)
-		for k, value := range v.keyValues {
-			fmt.Printf("%s-%+s\n", k, value.Value)
+	time.Sleep(100 * time.Millisecond)
+
+	// Test
+
+	if node2, exists := gbs.clusterMap.participants[gbs2.ServerName]; !exists {
+		t.Errorf("expected to have %s in %s's ClusterMap", gbs2.name, gbs.name)
+	} else {
+		addr := node2.keyValues[MakeDeltaKey(ADDR_DKG, _ADDRESS_)].Value
+		if string(addr) != "localhost:8082" {
+			t.Errorf("expected address to be localhost:8082, got %s", string(addr))
 		}
 	}
 
-	gbs.logActiveGoRoutines()
-	gbs2.logActiveGoRoutines()
-	//gbs3.logActiveGoRoutines()
-
 }
 
+// Test Ready ✅
 func TestServerShutDownConfigFail(t *testing.T) {
 
 	nodeCfg := `
@@ -244,6 +428,8 @@ func TestServerShutDownConfigFail(t *testing.T) {
 				IsSeed = True
 				Internal {
 					DisableGossip = True	
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
@@ -254,7 +440,8 @@ func TestServerShutDownConfigFail(t *testing.T) {
 				Port = "8082"
 				IsSeed = False
 				Internal {
-					DisableGossip = True	
+					DisableGossip = True
+					DisableStartupMessage = True
 				}
 
 `
@@ -320,73 +507,7 @@ func TestServerShutDownConfigFail(t *testing.T) {
 
 }
 
-func TestServerShutDownConfigUpdate(t *testing.T) {
-
-	nodeCfg := `
-				Name = "node-1"
-				Host = "localhost"
-				Port = "8081"
-				IsSeed = True
-				Internal {
-					DisableGossip = True	
-				}
-
-`
-
-	node2Cfg := `
-				Name = "node-2"
-				Host = "localhost"
-				Port = "8082"
-				IsSeed = False
-				Internal {
-					DisableGossip = True	
-				}
-
-`
-
-	cfg := `Name = "default-local-cluster"
-	SeedServers = [
-	   {Host: "localhost", Port: "8081"},
-	]
-	Cluster {
-	   ClusterNetworkType = "LOCAL"
-	   NodeSelectionPerGossipRound = 1
-	}`
-
-	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
-	if err != nil {
-		t.Errorf("%v", err)
-	}
-
-	gbs2, err := NewServerFromConfigString(node2Cfg, cfg)
-	if err != nil {
-		t.Errorf("%v", err)
-	}
-
-	gbs.StartServer()
-	time.Sleep(1 * time.Second)
-	gbs.gbClusterConfig.Name = "new-cluster-name"
-	time.Sleep(1 * time.Second)
-	gbs2.StartServer()
-
-	select {
-	case err := <-gbs2.fatalErrorCh:
-		if err != nil {
-			fmt.Printf("%v\n", err)
-		}
-	case err := <-gbs.fatalErrorCh:
-		if err != nil {
-			fmt.Printf("%v\n", err)
-		}
-	case <-time.After(5 * time.Second):
-		gbs.Shutdown()
-		gbs2.Shutdown()
-	}
-
-	// gbs2 config check should now be updated to gbs config
-
-}
-
+// Test Ready ✅
 func TestServerUpdateSelfConfig(t *testing.T) {
 
 	nodeCfg := `
@@ -396,6 +517,8 @@ func TestServerUpdateSelfConfig(t *testing.T) {
 				IsSeed = True
 				Internal {
 					DisableGossip = True	
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
@@ -446,6 +569,100 @@ func TestServerUpdateSelfConfig(t *testing.T) {
 
 }
 
-//======================================================
-// Testing gossip with different states for nodes
-//======================================================
+// Test Ready ✅
+func TestServerNewDeltaEvent(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+
+	gbs2.AddHandlerRegistration(func(s *GBServer) error {
+		_, err := s.AddHandler(s.ServerContext, NewDeltaAdded, false, func(event Event) error {
+
+			if delta, ok := event.Payload.(*DeltaAddedEvent); !ok {
+				t.Errorf("expected delta event of type DeltaAdded")
+			} else {
+
+				if delta.DeltaKey != "test:also-a-test" {
+					t.Errorf("expected delta.Key to be also-a-test, got %s", delta.DeltaKey)
+				}
+
+			}
+			return nil
+		})
+		return err
+	})
+
+	time.Sleep(100 * time.Millisecond)
+
+	go gbs2.StartServer()
+
+	time.Sleep(2 * time.Second)
+	newDelta := &Delta{
+		KeyGroup:  "test",
+		Key:       "also-a-test",
+		Version:   time.Now().Unix(),
+		ValueType: D_BYTE_TYPE,
+		Value:     []byte{},
+	}
+	self := gbs.GetSelfInfo()
+	err = self.Store(newDelta)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	time.Sleep(3 * time.Second)
+
+	gbs2.Shutdown()
+	gbs.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if d, exists := gbs2.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey("test", "also-a-test")]; !exists {
+		t.Errorf("expected to have found delta - got %v", d)
+	}
+
+}

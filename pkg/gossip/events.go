@@ -1,6 +1,9 @@
 package gossip
 
-import "github.com/kristianJW54/GoferBroke/internal/cluster"
+import (
+	"github.com/google/uuid"
+	"github.com/kristianJW54/GoferBroke/internal/cluster"
+)
 
 type EventEnum int
 
@@ -103,14 +106,23 @@ func mapInternalPayloadToPublic(eventType cluster.EventEnum, payload any) any {
 }
 
 func (n *Node) OnEvent(eventType EventEnum, handler func(Event) error) (string, error) {
+	id := uuid.New().String()
 
-	internalHandler := func(e cluster.Event) error {
-		sdkEvent := mapToPublicEvent(e)
-		return handler(sdkEvent)
+	registrationFn := func(s *cluster.GBServer) error {
+		internalHandler := func(e cluster.Event) error {
+			sdkEvent := mapToPublicEvent(e)
+			return handler(sdkEvent)
+		}
+
+		// Register it using the actual server
+		_, err := s.AddHandler(s.ServerContext, cluster.EventEnum(eventType), false, internalHandler)
+		return err
 	}
 
-	return n.server.AddHandler(n.server.ServerContext, cluster.EventEnum(eventType), false, internalHandler)
+	// Add to pending handlers so it gets registered during StartServer
+	n.server.AddHandlerRegistration(registrationFn)
 
+	return id, nil
 }
 
 //=======================================================
@@ -128,4 +140,10 @@ type DeltaUpdateEvent struct {
 type DeltaAddedEvent struct {
 	DeltaKey   string
 	DeltaValue []byte
+}
+
+type NewNodeJoin struct {
+	Name    string
+	Time    int64
+	Address string
 }

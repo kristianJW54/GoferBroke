@@ -285,29 +285,6 @@ func TestDeltaHeap(t *testing.T) {
 	}
 }
 
-func TestUpdateHeartBeat(t *testing.T) {
-
-	keyValues := map[string]*Delta{
-		"system:heartbeat": &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
-		"system:tcp":       &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
-	}
-
-	// Initialize config with the seed server address
-	gbs := GenerateDefaultTestServer("test-1", keyValues, 0)
-
-	self := gbs.GetSelfInfo()
-
-	fmt.Printf("heartbeat - %d\n", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
-
-	err := gbs.updateHeartBeat(time.Now().Unix())
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("new heartbeat - %d\n", self.keyValues[MakeDeltaKey(SYSTEM_DKG, _HEARTBEAT_)].Version)
-
-}
-
 // Good test - keep
 func TestClusterMapLocks(t *testing.T) {
 

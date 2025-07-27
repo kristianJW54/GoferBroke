@@ -103,6 +103,12 @@ const (
 
 )
 
+type HandlerRegistrationFunc func(s *GBServer) error
+
+func (s *GBServer) AddHandlerRegistration(fn HandlerRegistrationFunc) {
+	s.pendingHandlerRegs = append(s.pendingHandlerRegs, fn)
+}
+
 type Event struct {
 	EventType EventEnum
 	Time      int64
@@ -182,10 +188,8 @@ func NewEventDispatcher() *EventDispatcher {
 // AddHandler registers a new handler with the EventDispatcher and returns an id which can be used to access the event in the handler
 // to de-register if needed
 func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isInternal bool, handler func(Event) error) (string, error) {
-
 	id := uuid.New().String()
 	ch := make(chan Event, 128)
-
 	entry := &handlerEvent{
 		id:         id,
 		eventCh:    ch,
@@ -197,29 +201,34 @@ func (s *GBServer) AddHandler(ctx context.Context, eventType EventEnum, isIntern
 	s.event.handlers[eventType] = append(s.event.handlers[eventType], entry)
 	s.event.mu.Unlock()
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	// Launch go routine for reading events on channel
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Warn("panic in event handler",
-					slog.String("event_type", ParseEventEnumToString(eventType)))
+				s.logger.Warn("panic in event handler", slog.String("event_type", ParseEventEnumToString(eventType)))
 			}
 		}()
+
+		wg.Done() // signal ready
 
 		for {
 			select {
 			case event := <-ch:
 				if err := handler(event); err != nil {
-					s.logger.Error("error handling event",
-						slog.String("event_type", ParseEventEnumToString(eventType)),
-						slog.String("error", err.Error()))
+					s.logger.Error("error handling event", slog.String("event_type", ParseEventEnumToString(eventType)), slog.String("error", err.Error()))
 				}
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-	return "", nil
+
+	wg.Wait() // block until handler loop is running
+
+	return id, nil
 }
 
 // Internal handler for registering internal events within the system NOT exposed to public API
@@ -275,9 +284,6 @@ type DeltaUpdateEvent struct {
 	CurrentValue    []byte
 }
 
-//TODO HandleUpdateEvent needs to be specified elsewhere and be a specific handler - if we are making an internal handler for this for update rate and gossip interval timings
-// we would need to pass in a rate tracker/window to take the update time and previous time etc
-
 func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 
 	payload, ok := e.Payload.(*DeltaUpdateEvent)
@@ -294,4 +300,23 @@ func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
 type DeltaAddedEvent struct {
 	DeltaKey   string
 	DeltaValue []byte
+}
+
+func (ed *EventDispatcher) HandleDeltaAddedEvent(e Event) error {
+
+	payload, ok := e.Payload.(*DeltaAddedEvent)
+	if !ok {
+		return fmt.Errorf("invalid payload for DeltaUpdateEvent")
+	}
+
+	fmt.Printf("Delta %s added: %v", payload.DeltaKey, payload.DeltaValue)
+
+	return nil
+
+}
+
+type NewNodeJoin struct {
+	Name    string
+	Time    int64
+	Address string
 }
