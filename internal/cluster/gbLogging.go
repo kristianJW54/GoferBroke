@@ -3,8 +3,10 @@ package cluster
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,7 +20,6 @@ type LogEntry struct {
 	Level   slog.Level
 	Message string
 	Attrs   []slog.Attr
-	Data    string
 }
 
 type normalLogBuffer struct {
@@ -132,7 +133,7 @@ func (lb *normalLogBuffer) Drain() []*LogEntry {
 //----------
 // Implement the interface
 
-func (lb *normalLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []slog.Attr) error {
+func (lb *normalLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []slog.Attr) (string, error) {
 	entry := &LogEntry{
 		Time:    rec.Time,
 		Level:   rec.Level,
@@ -141,11 +142,23 @@ func (lb *normalLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []s
 	}
 	lb.Add(entry)
 
-	return nil
+	return entry.String(), nil
 
 }
 
-func (jlb *jsonLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []slog.Attr) error {
+func (l LogEntry) String() string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("[%s] [%s] %s", l.Time.Format(time.RFC3339), l.Level.String(), l.Message))
+
+	for _, attr := range l.Attrs {
+		sb.WriteString(fmt.Sprintf(" %s=%v", attr.Key, attr.Value))
+	}
+
+	return sb.String()
+}
+
+func (jlb *jsonLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []slog.Attr) (string, error) {
 
 	var buf bytes.Buffer
 	handle := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
@@ -155,12 +168,12 @@ func (jlb *jsonLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []sl
 
 	jlb.Add(entry)
 
-	return nil
+	return buf.String(), nil
 
 }
 
 type CustomSlogHandler interface {
-	Handle(ctx context.Context, rec slog.Record, attrs []slog.Attr) error
+	Handle(ctx context.Context, rec slog.Record, attrs []slog.Attr) (string, error)
 }
 
 type slogLogger struct {
@@ -170,15 +183,18 @@ type slogLogger struct {
 	done        chan struct{}
 	ctx         context.Context
 	once        sync.Once
+	logDispatch *logDispatcher
 }
 
 func newSlogLogger(ctx context.Context, custom CustomSlogHandler, next slog.Handler, chanSize int) *slogLogger {
+
 	h := &slogLogger{
 		ch:          make(chan slog.Record, chanSize),
 		next:        next,
 		customLogic: custom,
 		done:        make(chan struct{}),
 		ctx:         ctx,
+		logDispatch: newLogDispatcher(),
 	}
 	go h.run()
 	return h
@@ -196,13 +212,13 @@ func (h *slogLogger) run() {
 			return true
 		})
 
-		if err := h.customLogic.Handle(h.ctx, rec, attrs); err != nil {
+		if s, err := h.customLogic.Handle(h.ctx, rec, attrs); err == nil {
+			h.dispatchLogToStream(s)
 		}
 		if h.next != nil {
 			_ = h.next.Handle(h.ctx, rec)
 		}
 	}
-	close(h.done)
 }
 
 func (h *slogLogger) Enabled(ctx context.Context, level slog.Level) bool {
@@ -315,3 +331,88 @@ func setupLogger(ctx context.Context, n *GbNodeConfig) (*slog.Logger, *slogLogge
 //==================================================
 
 // We want a handler to stream logs to clients waiting on that channel
+
+type streamLogger struct {
+	id      string
+	logCh   chan string
+	handler func(string) error
+}
+
+type logDispatcher struct {
+	mu       *sync.Mutex
+	handlers []*streamLogger
+}
+
+func newLogDispatcher() *logDispatcher {
+	return &logDispatcher{
+		handlers: make([]*streamLogger, 0, 2),
+		mu:       &sync.Mutex{},
+	}
+}
+
+// TODO Finish and test
+
+func (h *slogLogger) AddStreamLoggerHandler(ctx context.Context, id string, handler func(string) error) (string, error) {
+
+	ch := make(chan string, 128)
+
+	entry := &streamLogger{
+		id:      id,
+		logCh:   ch,
+		handler: handler,
+	}
+
+	h.logDispatch.mu.Lock()
+	h.logDispatch.handlers = append(h.logDispatch.handlers, entry)
+	h.logDispatch.mu.Unlock()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+
+		defer func() {
+			if r := recover(); r != nil {
+			}
+		}()
+
+		wg.Done()
+
+		for {
+			select {
+			case l := <-ch:
+				if err := handler(l); err != nil {
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+
+	}()
+
+	wg.Wait()
+
+	return id, nil
+}
+
+func (h *slogLogger) dispatchLogToStream(log string) {
+
+	h.logDispatch.mu.Lock()
+	defer h.logDispatch.mu.Unlock()
+
+	if len(h.logDispatch.handlers) != 0 {
+
+		for _, l := range h.logDispatch.handlers {
+
+			select {
+			case l.logCh <- log:
+				// Delivered
+			default:
+				// Drop
+			}
+
+		}
+
+	}
+
+}

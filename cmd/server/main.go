@@ -22,9 +22,6 @@ func (a *clusterSeedAddrs) Set(value string) error {
 }
 
 func main() {
-	fmt.Println("===================================================")
-	fmt.Println("                   GoferBrokeMQ                    ")
-	fmt.Println("===================================================")
 
 	// Run command = ./cmd/server ....
 
@@ -36,6 +33,7 @@ func main() {
 	clusterNetwork := flag.String("clusterNetwork", "LOCAL", "Network type [PUBLIC, PRIVATE, LOCAL]")
 	nodeFileConfig := flag.String("nodeConfig", "", "Configuration file for this node")
 	clusterFileConfig := flag.String("clusterConfig", "", "Configuration file for this cluster")
+	clientPort := flag.String("clientPort", "", "client port to listen on")
 	profilingPort := flag.String("profilingPort", "", "Profiling port")
 
 	flag.Var(&routes, "routes", "Route addresses - can be specified multiple times")
@@ -60,15 +58,16 @@ func main() {
 
 	ctx := context.Background()
 
-	// Run your cluster logic
+	// Run cluster logic
 	if err := cluster.Run(
 		ctx,
-		os.Stdout,
+		os.Stderr,
 		*modeFlag,
 		*nameFlag,
 		routes, // use as []string directly
 		*clusterNetwork,
 		*addrFlag,
+		*clientPort,
 		*nodeFileConfig,
 		*clusterFileConfig,
 		*profilingPort,

@@ -35,6 +35,7 @@ const (
 	ParsingPayload
 	StateREnd
 	StateNEnd
+	ParseClientCommand
 )
 
 type parser struct {
@@ -105,6 +106,9 @@ func (c *gbClient) ParsePacket(packet []byte) {
 				//log.Printf("position = %v -- b = %v", c.position, b)
 				c.position = i
 				c.state = ParsingHeader
+			default:
+				c.position = i
+				c.state = ParseClientCommand
 			}
 
 		case ParsingHeader:
@@ -225,6 +229,24 @@ func (c *gbClient) ParsePacket(packet []byte) {
 			c.state = Start
 			c.position = i + 1
 			c.drop = 0
+
+		case ParseClientCommand:
+
+			if b == '\r' {
+				c.drop = 1
+			}
+			if b == '\n' && c.drop == 1 {
+				// End of command reached
+				cmd := packet[c.position : i-c.drop] // Exclude CRLF
+				c.dispatchClientCommands(cmd)
+
+				// Reset state
+				c.state = Start
+				c.argBuf = nil
+				c.drop = 0
+				c.position = i + 1
+
+			}
 
 		}
 

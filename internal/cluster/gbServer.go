@@ -26,11 +26,15 @@ import (
 
 const ServerNameMaxLength = 32 - (8 + 1)
 
-func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, clusterNetwork, nodeAddr, nodeFileConfig, clusterFileConfig, profiling string) error {
+func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, clusterNetwork, nodeAddr, clientPort, nodeFileConfig, clusterFileConfig, profiling string) error {
 
 	log.SetOutput(w)
 
 	nodeIP, nodePort := strings.Split(nodeAddr, ":")[0], strings.Split(nodeAddr, ":")[1]
+
+	if nodePort == clientPort {
+		return fmt.Errorf("node port must be different from the client port - [NODE] %s - [CLIENT] %s", nodePort, clientPort)
+	}
 
 	if nodePort == profiling {
 		return fmt.Errorf("cannot start profiling on same port as node")
@@ -46,6 +50,10 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	var nodeConfig *GbNodeConfig
 
 	nodeConfig = InitDefaultNodeConfig()
+
+	if clientPort != "" {
+		nodeConfig.ClientPort = clientPort
+	}
 
 	config = InitDefaultClusterConfig()
 
@@ -92,7 +100,7 @@ func Run(ctx context.Context, w io.Writer, mode, name string, routes []string, c
 	}
 
 	// Create and start the server
-	gbs, err := NewServer(name, config, nil, nodeConfig, nodeIP, nodePort, "5000", lc)
+	gbs, err := NewServer(name, config, nil, nodeConfig, nodeIP, nodePort, nodeConfig.ClientPort, lc)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
@@ -335,10 +343,20 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		return nil, fmt.Errorf("server name length exceeds %d", ServerNameMaxLength)
 	}
 
+	if nodePort == clientPort {
+		return nil, fmt.Errorf("node port must be different from the client port - [NODE] %s - [CLIENT] %s", nodePort, clientPort)
+	}
+
 	logger, slogHandler, normalBuffer, jsonBuffer := setupLogger(context.Background(), gbNodeConfig)
 
 	addr := net.JoinHostPort(nodeHost, nodePort)
 	nodeTCPAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	clientAddr := net.JoinHostPort(nodeTCPAddr.IP.String(), clientPort)
+	clientTCPAddr, err := net.ResolveTCPAddr("tcp", clientAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -351,14 +369,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 	err = ConfigInitialNetworkCheck(gbConfig, gbNodeConfig, nodeType)
 	if err != nil {
 		return nil, err
-	}
-
-	cAddr := net.JoinHostPort(nodeHost, clientPort)
-
-	// TODO Need to determine client network type as well
-	clientAddr, err := net.ResolveTCPAddr("tcp", cAddr)
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	// Generates a server name object with name, uuid and time unix
@@ -403,7 +413,7 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		addr:             addr,
 		boundTCPAddr:     nodeTCPAddr,
 		advertiseAddress: nodeTCPAddr, //Temp set which will be updated once we dial a connection
-		clientTCPAddr:    clientAddr,
+		clientTCPAddr:    clientTCPAddr,
 		reachability:     1, // TODO : Yet to implement
 
 		pendingHandlerRegs: make([]HandlerRegistrationFunc, 0, 2),
@@ -546,13 +556,18 @@ func (s *GBServer) StartServer() {
 	//---------------- Node Accept Loop ----------------//
 
 	s.startupSync.Add(1)
-	err = s.AcceptNodeLoop("node-test")
+	err = s.AcceptNodeLoop()
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	//---------------- Client Accept Loop ----------------//
-	//s.AcceptLoop("client-test")
+
+	s.startupSync.Add(1)
+	err = s.AcceptLoop()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	//---------------- Internal Event Registers ----------------//
 
@@ -583,8 +598,9 @@ func (s *GBServer) StartServer() {
 	s.logger.Info("server started",
 		slog.String("server", s.String()),
 		slog.Time("started", now),
-		slog.String("address", s.boundTCPAddr.String()),
+		slog.String("address", s.addr),
 		slog.Bool("seed", s.isSeed),
+		slog.String("client listener", s.clientTCPAddr.String()),
 	)
 
 }
@@ -669,6 +685,25 @@ func (s *GBServer) Shutdown() {
 			err := c.gbc.Close()
 			if err != nil {
 				s.logger.Error("failed to close client conn when closing connections in nodeConnStore",
+					slog.String("name", c.name),
+				)
+			}
+		}
+		s.nodeConnStore.Delete(key)
+		return true
+	})
+
+	s.clientStore.Range(func(key, value interface{}) bool {
+		c, ok := value.(*gbClient)
+		if !ok {
+			s.logger.Error("wrong client type when closing connections in clientStore",
+				"got", reflect.TypeOf(value))
+			return true
+		}
+		if c.gbc != nil {
+			err := c.gbc.Close()
+			if err != nil {
+				s.logger.Error("failed to close client conn when closing connections in clientStore",
 					slog.String("name", c.name),
 				)
 			}
@@ -948,7 +983,7 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 //=======================================================
 
 // AcceptLoop sets up a context and listener and then calls an internal acceptConnections method
-func (s *GBServer) AcceptLoop(name string) error {
+func (s *GBServer) AcceptLoop() error {
 
 	s.serverLock.Lock()
 
@@ -977,6 +1012,7 @@ func (s *GBServer) AcceptLoop(name string) error {
 			}
 		})
 
+	s.startupSync.Done()
 	s.serverLock.Unlock()
 
 	s.logger.Info("client accept loop started",
@@ -988,7 +1024,7 @@ func (s *GBServer) AcceptLoop(name string) error {
 }
 
 // AcceptNodeLoop sets up a context and listener and then calls an internal acceptConnection method
-func (s *GBServer) AcceptNodeLoop(name string) error {
+func (s *GBServer) AcceptNodeLoop() error {
 
 	s.serverLock.Lock()
 
@@ -1019,7 +1055,7 @@ func (s *GBServer) AcceptNodeLoop(name string) error {
 
 	s.logger.Info("node accept loop started",
 		slog.Time("time", time.Now()),
-		slog.String("listener address", s.clientTCPAddr.String()))
+		slog.String("listener address", s.boundTCPAddr.String()))
 
 	//---------------- Seed Dial ----------------//
 	// This is essentially a solicit. If we are not a seed server then we must be the one to initiate a connection with the seed in order to join the cluster

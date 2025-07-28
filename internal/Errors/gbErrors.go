@@ -369,6 +369,8 @@ const (
 	GET_NODE_CONN_CODE                = 78
 	RESOLVE_SEED_ADDR_CODE            = 79
 	DECODE_DELTA_CODE                 = 80
+	CONSTRUCT_NODE_HEADER_CODE        = 81
+	PREPARE_REQUEST_CODE              = 82
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -419,6 +421,8 @@ var KnownInternalErrors = map[int]*GBError{
 	GET_NODE_CONN_CODE:                &GBError{Code: GET_NODE_CONN_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to get node from nodeConnStore"},
 	RESOLVE_SEED_ADDR_CODE:            &GBError{Code: RESOLVE_SEED_ADDR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to resolve seed address"},
 	DECODE_DELTA_CODE:                 &GBError{Code: DECODE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to decode delta"},
+	CONSTRUCT_NODE_HEADER_CODE:        &GBError{Code: CONSTRUCT_NODE_HEADER_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to construct node header"},
+	PREPARE_REQUEST_CODE:              &GBError{Code: PREPARE_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to prepare request"},
 }
 
 var (
@@ -447,6 +451,8 @@ var (
 	NodeConnStoreErr        = KnownInternalErrors[GET_NODE_CONN_CODE]
 	ResolveSeedAddrErr      = KnownInternalErrors[RESOLVE_SEED_ADDR_CODE]
 	DecodeDeltaErr          = KnownInternalErrors[DECODE_DELTA_CODE]
+	ConstructHeaderErr      = KnownInternalErrors[CONSTRUCT_NODE_HEADER_CODE]
+	PrepareRequestErr       = KnownInternalErrors[PREPARE_REQUEST_CODE]
 )
 
 var (

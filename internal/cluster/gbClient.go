@@ -269,6 +269,8 @@ func (s *GBServer) createClient(conn net.Conn, clientType int) *gbClient {
 	now := time.Now()
 	clientName := fmt.Sprintf("%s:%d", uuid, now.Unix())
 
+	s.logger.Info("creating client connection", "address", conn.LocalAddr().String())
+
 	client := &gbClient{
 		name:  clientName,
 		srv:   s,
@@ -803,14 +805,110 @@ func (c *gbClient) processMessage(message []byte) {
 
 // TODO Add command list here and regex on command for parsing and failing early
 
+// Client commands
+
+const (
+	PING         = "PING"
+	SNAPSHOT_LOG = "SNAPSHOT LOG"
+	STREAM_LOG   = "STREAM_LOGS"
+	GET_KEYS     = "GET KEYS"
+	MAX_VERSION  = "MAX VERSION"
+	NODES        = "NODES"
+)
+
+const (
+	PING_ENUM        = uint8(iota + 1)
+	SNAPSHOT_ENUM    = 2
+	STREAM_ENUM      = 3
+	GET_KEYS_ENUM    = 4
+	MAX_VERSION_ENUM = 5
+	NODES_ENUM       = 6
+)
+
+func parseClientCommandToCommandEnum(clientCommand string) uint8 {
+
+	switch clientCommand {
+	case PING:
+		return PING_ENUM
+	case SNAPSHOT_LOG:
+		return SNAPSHOT_ENUM
+	case STREAM_LOG:
+		return STREAM_ENUM
+	case GET_KEYS:
+		return GET_KEYS_ENUM
+	case MAX_VERSION:
+		return MAX_VERSION_ENUM
+	case NODES:
+		return NODES_ENUM
+	default:
+		return 0
+	}
+
+}
+
 func (c *gbClient) dispatchClientCommands(message []byte) {
 
+	command := parseClientCommandToCommandEnum(string(message))
+
 	// Need a switch on commands
-	switch c.ph.command {
+	switch command {
 	//e.g
 	//case STREAM_LOG ('stream log'):
 	// --->
+	case uint8(0):
+		c.unrecognisedCommand(message)
+	case PING_ENUM:
+		c.handlePING()
+	case STREAM_ENUM:
+		c.streamLogs()
 	}
+}
+
+func (c *gbClient) unrecognisedCommand(command []byte) {
+
+	resp := []byte(fmt.Sprintf("unrecognised command --> %s\n", command))
+
+	c.mu.Lock()
+	c.enqueueProto(resp)
+	c.mu.Unlock()
+
+}
+
+func (c *gbClient) handlePING() {
+
+	resp := []byte("PONG\r\n")
+
+	c.mu.Lock()
+	c.enqueueProto(resp)
+	c.mu.Unlock()
+
+	return
+
+}
+
+func (c *gbClient) streamLogs() {
+
+	_, err := c.srv.slogHandler.AddStreamLoggerHandler(c.srv.ServerContext, c.name, func(s string) error {
+		// Ensure proper CRLF line termination
+		msg := fmt.Sprintf("%s\r\n", s)
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.enqueueProto([]byte(msg))
+
+		return nil
+	})
+
+	if err != nil {
+		c.unrecognisedCommand([]byte("STREAM_LOGS"))
+		return
+	}
+}
+
+func (c *gbClient) stopStreaming() {
+
+	// finds the handler and closes it?
+
 }
 
 // Delta handling method which will hand off to server to process in a go-routine

@@ -919,11 +919,6 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 		return responsePayload{}, fmt.Errorf("sendDigest - acquiring ID error: %w", err)
 	}
 
-	s.logger.Info("sending digest",
-		slog.Int("reqID", int(reqID)),
-		slog.String("node", conn.name),
-	)
-
 	// Construct the packet
 	header := constructNodeHeader(1, GOSS_SYN, reqID, 0, uint16(len(digest)), NODE_HEADER_SIZE_V1)
 	packet := &nodePacket{
