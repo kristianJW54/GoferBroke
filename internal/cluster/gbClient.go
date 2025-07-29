@@ -888,21 +888,21 @@ func (c *gbClient) handlePING() {
 
 func (c *gbClient) streamLogs() {
 
-	_, err := c.srv.slogHandler.AddStreamLoggerHandler(c.srv.ServerContext, c.name, func(s string) error {
-		// Ensure proper CRLF line termination
-		msg := fmt.Sprintf("%s\r\n", s)
+	c.srv.slogHandler.AddStreamLoggerHandler(
+		c.srv.ServerContext,
+		c.name,
+		func(b []byte) error {
+			// Append CRLF without an extra allocation when possible.
+			msg := append(b, '\r', '\n')
 
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.enqueueProto([]byte(msg))
+			c.mu.Lock()
+			c.enqueueProto(msg)
+			c.mu.Unlock()
 
-		return nil
-	})
+			return nil
+		},
+	)
 
-	if err != nil {
-		c.unrecognisedCommand([]byte("STREAM_LOGS"))
-		return
-	}
 }
 
 func (c *gbClient) stopStreaming() {

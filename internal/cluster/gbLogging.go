@@ -3,253 +3,156 @@ package cluster
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 )
 
 //============================================
 // Logging
 //============================================
 
-type LogEntry struct {
-	Time    time.Time
-	Level   slog.Level
-	Message string
-	Attrs   []slog.Attr
+type jsonRingBuffer struct {
+	mu   sync.Mutex
+	data [][]byte
+	max  int
+	idx  int
+	full bool
+
+	buf     *bytes.Buffer
+	handler slog.Handler
 }
 
-type normalLogBuffer struct {
-	entries []*LogEntry
-	max     int
-	idx     int
-	full    bool
-	mu      sync.Mutex
-}
+func newJSONRingBuffer(max int) *jsonRingBuffer {
 
-type JsonLogEntry struct {
-	Data string
-}
-
-type jsonLogBuffer struct {
-	entries []*JsonLogEntry
-	max     int
-	idx     int
-	full    bool
-	mu      sync.Mutex
-}
-
-func newLogBuffer(size int) *normalLogBuffer {
-	return &normalLogBuffer{
-		entries: make([]*LogEntry, size),
-		max:     size,
+	buf := &bytes.Buffer{}
+	h := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	return &jsonRingBuffer{
+		data:    make([][]byte, max),
+		max:     max,
+		idx:     0,
+		buf:     buf,
+		handler: h,
 	}
+
 }
 
-func newJsonLogBuffer(size int) *jsonLogBuffer {
-	return &jsonLogBuffer{
-		entries: make([]*JsonLogEntry, size),
-		max:     size,
-	}
+func (jlb *jsonRingBuffer) encode(rec slog.Record) []byte {
+	jlb.buf.Reset()
+	_ = jlb.handler.Handle(context.Background(), rec)
+
+	out := make([]byte, jlb.buf.Len())
+	copy(out, jlb.buf.Bytes())
+	return out
 }
 
-func (lb *normalLogBuffer) Add(entry *LogEntry) {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
-	lb.entries[lb.idx] = entry
-	lb.idx = (lb.idx + 1) % lb.max
-	if lb.idx == 0 {
-		lb.full = true
-	}
-}
-
-func (jlb *jsonLogBuffer) Add(entry *JsonLogEntry) {
+func (jlb *jsonRingBuffer) add(entry []byte) {
 	jlb.mu.Lock()
 	defer jlb.mu.Unlock()
 
-	jlb.entries[jlb.idx] = entry
-	jlb.idx = (jlb.idx + 1) % jlb.max
+	jlb.data[jlb.idx] = entry
+	jlb.idx = (jlb.idx + 1) % len(jlb.data)
 	if jlb.idx == 0 {
 		jlb.full = true
 	}
 }
 
-func snapshotRing[T any](ring []T, idx int, full bool) []T {
-	var out []T
-	if full {
-		out = append(out, ring[idx:]...)
-		out = append(out, ring[:idx]...)
-	} else {
-		out = append(out, ring[:idx]...)
-	}
-	return out
-}
-
-func (lb *normalLogBuffer) Snapshot() []*LogEntry {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-	return snapshotRing(lb.entries, lb.idx, lb.full)
-}
-
-func (jlb *jsonLogBuffer) Snapshot() []string {
+func (jlb *jsonRingBuffer) Snapshot() [][]byte {
 	jlb.mu.Lock()
 	defer jlb.mu.Unlock()
 
-	entries := snapshotRing(jlb.entries, jlb.idx, jlb.full)
-
-	var out []string
-	for _, entry := range entries {
-		if entry.Data != "" {
-			out = append(out, entry.Data)
-		}
+	if !jlb.full {
+		return append([][]byte(nil), jlb.data[:jlb.idx]...)
 	}
-	return out
-}
-
-func (lb *normalLogBuffer) Drain() []*LogEntry {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
-	var out []*LogEntry
-	if lb.full {
-		out = append(out, lb.entries[:lb.idx]...)
-		out = append(out, lb.entries[lb.idx:]...)
-	} else {
-		out = append(out, lb.entries[:lb.idx]...)
-	}
-
-	lb.entries = make([]*LogEntry, len(lb.entries))
-	lb.idx = 0
-	lb.full = false
-
-	return out
-
+	return append(append([][]byte(nil), jlb.data[jlb.idx:]...), jlb.data[:jlb.idx]...)
 }
 
 //----------
-// Implement the interface
 
-func (lb *normalLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []slog.Attr) (string, error) {
-	entry := &LogEntry{
-		Time:    rec.Time,
-		Level:   rec.Level,
-		Message: rec.Message,
-		Attrs:   attr,
-	}
-	lb.Add(entry)
+type fastLogger struct {
+	ch   chan slog.Record
+	done chan struct{}
+	ctx  context.Context
+	once sync.Once
+	next slog.Handler
 
-	return entry.String(), nil
+	jsonBuf *jsonRingBuffer // Lock free encode + ring
 
+	muCopy sync.RWMutex
+
+	suppress atomic.Bool
+
+	stream []*streamLogger
 }
 
-func (l LogEntry) String() string {
-	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("[%s] [%s] %s", l.Time.Format(time.RFC3339), l.Level.String(), l.Message))
-
-	for _, attr := range l.Attrs {
-		sb.WriteString(fmt.Sprintf(" %s=%v", attr.Key, attr.Value))
-	}
-
-	return sb.String()
+type streamLogger struct {
+	id      string
+	logCh   chan []byte
+	handler func([]byte) error
 }
 
-func (jlb *jsonLogBuffer) Handle(ctx context.Context, rec slog.Record, attr []slog.Attr) (string, error) {
+func newFastLogger(ctx context.Context, next slog.Handler, ring, chanSize int) *fastLogger {
 
-	var buf bytes.Buffer
-	handle := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
-	_ = handle.Handle(ctx, rec)
-
-	entry := &JsonLogEntry{Data: buf.String()}
-
-	jlb.Add(entry)
-
-	return buf.String(), nil
-
-}
-
-type CustomSlogHandler interface {
-	Handle(ctx context.Context, rec slog.Record, attrs []slog.Attr) (string, error)
-}
-
-type slogLogger struct {
-	ch          chan slog.Record
-	next        slog.Handler
-	customLogic CustomSlogHandler
-	done        chan struct{}
-	ctx         context.Context
-	once        sync.Once
-	logDispatch *logDispatcher
-}
-
-func newSlogLogger(ctx context.Context, custom CustomSlogHandler, next slog.Handler, chanSize int) *slogLogger {
-
-	h := &slogLogger{
-		ch:          make(chan slog.Record, chanSize),
-		next:        next,
-		customLogic: custom,
-		done:        make(chan struct{}),
-		ctx:         ctx,
-		logDispatch: newLogDispatcher(),
+	h := &fastLogger{
+		ch:      make(chan slog.Record, chanSize),
+		done:    make(chan struct{}),
+		ctx:     ctx,
+		jsonBuf: newJSONRingBuffer(ring),
+		stream:  make([]*streamLogger, 0, 4),
+		next:    next,
 	}
 	go h.run()
 	return h
 }
 
 // Run as go-routine
-func (h *slogLogger) run() {
+func (fl *fastLogger) run() {
 
-	defer close(h.done)
+	defer close(fl.done)
 
-	for rec := range h.ch {
-		var attrs []slog.Attr
-		rec.Attrs(func(a slog.Attr) bool {
-			attrs = append(attrs, a)
-			return true
-		})
-
-		if s, err := h.customLogic.Handle(h.ctx, rec, attrs); err == nil {
-			h.dispatchLogToStream(s)
+	for rec := range fl.ch {
+		if fl.suppress.Load() {
+			continue
 		}
-		if h.next != nil {
-			_ = h.next.Handle(h.ctx, rec)
+		b := fl.jsonBuf.encode(rec)
+		fl.jsonBuf.add(b)
+		// We would call dispatch here - but need to check for clients or handler...?
+		if len(fl.stream) >= cap(fl.stream) {
+			fl.dispatch(b)
+		}
+		if fl.next != nil {
+			_ = fl.next.Handle(fl.ctx, rec)
 		}
 	}
 }
 
-func (h *slogLogger) Enabled(ctx context.Context, level slog.Level) bool {
+func (fl *fastLogger) Enabled(ctx context.Context, level slog.Level) bool {
 	return true // Always return true and decide later what to do
 }
 
-func (h *slogLogger) Handle(_ context.Context, rec slog.Record) error {
+func (fl *fastLogger) Handle(_ context.Context, rec slog.Record) error {
 	select {
-	case h.ch <- rec:
-		return nil
-	case <-h.done: // Closed or shutting down
+	case fl.ch <- rec:
 		return nil
 	default:
-		return nil // Optional: log drop strategy
+
 	}
+	return nil
 }
 
-func (h *slogLogger) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return newSlogLogger(h.ctx, h.customLogic, h.next.WithAttrs(attrs), cap(h.ch))
-}
+func (fl *fastLogger) WithAttrs(_ []slog.Attr) slog.Handler { return fl }
+func (fl *fastLogger) WithGroup(_ string) slog.Handler      { return fl }
 
-func (h *slogLogger) WithGroup(name string) slog.Handler {
-	return newSlogLogger(h.ctx, h.customLogic, h.next.WithGroup(name), cap(h.ch))
-}
-
-func (h *slogLogger) Close() {
-	h.once.Do(func() {
-		close(h.ch)
-		<-h.done
+func (fl *fastLogger) Close() {
+	fl.once.Do(func() {
+		close(fl.ch)
+		<-fl.done
 	})
 }
+
+// SuppressLogs toggles fast skip. Intended for gossip rounds.
+func (fl *fastLogger) SuppressLogs(on bool) { fl.suppress.Store(on) }
 
 //========================================================
 // Null Common Slog for when only Custom is specified
@@ -277,18 +180,7 @@ func parseLoggerConfigOutput(output string) string {
 	}
 }
 
-func getLogBufferOutput(output string) string {
-	switch output {
-	case "json":
-		return "json"
-	case "JSON":
-		return "json"
-	default:
-		return "text"
-	}
-}
-
-func setupLogger(ctx context.Context, n *GbNodeConfig) (*slog.Logger, *slogLogger, *normalLogBuffer, *jsonLogBuffer) {
+func setupLogger(ctx context.Context, n *GbNodeConfig) (*slog.Logger, *fastLogger, *jsonRingBuffer) {
 	var baseHandler slog.Handler
 	if n.Internal.DefaultLoggerEnabled {
 		output := parseLoggerConfigOutput(n.Internal.LogOutput)
@@ -307,112 +199,73 @@ func setupLogger(ctx context.Context, n *GbNodeConfig) (*slog.Logger, *slogLogge
 	if !n.Internal.LogToBuffer {
 		root := slog.New(baseHandler)
 		slog.SetDefault(root)
-		return root, nil, nil, nil
+		return root, nil, nil
 	} else {
 
-		var async *slogLogger
-
-		if getLogBufferOutput(n.Internal.LogBufferOutput) == "json" {
-			ring := newJsonLogBuffer(int(n.Internal.LogBufferSize))
-			async = newSlogLogger(ctx, ring, baseHandler, int(n.Internal.LogBufferSize))
-			root := slog.New(async)
-			return root, async, nil, ring
-		} else {
-			ring := newLogBuffer(int(n.Internal.LogBufferSize))
-			async = newSlogLogger(ctx, ring, baseHandler, int(n.Internal.LogChannelSize))
-			root := slog.New(async)
-			return root, async, ring, nil
-		}
+		var async *fastLogger
+		async = newFastLogger(ctx, baseHandler, n.Internal.LogChannelSize, n.Internal.LogChannelSize)
+		json := newJSONRingBuffer(n.Internal.LogChannelSize)
+		root := slog.New(async)
+		return root, async, json
 	}
+
+	//return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})), nil, nil
+
 }
 
 //==================================================
 // Client handling
 //==================================================
 
-// We want a handler to stream logs to clients waiting on that channel
-
-type streamLogger struct {
-	id      string
-	logCh   chan string
-	handler func(string) error
-}
-
-type logDispatcher struct {
-	mu       *sync.Mutex
-	handlers []*streamLogger
-}
-
-func newLogDispatcher() *logDispatcher {
-	return &logDispatcher{
-		handlers: make([]*streamLogger, 0, 2),
-		mu:       &sync.Mutex{},
-	}
-}
-
 // TODO Finish and test
 
-func (h *slogLogger) AddStreamLoggerHandler(ctx context.Context, id string, handler func(string) error) (string, error) {
-
-	ch := make(chan string, 128)
+func (fl *fastLogger) AddStreamLoggerHandler(
+	ctx context.Context,
+	id string,
+	handler func([]byte) error,
+) {
+	// Per-streamer buffer; tune as you like.
+	ch := make(chan []byte, 128)
 
 	entry := &streamLogger{
 		id:      id,
 		logCh:   ch,
-		handler: handler,
+		handler: handler, // renamed field for clarity
 	}
 
-	h.logDispatch.mu.Lock()
-	h.logDispatch.handlers = append(h.logDispatch.handlers, entry)
-	h.logDispatch.mu.Unlock()
+	// Copy-on-write add (no pauses for readers)
+	fl.muCopy.Lock()
+	fl.stream = append(append([]*streamLogger(nil), fl.stream...), entry)
+	fl.muCopy.Unlock()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
+	// Fan-out goroutine for this client
 	go func() {
-
-		defer func() {
-			if r := recover(); r != nil {
-			}
-		}()
-
-		wg.Done()
+		//defer fl.RemoveStreamer(id) // auto-unregister on exit
 
 		for {
 			select {
-			case l := <-ch:
-				if err := handler(l); err != nil {
+			case b := <-ch:
+				// Append CRLF only once; avoids fmt / alloc
+				framed := append(b, '\r', '\n')
+				if err := entry.handler(framed); err != nil {
+					return // stop on error (client closed etc.)
 				}
 			case <-ctx.Done():
 				return
 			}
 		}
-
 	}()
-
-	wg.Wait()
-
-	return id, nil
 }
 
-func (h *slogLogger) dispatchLogToStream(log string) {
+func (fl *fastLogger) dispatch(b []byte) {
+	fl.muCopy.RLock()
+	list := fl.stream
+	fl.muCopy.RUnlock()
 
-	h.logDispatch.mu.Lock()
-	defer h.logDispatch.mu.Unlock()
-
-	if len(h.logDispatch.handlers) != 0 {
-
-		for _, l := range h.logDispatch.handlers {
-
-			select {
-			case l.logCh <- log:
-				// Delivered
-			default:
-				// Drop
-			}
-
+	for _, s := range list {
+		select {
+		case s.logCh <- b: // non-blocking send
+		default: // drop if client too slow
 		}
-
 	}
-
 }

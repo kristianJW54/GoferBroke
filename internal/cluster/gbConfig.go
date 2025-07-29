@@ -166,7 +166,6 @@ type InternalOptions struct {
 	DefaultLoggerEnabled bool
 	LogOutput            string
 	LogToBuffer          bool
-	LogBufferOutput      string
 	LogBufferSize        int
 	LogChannelSize       int
 
@@ -199,9 +198,8 @@ func InitDefaultNodeConfig() *GbNodeConfig {
 			DisableInternalGossipSystemUpdate:     false,
 
 			DefaultLoggerEnabled: true,
-			LogOutput:            "stderr",
-			LogToBuffer:          false,
-			LogBufferOutput:      "json",
+			LogOutput:            "stdout",
+			LogToBuffer:          true,
 			LogBufferSize:        100,
 			LogChannelSize:       200,
 

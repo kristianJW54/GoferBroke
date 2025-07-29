@@ -1157,36 +1157,34 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	//log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
 
-	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 4*time.Second)
+	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 1*time.Second)
 
 	resp := c.qProtoWithResponse(ctx, respID, pay, false)
 
 	c.waitForResponseAsync(resp, func(delta responsePayload, err error) {
 
-		defer cancel()
-
 		if err != nil {
 			// Need to handle the error but for now just return
+			cancel()
 			return
 		}
 
-		// If we receive a response delta - process and add it to our map
-		srv := c.srv
+		// Off-load heavy work
+		go func() {
+			defer cancel() // signal caller *after* merge is done
 
-		//log.Printf("%s - delta in async [][][][][][][][][] = %s", srv.PrettyName(), delta.msg)
+			cd, e := deserialiseDelta(delta.msg)
+			if e != nil {
+				return
+			}
 
-		cd, e := deserialiseDelta(delta.msg)
-		if e != nil {
-			//log.Printf("error in sending goss_syn_ack: %v", e)
-			return
-		}
-		e = srv.addGSADeltaToMap(cd)
-		if e != nil {
-			//log.Printf("error in sending goss_syn_ack: %v", e)
-			return
-		}
+			c.srv.logger.Info("gsa", "message", string(delta.msg))
 
-		return
+			// 2. Merge into server state (must be thread-safe!)
+			if e := c.srv.addGSADeltaToMap(cd); e != nil {
+				return
+			}
+		}()
 
 	})
 
@@ -1451,10 +1449,10 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		duration := time.Since(start)
 
 		s.logger.Info("gossip round complete",
-			slog.String("node", s.PrettyName()),
-			slog.Duration("duration", duration),
-			slog.Int("peers_contacted", len(indexes)),
-			slog.Int("active participants", len(s.clusterMap.participantArray)),
+			//slog.String("node", s.PrettyName()),
+			slog.Duration("---------duration", duration),
+			//slog.Int("peers_contacted", len(indexes)),
+			//slog.Int("active participants", len(s.clusterMap.participantArray)),
 		)
 
 		s.endGossip()

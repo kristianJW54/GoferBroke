@@ -272,10 +272,9 @@ type GBServer struct {
 	startupSync *sync.WaitGroup
 
 	//Logging
-	logger        *slog.Logger
-	slogHandler   *slogLogger
-	textLogBuffer *normalLogBuffer
-	jsonBuffer    *jsonLogBuffer
+	logger      *slog.Logger
+	slogHandler *fastLogger
+	jsonBuffer  *jsonRingBuffer
 
 	//Metrics
 	sm *systemMetrics
@@ -347,7 +346,7 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		return nil, fmt.Errorf("node port must be different from the client port - [NODE] %s - [CLIENT] %s", nodePort, clientPort)
 	}
 
-	logger, slogHandler, normalBuffer, jsonBuffer := setupLogger(context.Background(), gbNodeConfig)
+	logger, slogHandler, jsonBuffer := setupLogger(context.Background(), gbNodeConfig)
 
 	addr := net.JoinHostPort(nodeHost, nodePort)
 	nodeTCPAddr, err := net.ResolveTCPAddr("tcp", addr)
@@ -442,10 +441,9 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 		startupSync: &sync.WaitGroup{},
 
-		logger:        logger,
-		slogHandler:   slogHandler,
-		textLogBuffer: normalBuffer,
-		jsonBuffer:    jsonBuffer,
+		logger:      logger,
+		slogHandler: slogHandler,
+		jsonBuffer:  jsonBuffer,
 
 		sm: newSystemMetrics(),
 
