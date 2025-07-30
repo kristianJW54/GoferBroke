@@ -8,9 +8,13 @@ import (
 	uuid2 "github.com/google/uuid"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
 	"io"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	_ "net/http/pprof"
 	"os"
@@ -279,6 +283,8 @@ type GBServer struct {
 	//Metrics
 	sm *systemMetrics
 
+	bj *backgroundJobs
+
 	//go-routine tracking
 	grTracking
 }
@@ -393,15 +399,14 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		return nil, err
 	}
 
-	// Build EventDispatcher
-	ed := NewEventDispatcher()
-
 	// Init gossip
 	goss := initGossipSettings(1*time.Second, 1) //gbConfig.Cluster.NodeSelection
 
 	seq := newSeqReqPool(10) //gbConfig.Cluster.RequestIDPool
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	bj := newBackgroundJobScheduler()
 
 	s := &GBServer{
 		ServerID:         *serverID,
@@ -416,7 +421,7 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		reachability:     1, // TODO : Yet to implement
 
 		pendingHandlerRegs: make([]HandlerRegistrationFunc, 0, 2),
-		event:              ed,
+		event:              NewEventDispatcher(),
 		fatalErrorCh:       make(chan error, 1),
 
 		listenConfig:        lc,
@@ -446,6 +451,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		jsonBuffer:  jsonBuffer,
 
 		sm: newSystemMetrics(),
+
+		bj: bj,
 
 		grTracking: grTracking{
 			index:       0,
@@ -567,10 +574,13 @@ func (s *GBServer) StartServer() {
 		log.Fatal(err)
 	}
 
-	//---------------- Internal Event Registers ----------------//
+	//---------------- Background Process Registers ----------------//
 
 	//-- Start a background process to delete dead nodes
 	//-- Start handler to collect gossip metrics
+	s.startGoRoutine(s.PrettyName(), "background-process", func() {
+		s.startBJ()
+	})
 
 	// We wait for start up to complete here
 	s.startupSync.Wait()
@@ -579,9 +589,9 @@ func (s *GBServer) StartServer() {
 	if !s.gbNodeConfig.Internal.DisableGossip {
 
 		// Start up phi process which will wait for the gossip signal
-		s.startGoRoutine(s.PrettyName(), "phi-process", func() {
-			s.phiProcess(s.ServerContext)
-		})
+		//s.startGoRoutine(s.PrettyName(), "phi-process", func() {
+		//	s.phiProcess(s.ServerContext)
+		//})
 
 		// Handle dead connection process here:
 		//-->
@@ -967,7 +977,134 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 	}
 	p.keyValues[MakeDeltaKey(heartbeatDelta.KeyGroup, heartbeatDelta.Key)] = heartbeatDelta
 
-	err := GenerateConfigDeltas(s.configSchema, s.gbClusterConfig, p)
+	// System metrics
+	//TODO Because it's the only instance i'm using external dependencies - I should build deltas in metrics.go and use
+	// interfaces in case we want to change or build our own implementation
+
+	// Memory deltas
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		s.logger.Error("failed to get memory info")
+	} else {
+
+		// Total memory
+		total := make([]byte, 8)
+		binary.BigEndian.PutUint64(total, v.Total)
+		tm := &Delta{
+			KeyGroup:  SYSTEM_DKG,
+			Key:       _TOTAL_MEMORY_,
+			ValueType: D_UINT64_TYPE,
+			Version:   t,
+			Value:     total,
+		}
+		p.keyValues[MakeDeltaKey(tm.KeyGroup, tm.Key)] = tm
+
+		// Used memory
+		used := make([]byte, 8)
+		binary.BigEndian.PutUint64(used, v.Used)
+		um := &Delta{
+			KeyGroup:  SYSTEM_DKG,
+			Key:       _USED_MEMORY_,
+			ValueType: D_UINT64_TYPE,
+			Version:   t,
+			Value:     used,
+		}
+		p.keyValues[MakeDeltaKey(um.KeyGroup, um.Key)] = um
+
+		// Free memory
+		free := make([]byte, 8)
+		binary.BigEndian.PutUint64(free, v.Free)
+		fm := &Delta{
+			KeyGroup:  SYSTEM_DKG,
+			Key:       _FREE_MEMORY_,
+			ValueType: D_UINT64_TYPE,
+			Version:   t,
+			Value:     free,
+		}
+		p.keyValues[MakeDeltaKey(fm.KeyGroup, fm.Key)] = fm
+
+		// Perc used
+		perc := make([]byte, 8)
+		binary.BigEndian.PutUint64(perc, math.Float64bits(v.UsedPercent))
+		pu := &Delta{
+			KeyGroup:  SYSTEM_DKG,
+			Key:       _MEM_PERC_,
+			ValueType: D_FLOAT64_TYPE,
+			Version:   t,
+			Value:     perc,
+		}
+		p.keyValues[MakeDeltaKey(pu.KeyGroup, pu.Key)] = pu
+	}
+
+	// Host deltas
+	h, _ := host.Info()
+
+	// Host name
+	hn := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _HOST_,
+		ValueType: D_STRING_TYPE,
+		Version:   t,
+		Value:     []byte(h.Hostname),
+	}
+	p.keyValues[MakeDeltaKey(hn.KeyGroup, hn.Key)] = hn
+
+	// Host ID
+	hid := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _HOST_ID_,
+		ValueType: D_STRING_TYPE,
+		Version:   t,
+		Value:     []byte(h.HostID),
+	}
+	p.keyValues[MakeDeltaKey(hid.KeyGroup, hid.Key)] = hid
+
+	// CPU Deltas
+
+	// CPU Model Name
+	c, _ := cpu.Info()
+	cmn := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _CPU_MODE_NAME_,
+		ValueType: D_STRING_TYPE,
+		Version:   t,
+		Value:     []byte(c[0].ModelName),
+	}
+	p.keyValues[MakeDeltaKey(hid.KeyGroup, hid.Key)] = cmn
+
+	// CPU Cores
+	cores := make([]byte, 4)
+	binary.BigEndian.PutUint32(cores, uint32(c[0].Cores))
+	cc := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _CPU_CORES_,
+		ValueType: D_INT32_TYPE,
+		Version:   t,
+		Value:     cores,
+	}
+	p.keyValues[MakeDeltaKey(cc.KeyGroup, cc.Key)] = cc
+
+	// Platform Deltas
+
+	pn := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _PLATFORM_,
+		ValueType: D_STRING_TYPE,
+		Version:   t,
+		Value:     []byte(h.Platform),
+	}
+	p.keyValues[MakeDeltaKey(pn.KeyGroup, pn.Key)] = pn
+
+	pf := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _PLATFORM_FAMILY_,
+		ValueType: D_STRING_TYPE,
+		Version:   t,
+		Value:     []byte(h.PlatformFamily),
+	}
+	p.keyValues[MakeDeltaKey(pf.KeyGroup, pf.Key)] = pf
+
+	err = GenerateConfigDeltas(s.configSchema, s.gbClusterConfig, p)
 	if err != nil {
 		return nil, err
 	}
@@ -1158,6 +1295,9 @@ func (s *GBServer) registerAndStartInternalHandlers() error {
 	//}); err != nil {
 	//	return err
 	//}
+
+	// Need to register handlers for when metrics change like memory increases - address changes etc
+	// Background process will check every 2 minutes (configured) to see what has changed
 
 	//--
 
@@ -1390,4 +1530,96 @@ func (s *GBServer) updateClusterConfigDeltaAndSelf(key string, d *Delta) error {
 
 	return nil
 
+}
+
+//======================================================
+// Background processes and job scheduler
+//======================================================
+
+type job struct {
+	task      func(ctx context.Context)
+	interval  time.Duration
+	timeout   time.Duration
+	nextRun   time.Time
+	isRunning atomic.Bool
+}
+
+type backgroundJobs struct {
+	jobs []*job
+}
+
+// tryRun launches the job once if not already running.
+func (j *job) tryRun(parent context.Context) {
+	if !j.isRunning.CompareAndSwap(false, true) {
+		return // still executing
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(parent, j.timeout)
+		defer func() {
+			cancel()
+			j.isRunning.Store(false)
+		}()
+		j.task(ctx)
+	}()
+}
+
+func newJob(ctx context.Context, interval time.Duration, timeout time.Duration, task func(ctx context.Context)) *job {
+	return &job{
+		task:     task,
+		interval: interval,
+		timeout:  timeout,
+	}
+}
+
+func (bj *backgroundJobs) registerBackgroundJob(ctx context.Context, interval time.Duration, timeout time.Duration, task func(ctx context.Context)) {
+	bj.jobs = append(bj.jobs, newJob(ctx, interval, timeout, task))
+}
+
+func newBackgroundJobScheduler() *backgroundJobs {
+	return &backgroundJobs{
+		jobs: make([]*job, 0),
+	}
+}
+
+// Run in go-routine
+func (s *GBServer) startBJ() {
+
+	for {
+		now := time.Now()
+		soonest := now.Add(24 * time.Hour) // Arbitrary time which we will replace with job intervals
+
+		// Go through the jobs
+		for _, job := range s.bj.jobs {
+
+			if job.nextRun.IsZero() {
+				job.nextRun = now.Add(job.interval)
+			}
+
+			// If Jobs next run is due then we run it and add the next runtime to now
+			if !now.Before(job.nextRun) {
+				job.tryRun(s.ServerContext)
+				// move ahead by interval to keep fixed cadence
+				job.nextRun = job.nextRun.Add(job.interval)
+				// guard against very small or zero interval
+				if job.interval <= 0 {
+					job.nextRun = now.Add(time.Second)
+				}
+			}
+
+			// If our Job is before the soonest, then our job is next
+			if job.nextRun.Before(soonest) {
+				soonest = job.nextRun
+			}
+		}
+		wait := time.Until(soonest)
+		if wait < 0 {
+			wait = 0
+		}
+
+		select {
+		case <-time.After(wait):
+		case <-s.ServerContext.Done():
+			return
+		}
+	}
 }

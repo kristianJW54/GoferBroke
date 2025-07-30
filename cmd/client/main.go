@@ -36,7 +36,7 @@ func streamLogs(conn net.Conn, response *bufio.Reader, input *bufio.Reader) {
 					close(done)
 					return
 				}
-				fmt.Print(line)
+				fmt.Print(strings.Trim(line, "\r\n"))
 			}
 		}
 	}()

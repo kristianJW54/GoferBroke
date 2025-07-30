@@ -206,6 +206,7 @@ func setupLogger(ctx context.Context, n *GbNodeConfig) (*slog.Logger, *fastLogge
 		async = newFastLogger(ctx, baseHandler, n.Internal.LogChannelSize, n.Internal.LogChannelSize)
 		json := newJSONRingBuffer(n.Internal.LogChannelSize)
 		root := slog.New(async)
+		slog.SetDefault(root)
 		return root, async, json
 	}
 

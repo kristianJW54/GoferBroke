@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
@@ -664,5 +665,100 @@ func TestServerNewDeltaEvent(t *testing.T) {
 	if d, exists := gbs2.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey("test", "also-a-test")]; !exists {
 		t.Errorf("expected to have found delta - got %v", d)
 	}
+
+}
+
+// Test Ready ✅
+func TestBackgroundJobScheduler(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	t.Run("single job", func(t *testing.T) {
+
+		srv, err := NewServerFromConfigString(nodeCfg, cfg)
+		if err != nil {
+			t.Errorf("error creating new server: %v", err)
+		}
+
+		srv.bj.registerBackgroundJob(
+			srv.ServerContext,
+			2*time.Second,
+			1*time.Second,
+			func(ctx context.Context) {
+				srv.numNodeConnections += 1
+			},
+		)
+		go srv.StartServer()
+
+		time.Sleep(7 * time.Second)
+
+		srv.Shutdown()
+
+		if srv.numNodeConnections < 2 {
+			t.Errorf("expected to have at least 2 connections, got %d", srv.numNodeConnections)
+		}
+
+	})
+
+	t.Run("multi job", func(t *testing.T) {
+
+		srv, err := NewServerFromConfigString(nodeCfg, cfg)
+		if err != nil {
+			t.Errorf("error creating new server: %v", err)
+		}
+
+		srv.bj.registerBackgroundJob(
+			srv.ServerContext,
+			3*time.Second,
+			1*time.Second,
+			func(ctx context.Context) {
+				srv.numNodeConnections += 1
+			},
+		)
+
+		srv.bj.registerBackgroundJob(
+			srv.ServerContext,
+			2*time.Second,
+			1*time.Second,
+			func(ctx context.Context) {
+				srv.numClientConnections += 1
+			},
+		)
+
+		go srv.StartServer()
+
+		time.Sleep(10 * time.Second)
+
+		srv.Shutdown()
+
+		// For a duration of - client conns should be at least 4 if run every 2 seconds - node should be at least 3
+
+		if srv.numNodeConnections < 3 {
+			t.Errorf("expected to have at least 2 connections, got %d", srv.numNodeConnections)
+		}
+		if srv.numClientConnections < 4 {
+			t.Errorf("expected to have at least 4 connections, got %d", srv.numClientConnections)
+		}
+
+	})
 
 }

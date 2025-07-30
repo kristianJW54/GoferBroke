@@ -152,15 +152,21 @@ var deltaTypeToReflect = map[uint8]reflect.Type{
 const (
 	_ADDRESS_         = "tcp"
 	_REACHABLE_       = "reachability"
-	_CPU_USAGE_       = "cpu_usage"
-	_MEMORY_USAGE     = "memory_usage"
 	_NODE_CONNS_      = "node_conns"
 	_CLIENT_CONNS_    = "client_conns"
 	_HEARTBEAT_       = "heartbeat"
-	_UPDATE_INTERVAL_ = "update_interval"
-	_NETWORK_LOAD_    = "network_load"
 	_NODE_NAME_       = "node_name"
 	_DEAD_            = "dead"
+	_TOTAL_MEMORY_    = "total_memory"
+	_USED_MEMORY_     = "used_memory"
+	_FREE_MEMORY_     = "free_memory"
+	_MEM_PERC_        = "memory_percent_used"
+	_HOST_            = "host"
+	_HOST_ID_         = "host_id"
+	_CPU_MODE_NAME_   = "cpu_model"
+	_CPU_CORES_       = "cpu_cores"
+	_PLATFORM_        = "platform"
+	_PLATFORM_FAMILY_ = "platform_family"
 )
 
 // Standard Delta Key-Groups
@@ -1418,10 +1424,13 @@ func (s *GBServer) startGossipProcess() bool {
 				continue
 			}
 
-			ctx, cancel := context.WithTimeout(s.ServerContext, 4*time.Second)
+			ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 			s.gossip.gossWg.Add(1)
 			s.startGossipRound(ctx)
 			cancel()
+
+			// TODO Check if this is better
+			go s.calculatePhi(s.ServerContext)
 
 		case gossipState := <-s.gossip.gossipControlChannel:
 			if !gossipState {
