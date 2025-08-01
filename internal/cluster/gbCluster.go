@@ -625,6 +625,8 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
 
+	s.seedEMAForAll()
+
 	s.clusterMapLock.Unlock()
 
 	return nil
@@ -1186,6 +1188,11 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 			c.srv.logger.Info("gsa", "message", string(delta.msg))
 
+			err = c.srv.recordPhi(sender)
+			if err != nil {
+				fmt.Printf("recordPhi failed: %v\n", err)
+			}
+
 			// 2. Merge into server state (must be thread-safe!)
 			if e := c.srv.addGSADeltaToMap(cd); e != nil {
 				return
@@ -1429,9 +1436,6 @@ func (s *GBServer) startGossipProcess() bool {
 			s.startGossipRound(ctx)
 			cancel()
 
-			// TODO Check if this is better
-			go s.calculatePhi(s.ServerContext)
-
 		case gossipState := <-s.gossip.gossipControlChannel:
 			if !gossipState {
 				// If gossipControlChannel sends 'false', stop the gossiping process
@@ -1471,14 +1475,14 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	//log.Printf("are we in a discovery phase ====== %v", s.discoveryPhase)
-	if s.discoveryPhase {
-		go func() {
-			err := s.runDiscovery(ctx)
-			if err != nil {
-				fmt.Printf("%s - Gossip discovery failed: %v\n", s.PrettyName(), err)
-			}
-		}()
-	}
+	//if s.discoveryPhase {
+	//	go func() {
+	//		err := s.runDiscovery(ctx)
+	//		if err != nil {
+	//			fmt.Printf("%s - Gossip discovery failed: %v\n", s.PrettyName(), err)
+	//		}
+	//	}()
+	//}
 
 	s.configLock.RLock()
 	ns := s.gbClusterConfig.getNodeSelection()
@@ -1491,6 +1495,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 
 	s.clusterMapLock.RLock()
 	partList := append([]string(nil), s.clusterMap.participantArray...)
+	//parts := s.clusterMap.participants
 	s.clusterMapLock.RUnlock()
 
 	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), s.notToGossipNodeStore)
@@ -1505,8 +1510,12 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	for _, idx := range indexes {
 		nodeID := partList[idx]
 
-		//if participant.paDetection.dead {
+		//if parts[nodeID].paDetection.dead {
 		//	// Add event here and also handle with background task
+		//	s.logger.Info("skipping dead node -----")
+		//	continue
+		//}
+		//} else if !s.shouldWeGossip(parts[nodeID]) {
 		//	continue
 		//}
 
@@ -1605,8 +1614,6 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	}
 
 	//------------- Handle Completion -------------//
-
-	_ = s.recordPhi(node)
 
 }
 

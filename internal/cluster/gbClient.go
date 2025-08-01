@@ -311,6 +311,8 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 		return fmt.Errorf("client %v is not a client of type gbClient - got: %T", cid, client)
 	}
 
+	c.name = name
+
 	if _, exists := s.nodeConnStore.Load(name); exists {
 		return fmt.Errorf("client %s already exists in nodeConnStore: %+v", name, c.gbc)
 	}
@@ -548,7 +550,6 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 	// Write errors
 	if err != nil {
-		fmt.Printf("flushWriteOutbound: Write error: %v\n", err)
 		c.handleWriteError(err)
 		return true
 	}
@@ -687,6 +688,9 @@ func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 
 	case msg := <-rsp.ch:
 		return msg, nil
+
+	case clientErr := <-c.errChan:
+		return responsePayload{}, clientErr
 
 	case err := <-rsp.err:
 		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, err, "")

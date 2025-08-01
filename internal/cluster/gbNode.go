@@ -1423,9 +1423,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 		fmt.Printf("error serialising digest - %v\n", err)
 	}
 
-	senderName := sender
-
-	err = c.srv.recordPhi(senderName)
+	err = c.srv.recordPhi(sender)
 	if err != nil {
 		fmt.Printf("recordPhi failed: %v\n", err)
 	}

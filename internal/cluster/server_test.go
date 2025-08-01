@@ -618,9 +618,7 @@ func TestServerNewDeltaEvent(t *testing.T) {
 		t.Errorf("error creating new server: %v", err)
 	}
 
-	go gbs.StartServer()
-
-	gbs2.AddHandlerRegistration(func(s *GBServer) error {
+	gbs.AddHandlerRegistration(func(s *GBServer) error {
 		_, err := s.AddHandler(s.ServerContext, NewDeltaAdded, false, func(event Event) error {
 
 			if delta, ok := event.Payload.(*DeltaAddedEvent); !ok {
@@ -639,6 +637,8 @@ func TestServerNewDeltaEvent(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
+	go gbs.StartServer()
+
 	go gbs2.StartServer()
 
 	time.Sleep(2 * time.Second)
@@ -649,7 +649,7 @@ func TestServerNewDeltaEvent(t *testing.T) {
 		ValueType: D_BYTE_TYPE,
 		Value:     []byte{},
 	}
-	self := gbs.GetSelfInfo()
+	self := gbs2.GetSelfInfo()
 	err = self.Store(newDelta)
 	if err != nil {
 		t.Errorf("%v", err)
@@ -662,7 +662,7 @@ func TestServerNewDeltaEvent(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if d, exists := gbs2.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey("test", "also-a-test")]; !exists {
+	if d, exists := gbs.clusterMap.participants[gbs2.ServerName].keyValues[MakeDeltaKey("test", "also-a-test")]; !exists {
 		t.Errorf("expected to have found delta - got %v", d)
 	}
 
@@ -760,5 +760,65 @@ func TestBackgroundJobScheduler(t *testing.T) {
 		}
 
 	})
+
+}
+
+func TestDeadNodeHandling(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = True
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = True
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	go gbs2.StartServer()
+
+	time.Sleep(20 * time.Second)
+
+	gbs2.Shutdown()
+
+	time.Sleep(10 * time.Second)
+
+	gbs.Shutdown()
 
 }

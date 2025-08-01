@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"math"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -16,6 +17,11 @@ import (
 const (
 	DEFAULT_REACH_WAIT = 3 * time.Second // Seconds
 	DEFAULT_DEAD_GC    = 10 * time.Second
+)
+
+const (
+	PHI_SAMPLE_JITTER_MS = 5 // tiny random jitter when we seed
+	PHI_CONSECUTIVE_FAIL = 3 // k-of-n votes before “dead”
 )
 
 //-------------------
@@ -32,15 +38,14 @@ type phiControl struct {
 }
 
 type phiAccrual struct {
-	reachAttempts uint8
-	warmupBucket  uint16
-	lastBeat      int64
-	window        []int64
-	windowIndex   int
-	score         float64
-	smoothedScore float64
-	dead          bool
-	pa            sync.Mutex
+	reachAttempts  uint8
+	warmupBucket   uint16 // keep if you still increment it
+	lastBeat       int64  // Unix-ms
+	mean           float64
+	variance       float64
+	dead           bool
+	suspectedCount uint8
+	pa             sync.Mutex
 }
 
 // Phi calculates the suspicion level of a participant using the ϕ accrual failure detection model.
@@ -64,6 +69,13 @@ type phiAccrual struct {
 // We don't gossip phi scores or node failures to others in the cluster as the detection is based on local time
 // It is for other nodes to detect failed nodes themselves
 
+func expectedGapMs(gossipPeriod time.Duration, fanOut, clusterSz int) int64 {
+	if fanOut == 0 {
+		fanOut = 1
+	}
+	return int64(gossipPeriod.Milliseconds()) * int64(clusterSz) / int64(fanOut)
+}
+
 func (s *GBServer) adjustedThreshold(participant *Participant) float64 {
 	warmup := participant.paDetection.warmupBucket
 
@@ -73,14 +85,14 @@ func (s *GBServer) adjustedThreshold(participant *Participant) float64 {
 	case warmup < 10:
 		return 12.0
 	case warmup < 60:
-		return 10
+		return 9.9
 	case warmup < 80:
-		return 10
+		return 9.8
 	case warmup >= s.phi.windowSize:
-		return 10
+		return 9.7
 	default:
 		// Between 20 and windowSize
-		return 10
+		return 9.7
 	}
 }
 
@@ -96,7 +108,7 @@ func (s *GBServer) initPhiControl() *phiControl {
 
 	// Should be taken from config
 	return &phiControl{
-		16,
+		9.7,
 		setWarmupBucket(paWindowSize),
 		paWindowSize,
 		make(chan struct{}),
@@ -129,18 +141,21 @@ func (s *GBServer) increaseWarmupBucket(participant *Participant) {
 }
 
 func (s *GBServer) initPhiAccrual() *phiAccrual {
+	// expected steady-state gap for ONE peer (will self-adjust later)
+	gap := expectedGapMs(s.gossip.gossInterval,
+		int(s.gossip.nodeSelection),
+		1)
+
+	// add tiny noise so σ ≠ 0
+	gap += int64(rand.Intn(PHI_SAMPLE_JITTER_MS))
 
 	return &phiAccrual{
-		lastBeat:     0,
-		window:       make([]int64, s.phi.windowSize), //Should be from config or default //TODO change back paWindowSize
-		windowIndex:  0,
-		score:        0.00,
-		warmupBucket: 0,
-		dead:         false,
+		lastBeat: time.Now().UnixMilli(),
+		mean:     float64(gap),
+		variance: float64(gap*gap) / 4, // rough initial σ²
 	}
 }
 
-// TODO Need to use this to ensure we are not stuck or spinning, leaking etc
 func (s *GBServer) tryStartPhiProcess() bool {
 	if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 		fmt.Printf("%s - Cannot start phi: shutting down or context canceled\n", s.PrettyName())
@@ -187,6 +202,8 @@ func (s *GBServer) phiProcess(ctx context.Context) {
 
 		// Wait for gossipOK to become true, or until serverContext is canceled.
 		if !s.phi.phiOK || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
+
+			fmt.Printf("waiting for gossip signal...\n")
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
 
 		}
@@ -219,8 +236,6 @@ func (s *GBServer) startPhiProcess() bool {
 			}
 		case <-ticker.C:
 
-			// TODO We are only calculating once so far - need to fix
-
 			ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 
 			s.startGoRoutine(s.ServerName, "main-phi-process-check", func() {
@@ -236,47 +251,62 @@ func (s *GBServer) startPhiProcess() bool {
 
 }
 
-//TODO Need a ready check or warmup phase to ensure we have enough samples for the window size
-// Or we remove the zeros for a large window size
-
 //----------------------------------
 // Calculation of phi
 
+// γ controls responsiveness: 0.1 ⇒ about 10 recent samples dominate.
+const emaGamma = 0.10
+
+func (p *phiAccrual) updateEMA(sample int64) {
+	if p.mean == 0 {
+		p.mean = float64(sample)
+		p.variance = float64(sample*sample) / 4
+		return
+	}
+	delta := float64(sample) - p.mean
+	p.mean += emaGamma * delta
+	// Welford-style variance update for EMA
+	p.variance = (1 - emaGamma) * (p.variance + emaGamma*delta*delta)
+}
+
+func (s *GBServer) seedEMAForAll() {
+	gap := expectedGapMs(s.gossip.gossInterval,
+		int(s.gossip.nodeSelection),
+		len(s.clusterMap.participants))
+	for _, n := range s.clusterMap.participants {
+		n.paDetection.pa.Lock()
+		n.paDetection.mean = float64(gap)
+		n.paDetection.variance = float64(gap*gap) / 4
+		n.paDetection.pa.Unlock()
+	}
+}
+
 func (s *GBServer) recordPhi(node string) error {
-
 	s.clusterMapLock.RLock()
-	cm := s.clusterMap.participants
+	n, ok := s.clusterMap.participants[node]
 	s.clusterMapLock.RUnlock()
-
-	if n, exists := cm[node]; exists {
-
-		now := time.Now().UnixMilli()
-
-		n.pm.RLock()
-		p := n.paDetection
-		n.pm.RUnlock()
-
-		interval := now - p.lastBeat
-
-		p.pa.Lock()
-
-		if p.lastBeat != 0 {
-
-			p.window[n.paDetection.windowIndex] = interval
-			p.windowIndex = (p.windowIndex + 1) % len(p.window)
-
-		}
-
-		p.lastBeat = now
-		s.increaseWarmupBucket(cm[n.name])
-		p.pa.Unlock()
-
-	} else {
+	if !ok {
 		return Errors.NodeNotFoundErr
 	}
 
-	return nil
+	now := time.Now().UnixMilli()
 
+	n.pm.RLock()
+	p := n.paDetection
+	n.pm.RUnlock()
+
+	p.pa.Lock()
+	defer p.pa.Unlock()
+
+	if p.lastBeat != 0 {
+		interval := now - p.lastBeat
+		if interval > 0 {
+			p.updateEMA(interval)
+		}
+	}
+	p.lastBeat = now
+	s.increaseWarmupBucket(n)
+	return nil
 }
 
 func getMean(array []int64) float64 {
@@ -339,91 +369,109 @@ func (s *GBServer) warmUpCheck(participant *Participant, array []int64) []int64 
 }
 
 // Phi returns the φ-failure for the given value and distribution.
-func phi(v float64, d []int64) float64 {
-	if len(d) == 0 {
-		return 0.0 // no data
+func phi(delta, mean, std float64) float64 {
+	if std == 0 || delta <= mean {
+		return 0
 	}
-
-	mean := getMean(d)
-	stdDev := std(d)
-
-	if v <= mean || d[0] == 0 {
-		return 0.0 // received on time or early
-	}
-
-	cdfValue := cdf(mean, stdDev, v)
-	p := 1 - cdfValue
-
+	// one-sided tail probability of a normal distribution
+	z := (delta - mean) / std
+	p := 0.5 * (1 - math.Erf(z/math.Sqrt2)) // Pr[X > delta]
 	if p < 1e-10 {
-		p = 1e-10
+		p = 1e-10 // avoid –Inf
 	}
-
 	return -math.Log10(p)
 }
 
 func (s *GBServer) calculatePhi(ctx context.Context) {
-
-	// Periodically run a phi check on all participant in the cluster
 	select {
 	case <-ctx.Done():
 		return
 	default:
-		// First calculate mean
-		s.clusterMapLock.RLock()
-		cm := s.clusterMap.participants
-		s.clusterMapLock.RUnlock()
+	}
 
-		now := time.Now().UnixMilli()
+	now := time.Now().UnixMilli()
 
-		for _, participant := range cm {
+	s.clusterMapLock.RLock()
+	participants := s.clusterMap.participants
+	s.clusterMapLock.RUnlock()
 
-			participant.pm.RLock()
-			if participant.name == s.ServerName || participant.paDetection.dead || s.discoveryPhase {
-				participant.pm.RUnlock()
-				continue
-			}
-			participant.pm.RUnlock()
-
-			// If we expect other processes to access window then we may need to lock and also copy...
-			lastBeat := participant.paDetection.lastBeat
-			window := participant.paDetection.window
-
-			phiWindow := s.warmUpCheck(participant, window)
-
-			delta := now - lastBeat
-
-			phi := phi(float64(delta), phiWindow)
-
-			participant.pm.Lock()
-
-			alpha := 0.7 // smoothing factor: closer to 1 = more responsive
-			previous := participant.paDetection.smoothedScore
-			smoothed := alpha*phi + (1-alpha)*previous
-
-			participant.paDetection.score = phi
-			participant.paDetection.smoothedScore = smoothed
-
-			threshold := s.phi.threshold
-
-			if participant.paDetection.warmupBucket == s.phi.windowSize {
-				threshold = 10
-			} else {
-				threshold = s.adjustedThreshold(participant)
-			}
-
-			//fmt.Printf("%s - raw phi = %.2f | smoothed phi = %.2f | Δt = %d ms | %s -> %s | th = %.2f\n",
-			//	s.ServerName, phi, smoothed, delta, s.ServerName, participant.name, threshold)
-
-			if smoothed > threshold {
-				participant.paDetection.dead = true
-
-				// Participant marked dead event here
-				fmt.Printf("node is dead -------------------------------------------\n")
-
-			}
-			participant.pm.Unlock()
-
+	for _, participant := range participants {
+		if participant.name == s.ServerName {
+			continue
 		}
+
+		participant.paDetection.pa.Lock()
+		mean := participant.paDetection.mean
+		variance := participant.paDetection.variance
+		lastBeat := participant.paDetection.lastBeat
+		participant.paDetection.pa.Unlock()
+
+		std := math.Sqrt(variance)
+
+		delta := now - lastBeat
+		phiScore := phi(float64(delta), mean, std)
+
+		threshold := s.phi.threshold
+
+		s.logger.Info("phi", "value", phiScore, "threshold", threshold)
+
+		participant.paDetection.pa.Lock()
+		if phiScore > threshold {
+			participant.paDetection.suspectedCount++
+			if participant.paDetection.suspectedCount >= PHI_CONSECUTIVE_FAIL {
+				participant.paDetection.dead = true
+				s.logger.Info("node is dead", "participant", participant.name,
+					"phi", phiScore, "consecutiveFails", participant.paDetection.suspectedCount)
+			}
+		} else {
+			participant.paDetection.suspectedCount = 0 // reset on any healthy HB
+		}
+		participant.paDetection.pa.Unlock()
+	}
+}
+
+//======================================================
+// Handling dead nodes
+//======================================================
+
+func (s *GBServer) shouldWeGossip(participant *Participant) bool {
+
+	participant.pm.Lock()
+	participant.paDetection.reachAttempts++
+	participant.pm.Unlock()
+
+	if participant.paDetection.reachAttempts != 3 {
+		return true
+	} else {
+		go s.handleDeadNode(participant)
+		return false
+	}
+}
+
+func (s *GBServer) handleDeadNode(participant *Participant) {
+
+	select {
+	case <-s.ServerContext.Done():
+		return
+	default:
+		s.nodeConnStore.Delete(participant.name)
+		s.serverLock.Lock()
+		s.notToGossipNodeStore[participant.name] = struct{}{}
+		s.serverLock.Unlock()
+
+		participant.pm.Lock()
+		if p, ok := s.clusterMap.participants[participant.name]; ok {
+			p.keyValues = map[string]*Delta{
+				MakeDeltaKey(SYSTEM_DKG, _DEAD_): {
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _DEAD_,
+					Version:   time.Now().Unix(),
+					ValueType: D_BYTE_TYPE,
+					Value:     []byte{},
+				},
+			}
+		}
+		participant.pm.Unlock()
 
 		return
 
