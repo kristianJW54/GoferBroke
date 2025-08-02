@@ -12,7 +12,6 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -915,6 +914,12 @@ func (s *GBServer) modifyDigest(digest []byte) ([]byte, int, error) {
 // Send Digest in GOSS_SYN - Stage 1
 
 func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayload, error) {
+
+	// We create a child context which will be the gossipRoundTimeout not including the extra timeout reserved for indirect probing
+	// If we reach the deadline, we fall out, and use the parent context and remainder timeout as the indirect probe
+	childCtx, cancel := context.WithTimeout(ctx, s.fail.gossipTimeout*time.Millisecond)
+	defer cancel()
+
 	// Generate the digest
 	digest, _, err := s.generateDigest()
 	if err != nil {
@@ -946,11 +951,13 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 	}
 
 	// Send the digest and wait for a response
-	resp := conn.qProtoWithResponse(ctx, reqID, cereal, false)
+	resp := conn.qProtoWithResponse(childCtx, reqID, cereal, false)
 
 	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
-		s.logger.Info("received err in send digest", "err", err.Error())
+		if childCtx.Err() != nil {
+			return responsePayload{}, context.DeadlineExceeded
+		}
 		return responsePayload{}, err
 	}
 
@@ -1186,12 +1193,12 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 				return
 			}
 
-			c.srv.logger.Info("gsa", "message", string(delta.msg))
+			//c.srv.logger.Info("gsa", "message", string(delta.msg))
 
-			err = c.srv.recordPhi(sender)
-			if err != nil {
-				fmt.Printf("recordPhi failed: %v\n", err)
-			}
+			//err = c.srv.recordPhi(sender)
+			//if err != nil {
+			//	fmt.Printf("recordPhi failed: %v\n", err)
+			//}
 
 			// 2. Merge into server state (must be thread-safe!)
 			if e := c.srv.addGSADeltaToMap(cd); e != nil {
@@ -1285,39 +1292,6 @@ func (s *GBServer) checkGossipCondition() {
 
 //----------------
 //Gossip sync.Map
-
-func (s *GBServer) storeGossipingWith(node string) error {
-
-	timestampStr := node[len(node)-10:]
-
-	// Convert the extracted string to an integer
-	nodeTimestamp, err := strconv.Atoi(timestampStr)
-	if err != nil {
-		return fmt.Errorf("failed to convert timestamp '%s' to int: %v", timestampStr, err)
-	}
-
-	s.gossip.gossipingWith.Store(node, nodeTimestamp)
-	//log.Println("storing --> ", node)
-
-	return nil
-}
-
-func (s *GBServer) getGossipingWith(node string) (int, error) {
-	nodeSeniority, exists := s.gossip.gossipingWith.Load(node)
-	if exists {
-		// Use type assertion to convert the value to an int
-		if seniority, ok := nodeSeniority.(int); ok {
-			return seniority, nil
-		}
-		return 0, fmt.Errorf("type assertion failed for node: %s", node)
-	}
-	return 0, fmt.Errorf("node %s not found", node)
-}
-
-func (s *GBServer) clearGossipingWithMap() {
-	//log.Printf("clearing map")
-	s.gossip.gossipingWith.Clear()
-}
 
 //----------------
 //Gossip Control
@@ -1431,10 +1405,8 @@ func (s *GBServer) startGossipProcess() bool {
 				continue
 			}
 
-			ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 			s.gossip.gossWg.Add(1)
-			s.startGossipRound(ctx)
-			cancel()
+			s.startGossipRound()
 
 		case gossipState := <-s.gossip.gossipControlChannel:
 			if !gossipState {
@@ -1452,7 +1424,7 @@ func (s *GBServer) startGossipProcess() bool {
 // Gossip Round
 //=======================================================
 
-func (s *GBServer) startGossipRound(ctx context.Context) {
+func (s *GBServer) startGossipRound() {
 
 	start := time.Now()
 
@@ -1469,7 +1441,6 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		)
 
 		s.endGossip()
-		s.clearGossipingWithMap()
 		s.gossip.gossWg.Done()
 	}()
 
@@ -1522,10 +1493,15 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 		wg.Add(1)
 		go func(node string) {
 			defer wg.Done()
-			nodeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			nodeCtx, cancel := context.WithTimeout(s.ServerContext, s.fail.maxGossipRoundTimeout*time.Millisecond)
 			defer cancel()
 
 			s.gossipWithNode(nodeCtx, node)
+
+			if nodeCtx.Err() != nil {
+
+			}
+
 		}(nodeID)
 	}
 
@@ -1537,7 +1513,7 @@ func (s *GBServer) startGossipRound(ctx context.Context) {
 	}()
 
 	select {
-	case <-ctx.Done():
+	case <-s.ServerContext.Done():
 		return
 	case <-done:
 		// Completed successfully
@@ -1554,14 +1530,13 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	if s.flags.isSet(SHUTTING_DOWN) {
 		return
 	}
-	_ = s.storeGossipingWith(node)
 
 	//------------- Dial Check -------------//
 
 	conn, exists, err := s.getNodeConnFromStore(node)
 	if err == nil && !exists {
 		go func() {
-			dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			dialCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			err := s.connectToNodeInMap(dialCtx, node)
 			if err != nil {
@@ -1585,7 +1560,10 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
 	if err != nil {
-		//log.Printf("%s - gossip deferred - %s", s.name, err.Error())
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Handle indirect probe here
+			// TODO ---
+		}
 		return
 	}
 

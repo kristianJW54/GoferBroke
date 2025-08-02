@@ -376,7 +376,7 @@ func (c *gbClient) readLoop() {
 				return
 			}
 
-			c.handleReadError(err)
+			//c.handleReadError(err)
 
 			return
 		}
@@ -550,7 +550,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 
 	// Write errors
 	if err != nil {
-		c.handleWriteError(err)
+		//c.handleWriteError(err)
 		return true
 	}
 
@@ -689,8 +689,8 @@ func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	case msg := <-rsp.ch:
 		return msg, nil
 
-	case clientErr := <-c.errChan:
-		return responsePayload{}, clientErr
+	//case clientErr := <-c.errChan:
+	//	return responsePayload{}, clientErr
 
 	case err := <-rsp.err:
 		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, err, "")

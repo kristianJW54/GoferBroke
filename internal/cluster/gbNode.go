@@ -1418,15 +1418,15 @@ func (c *gbClient) processGossSyn(message []byte) {
 		return
 	}
 
-	sender, d, err := deSerialiseDigest(message)
+	_, d, err := deSerialiseDigest(message)
 	if err != nil {
 		fmt.Printf("error serialising digest - %v\n", err)
 	}
 
-	err = c.srv.recordPhi(sender)
-	if err != nil {
-		fmt.Printf("recordPhi failed: %v\n", err)
-	}
+	//err = c.srv.recordPhi(sender)
+	//if err != nil {
+	//	fmt.Printf("recordPhi failed: %v\n", err)
+	//}
 
 	// Big lesson here (which is why I'm leaving it in):
 	// When two nodes attempt to gossip with each other at the same time - I was trying to implement a defer mechanic

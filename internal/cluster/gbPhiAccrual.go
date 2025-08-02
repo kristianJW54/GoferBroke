@@ -309,65 +309,6 @@ func (s *GBServer) recordPhi(node string) error {
 	return nil
 }
 
-func getMean(array []int64) float64 {
-	if len(array) == 0 {
-		return 0.0
-	}
-	var sum float64
-	for _, v := range array {
-		sum += float64(v)
-	}
-	return sum / float64(len(array))
-}
-
-func getVariance(array []int64) float64 {
-
-	if len(array) == 0 {
-		return 0.0
-	}
-
-	var sumOfSquaredDiffs float64
-
-	mean := getMean(array)
-
-	for _, v := range array {
-		sqrDiff := float64(v) - mean
-		sumOfSquaredDiffs += sqrDiff * sqrDiff
-	}
-
-	return sumOfSquaredDiffs / float64(len(array))
-
-}
-
-func std(array []int64) float64 {
-	return math.Sqrt(getVariance(array))
-}
-
-func cdf(mean, std, v float64) float64 {
-	return (1.0 / 2.0) * (1 + math.Erf((v-mean)/(std*math.Sqrt2)))
-}
-
-func (s *GBServer) warmUpCheck(participant *Participant, array []int64) []int64 {
-	switch {
-	case participant.paDetection.warmupBucket == 0:
-		// Very early: just use 1 sample
-		return array[:1]
-
-	case participant.paDetection.warmupBucket == s.phi.windowSize:
-		// Fully warmed up
-		return array
-
-	default:
-		// In warm-up phase: return a small padded window
-		warmupBucket := participant.paDetection.warmupBucket
-		sliceSize := warmupBucket + 10
-		if sliceSize > uint16(len(array)) {
-			sliceSize = uint16(len(array))
-		}
-		return array[:sliceSize]
-	}
-}
-
 // Phi returns the φ-failure for the given value and distribution.
 func phi(delta, mean, std float64) float64 {
 	if std == 0 || delta <= mean {

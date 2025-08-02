@@ -50,6 +50,9 @@ const (
 	DEFAULT_MAX_GOSSIP_SIZE           = uint16(2048)
 	DEFAULT_MAX_NUMBER_OF_NODES       = uint32(1000)
 	DEFAULT_SEQUENCE_ID_POOL          = uint32(100)
+	DEFAULT_GOSSIP_ROUND_TIMEOUT      = uint16(1000)
+	DEFAULT_FAILURE_PROBE             = uint8(1)
+	DEFAULT_FAILURE_TIMEOUT           = uint16(300)
 )
 
 // TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
@@ -85,6 +88,7 @@ type ClusterOptions struct {
 	PaWindowSize                   uint16
 	MaxGossSynAck                  uint16
 	MaxNumberOfNodes               uint32
+	GossipRoundTimeout             uint16 // ms
 	MaxSequenceIDPool              uint32
 	ClusterNetworkType             ClusterNetworkType
 	DynamicGossipScaling           bool // Adjusts node selection, delta size, discovery size, etc based on cluster metrics and size
@@ -96,6 +100,11 @@ type ClusterOptions struct {
 
 	NodeMTLSRequired   bool `default:"false"`
 	ClientMTLSRequired bool `default:"false"`
+
+	// Failure
+	FailureKNodesToProbe uint8
+	FailureProbeTimeout  uint16 // ms
+
 }
 
 func InitDefaultClusterConfig() *GbClusterConfig {
@@ -117,6 +126,7 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			PaWindowSize:                   DEFAULT_PA_WINDOW_SIZE,
 			MaxGossSynAck:                  DEFAULT_MAX_GSA,
 			MaxNumberOfNodes:               DEFAULT_MAX_NUMBER_OF_NODES,
+			GossipRoundTimeout:             DEFAULT_GOSSIP_ROUND_TIMEOUT,
 			MaxSequenceIDPool:              DEFAULT_SEQUENCE_ID_POOL,
 			ClusterNetworkType:             C_UNDEFINED,
 			DynamicGossipScaling:           false,
@@ -126,6 +136,8 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			EndpointsURLMap:                ep,
 			NodeMTLSRequired:               false,
 			ClientMTLSRequired:             false,
+			FailureKNodesToProbe:           DEFAULT_FAILURE_PROBE,
+			FailureProbeTimeout:            DEFAULT_FAILURE_TIMEOUT,
 		},
 	}
 

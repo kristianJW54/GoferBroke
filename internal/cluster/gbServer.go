@@ -250,7 +250,10 @@ type GBServer struct {
 
 	//Server Info for gossip
 	clusterMap ClusterMap
-	phi        phiControl
+
+	// Failure
+	phi  phiControl
+	fail *failureControl
 
 	//Connection Handling
 	gcid uint64 // Global client ID counter
@@ -404,6 +407,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 	seq := newSeqReqPool(10) //gbConfig.Cluster.RequestIDPool
 
+	fail := newFailureControl(gbConfig)
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bj := newBackgroundJobScheduler()
@@ -433,6 +438,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		seedAddr:        seedAddr,
 		configSchema:    cfgSchema,
 		originalCfgHash: cfgHash,
+
+		fail: fail,
 
 		notToGossipNodeStore: make(map[string]interface{}),
 
@@ -589,9 +596,9 @@ func (s *GBServer) StartServer() {
 	if !s.gbNodeConfig.Internal.DisableGossip {
 
 		// Start up phi process which will wait for the gossip signal
-		s.startGoRoutine(s.PrettyName(), "phi-process", func() {
-			s.phiProcess(s.ServerContext)
-		})
+		//s.startGoRoutine(s.PrettyName(), "phi-process", func() {
+		//	s.phiProcess(s.ServerContext)
+		//})
 
 		// Handle dead connection process here:
 		//-->
