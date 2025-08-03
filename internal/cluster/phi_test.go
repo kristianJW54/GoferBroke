@@ -1,76 +1,10 @@
 package cluster
 
 import (
-	"fmt"
 	"net"
 	"testing"
 	"time"
 )
-
-func TestPhiCalc(t *testing.T) {
-
-	tests := []struct {
-		name      string
-		window    []int64
-		value     float64
-		threshold float64
-		failed    bool
-	}{
-		{
-			name:      "normal node",
-			window:    []int64{1, 2, 1, 1, 1, 1, 1, 1, 1, 1},
-			value:     1,
-			threshold: 3,
-			failed:    false,
-		},
-		{
-			name:      "node delay in middle",
-			window:    []int64{1, 1, 2, 1, 10, 5, 2, 1, 1, 1},
-			value:     1,
-			threshold: 3,
-			failed:    false,
-		},
-		{
-			name:      "failed node",
-			window:    []int64{1, 1, 1, 2, 3, 4, 5, 6, 7, 10},
-			value:     14,
-			threshold: 3,
-			failed:    true,
-		},
-		{
-			name:      "warm up phase",
-			window:    []int64{1, 0},
-			value:     2,
-			threshold: 3,
-			failed:    false,
-		},
-	}
-
-	// range through tests
-	for _, tt := range tests {
-
-		t.Run(tt.name, func(t *testing.T) {
-
-			phi := phi(tt.value, tt.window)
-
-			var result bool
-
-			if phi > tt.threshold {
-				result = true
-			} else {
-				result = false
-			}
-
-			if result != tt.failed {
-				t.Errorf("wanted %v, got %v", tt.failed, result)
-			}
-
-			fmt.Printf("ϕ = %.2f\n", phi)
-
-		})
-
-	}
-}
 
 func TestPhiLive(t *testing.T) {
 

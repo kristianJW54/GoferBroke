@@ -20,6 +20,11 @@ const (
 	CFG_RECON
 	CFG_RECON_RESP
 
+	PROBE
+	PROBE_RESP
+	PING_CMD
+	PONG_CMD
+
 	OK
 	OK_RESP
 	EOS
@@ -198,7 +203,8 @@ func (c *gbClient) ParsePacket(packet []byte) {
 		case StateREnd:
 
 			if b != '\r' {
-				fmt.Printf("nope -- b = %v\n", b)
+				c.srv.logger.Info("nope 1 -- b", "=", b)
+				return
 			}
 
 			if c.msgBuf != nil {
@@ -210,7 +216,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 		case StateNEnd:
 
 			if b != '\n' {
-				fmt.Printf("nope -- b = %v\n", b)
+				c.srv.logger.Info("nope 2 -- b", "=", b)
 				return
 			}
 
@@ -220,7 +226,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 
-			//log.Printf("msg buf = %v", c.msgBuf)
+			//fmt.Printf("msg buf = %v\n", c.msgBuf)
 
 			c.processMessage(c.msgBuf)
 

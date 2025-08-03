@@ -176,6 +176,7 @@ const (
 	LOCAL_LOG_DKG = "local_log"
 	CONFIG_DKG    = "config"
 	TEST_DKG      = "test"
+	FAILURE_DKG   = "failure"
 )
 
 const (

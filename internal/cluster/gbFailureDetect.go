@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -11,8 +12,9 @@ const (
 	ALIVE FailureState = iota + 1
 	SUSPECTED
 	FAULTY
-	DEAD
 )
+
+func (f FailureState) worseThan(other FailureState) bool { return f > other }
 
 type failureControl struct {
 	mu                    sync.RWMutex
@@ -23,8 +25,10 @@ type failureControl struct {
 }
 
 type failure struct {
-	mu    sync.RWMutex
-	state FailureState
+	mu                 sync.RWMutex
+	state              FailureState
+	incarnationVersion int64
+	suspectSince       time.Time
 }
 
 func newFailureControl(conf *GbClusterConfig) *failureControl {
@@ -37,5 +41,9 @@ func newFailureControl(conf *GbClusterConfig) *failureControl {
 		gossipTimeout:         time.Duration(conf.Cluster.GossipRoundTimeout),
 		maxGossipRoundTimeout: time.Duration(maxGossipTime),
 	}
+
+}
+
+func (s *GBServer) sendIndirectProbe(ctx context.Context, target string) {
 
 }

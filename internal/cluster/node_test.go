@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sync"
@@ -326,5 +327,118 @@ func TestGetClusterConfigUpdateExchange(t *testing.T) {
 
 	gbs2.Shutdown()
 	gbs.Shutdown()
+
+}
+
+// Test Ready ✅
+func TestSendProbe(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg3 := `
+				Name = "t-3"
+				Host = "localhost"
+				Port = "8083"
+				IsSeed = False
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs3, err := NewServerFromConfigString(nodeCfg3, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(100 * time.Millisecond)
+	go gbs2.StartServer()
+	go gbs3.StartServer()
+
+	time.Sleep(2 * time.Second)
+
+	// node 2 want to probe node 3 through node 1
+	name := []byte(gbs3.ServerName)
+	name = append(name, '\r', '\n')
+
+	reqID, _ := gbs2.acquireReqID()
+
+	pay, err := prepareRequest(name, 1, PROBE, reqID, uint16(0))
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(gbs2.ServerContext, 7*time.Second)
+	defer cancel()
+
+	client, exists, err := gbs2.getNodeConnFromStore(gbs.ServerName)
+	if err != nil || !exists {
+		t.Errorf("%v - or doesn't exist", err)
+	}
+
+	resp := client.qProtoWithResponse(ctx, reqID, pay, true)
+
+	rsp, err := client.waitForResponseAndBlock(resp)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	gbs.Shutdown()
+	gbs2.Shutdown()
+	gbs3.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if rsp.msg == nil {
+		t.Errorf("expected to get an ok resp - got nil response instead")
+	}
 
 }

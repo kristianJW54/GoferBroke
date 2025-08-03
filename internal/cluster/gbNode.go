@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"math/rand"
@@ -983,6 +984,14 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processCfgRecon(message)
 	case CFG_RECON_RESP:
 		c.processCfgReconResp(message)
+	case PROBE:
+		c.processProbe(message)
+	case PROBE_RESP:
+		c.processProbeResp(message)
+	case PING_CMD:
+		c.processPing(message)
+	case PONG_CMD:
+		c.processPong(message)
 	case OK:
 		c.processOK(message)
 	case OK_RESP:
@@ -1147,6 +1156,119 @@ func (c *gbClient) processCfgReconResp(message []byte) {
 
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
+	default:
+		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
+		return
+	}
+
+}
+
+func (c *gbClient) processProbe(message []byte) {
+
+	reqID := c.ph.reqID
+
+	buf := make([]byte, len(message))
+	copy(buf, message)
+	name := bytes.TrimSuffix(buf, []byte("\r\n"))
+
+	//c.srv.logger.Info("got a message", "msg", message)
+
+	client, exists, err := c.srv.getNodeConnFromStore(string(name))
+	if err != nil {
+		return
+	}
+
+	//c.srv.logger.Info("client name", "name", client.name)
+
+	if !exists {
+		c.srv.logger.Info("client not found", "msg", name)
+	}
+
+	probe := []byte("PING\r\n")
+
+	probeReqID, _ := c.srv.acquireReqID()
+
+	pay, err := prepareRequest(probe, 1, PING_CMD, probeReqID, uint16(0))
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+
+	resp := client.qProtoWithResponse(ctx, probeReqID, pay, false)
+
+	client.waitForResponseAsync(resp, func(payload responsePayload, err error) {
+
+		defer cancel()
+
+		if errors.Is(err, context.DeadlineExceeded) {
+			c.sendErr(reqID, 0, "probe timeout")
+			return
+		}
+
+		if err != nil {
+			c.sendErr(reqID, 0, err.Error())
+			return
+		}
+
+		if payload.msg == nil {
+			c.sendErr(reqID, uint16(0), "nil message")
+			return
+		}
+
+		c.sendOK(reqID)
+
+	})
+
+}
+
+func (c *gbClient) processProbeResp(message []byte) {
+
+}
+
+func (c *gbClient) processPing(message []byte) {
+
+	reqID := c.ph.reqID
+
+	pong := []byte("PONG\r\n")
+
+	//c.srv.logger.Info("did we get a ping?", "ping", message)
+
+	pay, err := prepareRequest(pong, 1, PONG_CMD, reqID, uint16(0))
+	if err != nil {
+		return
+	}
+
+	c.mu.Lock()
+	c.enqueueProto(pay)
+	c.mu.Unlock()
+
+	return
+
+}
+
+func (c *gbClient) processPong(message []byte) {
+
+	reqID := c.ph.reqID
+	respID := c.ph.respID
+
+	msg := make([]byte, len(message))
+	copy(msg, message)
+	pong := bytes.TrimSuffix(msg, []byte("\r\n"))
+
+	//c.srv.logger.Info("did we get a pong?", "ping", message)
+
+	rsp, err := c.getResponseChannel(reqID)
+	if err != nil {
+		fmt.Printf("getResponseChannel failed: %v\n", err)
+	}
+
+	if rsp == nil {
+		return
+	}
+
+	select {
+	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: pong}:
 	default:
 		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
