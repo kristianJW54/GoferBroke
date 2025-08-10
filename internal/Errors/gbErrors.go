@@ -371,6 +371,7 @@ const (
 	DECODE_DELTA_CODE                 = 80
 	CONSTRUCT_NODE_HEADER_CODE        = 81
 	PREPARE_REQUEST_CODE              = 82
+	INDIRECT_PROBE_CODE               = 83
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -423,6 +424,7 @@ var KnownInternalErrors = map[int]*GBError{
 	DECODE_DELTA_CODE:                 &GBError{Code: DECODE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to decode delta"},
 	CONSTRUCT_NODE_HEADER_CODE:        &GBError{Code: CONSTRUCT_NODE_HEADER_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to construct node header"},
 	PREPARE_REQUEST_CODE:              &GBError{Code: PREPARE_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to prepare request"},
+	INDIRECT_PROBE_CODE:               &GBError{Code: INDIRECT_PROBE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to send indirect probe"},
 }
 
 var (
@@ -453,6 +455,7 @@ var (
 	DecodeDeltaErr          = KnownInternalErrors[DECODE_DELTA_CODE]
 	ConstructHeaderErr      = KnownInternalErrors[CONSTRUCT_NODE_HEADER_CODE]
 	PrepareRequestErr       = KnownInternalErrors[PREPARE_REQUEST_CODE]
+	IndirectProbeErr        = KnownInternalErrors[INDIRECT_PROBE_CODE]
 )
 
 var (

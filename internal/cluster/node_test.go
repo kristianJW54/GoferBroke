@@ -331,7 +331,7 @@ func TestGetClusterConfigUpdateExchange(t *testing.T) {
 }
 
 // Test Ready ✅
-func TestSendProbe(t *testing.T) {
+func TestProbeCommand(t *testing.T) {
 
 	nodeCfg := `
 				Name = "t-1"
@@ -440,5 +440,113 @@ func TestSendProbe(t *testing.T) {
 	if rsp.msg == nil {
 		t.Errorf("expected to get an ok resp - got nil response instead")
 	}
+
+}
+
+func TestSendProbeFunction(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = True
+				}
+
+`
+
+	nodeCfg3 := `
+				Name = "t-3"
+				Host = "localhost"
+				Port = "8083"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg4 := `
+				Name = "t-4"
+				Host = "localhost"
+				Port = "8084"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs3, err := NewServerFromConfigString(nodeCfg3, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs4, err := NewServerFromConfigString(nodeCfg4, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs3.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs4.StartServer()
+
+	time.Sleep(10 * time.Second)
+
+	// Here we want to run two tests - one for testing that single helper selected can successfully probe the target
+	// Second that two helpers can probe in parallel the target and respect the context and channels
+	// Then we test no helpers for a quick return
+
+	ctx, cancel := context.WithTimeout(gbs2.ServerContext, 1*time.Second)
+	defer cancel()
+	err = gbs2.handleIndirectProbe(ctx, gbs3.ServerName)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	time.Sleep(1 * time.Second)
 
 }

@@ -21,14 +21,14 @@ func TestRandomNodeSelection(t *testing.T) {
 
 	ntg := map[string]interface{}{
 		"part-1": struct{}{},
-		"part-3": struct{}{},
+		//"part-3": struct{}{},
 	}
 
 	ns := 2
 	runs := 100
 
 	for i := 0; i < runs; i++ {
-		indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, ntg)
+		indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, ntg, "part-3")
 		if err != nil {
 			t.Errorf("run %d: %v", i, err)
 		}

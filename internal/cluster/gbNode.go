@@ -471,7 +471,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	nodeAddr := net.JoinHostPort(ip.String(), port)
 
-	fmt.Printf("connecting to node %s at %s\n", node, nodeAddr)
+	s.logger.Info("connecting to node", "name", node, "addr", nodeAddr)
 
 	// Dial here
 	conn, err := net.Dial("tcp", nodeAddr)
@@ -918,26 +918,45 @@ func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 // Random node selector
 
 // Lock should be held on entry
-func generateRandomParticipantIndexesForGossip(partArray []string, numOfNodeSelection int, notToGossip map[string]interface{}) ([]int, error) {
-	partLenArray := len(partArray)
-	if partLenArray <= 0 || numOfNodeSelection <= 0 {
-		return nil, fmt.Errorf("invalid participant array or selection count")
+func generateRandomParticipantIndexesForGossip(
+	partArray []string,
+	numOfNodeSelection int,
+	notToGossip map[string]interface{},
+	exclude ...string,
+) ([]int, error) {
+
+	if numOfNodeSelection <= 0 {
+		return nil, fmt.Errorf("selection count must be >0")
+	}
+	if len(partArray) == 0 {
+		return nil, fmt.Errorf("participant list is empty")
 	}
 
-	// Build list of candidate indexes, excluding self
-	candidates := make([]int, 0, partLenArray-1)
+	// Build a quick look-up set of names to skip.
+	skip := make(map[string]struct{}, len(notToGossip)+len(exclude))
+	for n := range notToGossip {
+		skip[n] = struct{}{}
+	}
+	for _, n := range exclude {
+		skip[n] = struct{}{}
+	}
+
+	// Collect candidate indexes.
+	candidates := make([]int, 0, len(partArray))
 	for i, id := range partArray {
-		if _, exists := notToGossip[id]; exists {
+		if _, banned := skip[id]; banned {
 			continue
 		}
 		candidates = append(candidates, i)
 	}
 
 	if numOfNodeSelection > len(candidates) {
-		return nil, fmt.Errorf("not enough participants to select %d (excluding self)", numOfNodeSelection)
+		return nil, fmt.Errorf(
+			"cannot select %d nodes: only %d candidates after exclusions",
+			numOfNodeSelection, len(candidates))
 	}
 
-	// Partial Fisher-Yates shuffle to pick numOfNodeSelection indexes
+	// Partial Fisher-Yates shuffle: randomise the first k elements.
 	for i := 0; i < numOfNodeSelection; i++ {
 		j := i + rand.Intn(len(candidates)-i)
 		candidates[i], candidates[j] = candidates[j], candidates[i]
@@ -1171,14 +1190,14 @@ func (c *gbClient) processProbe(message []byte) {
 	copy(buf, message)
 	name := bytes.TrimSuffix(buf, []byte("\r\n"))
 
-	//c.srv.logger.Info("got a message", "msg", message)
+	c.srv.logger.Info("got a message", "msg", message, "i am", c.srv.PrettyName())
 
 	client, exists, err := c.srv.getNodeConnFromStore(string(name))
 	if err != nil {
 		return
 	}
 
-	//c.srv.logger.Info("client name", "name", client.name)
+	c.srv.logger.Info("client name", "name", client.name)
 
 	if !exists {
 		c.srv.logger.Info("client not found", "msg", name)
@@ -1232,7 +1251,7 @@ func (c *gbClient) processPing(message []byte) {
 
 	pong := []byte("PONG\r\n")
 
-	//c.srv.logger.Info("did we get a ping?", "ping", message)
+	c.srv.logger.Info("did we get a ping?", "ping", message)
 
 	pay, err := prepareRequest(pong, 1, PONG_CMD, reqID, uint16(0))
 	if err != nil {

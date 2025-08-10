@@ -1422,6 +1422,24 @@ func (s *GBServer) getNodeConnFromStore(node string) (*gbClient, bool, error) {
 	}
 }
 
+func (s *GBServer) activeNodeIDs() []string {
+	var ids []string
+	s.nodeConnStore.Range(func(key, val any) bool {
+		// skip any nil or wrong‐type entries
+		cli, ok := val.(*gbClient)
+		if !ok || cli == nil {
+			return true
+		}
+		id, ok := key.(string)
+		if !ok {
+			return true
+		}
+		ids = append(ids, id)
+		return true
+	})
+	return ids
+}
+
 //---------------
 // Add ID to seedAddr list
 

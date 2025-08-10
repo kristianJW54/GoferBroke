@@ -319,8 +319,10 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 	switch c.cType {
 	case NODE:
-		s.nodeConnStore.Store(name, c)
-		c.flags.set(CONNECTED)
+		if c.gbc != nil {
+			s.nodeConnStore.Store(name, c)
+			c.flags.set(CONNECTED)
+		}
 	case CLIENT:
 		return fmt.Errorf("found client in tmpConnStore %s", name)
 	default:

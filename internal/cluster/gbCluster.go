@@ -225,6 +225,7 @@ type Participant struct {
 	keyValues        map[string]*Delta // composite key - flattened -> group:key
 	connection       *connectionMetaData
 	paDetection      *phiAccrual
+	f                *failure
 	maxVersion       int64
 	configMaxVersion int64
 	pm               sync.RWMutex
@@ -914,6 +915,9 @@ func (s *GBServer) modifyDigest(digest []byte) ([]byte, int, error) {
 //-------------------------
 // Send Digest in GOSS_SYN - Stage 1
 
+// sendDigest takes the parent context (gossip round context) and makes a child context which will have a baseline timeout
+// if sendDigest reaches its deadline, the remaining parent context will be used as the timeout for an indirect probe.
+// sendDigest compiles a digest of (node_name:[key:version]) to send to a receiving node in which a delta can be built.
 func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayload, error) {
 
 	// We create a child context which will be the gossipRoundTimeout not including the extra timeout reserved for indirect probing
@@ -1079,8 +1083,11 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			d := heap.Pop(&dh).(*deltaQueue)
 
+			//s.logger.Info("adding delta", "value", d.delta.Value)
+
 			if d.size+sizeOfDelta > remaining {
-				fmt.Printf("BROKE SIZE -- %d\n", size+sizeOfDelta)
+				sd := size + sizeOfDelta
+				s.logger.Info("broke size", "size", sd, "name", s.PrettyName(), "dropping", d.delta.Value)
 				break
 			}
 
@@ -1466,11 +1473,11 @@ func (s *GBServer) startGossipRound() {
 	}
 
 	s.clusterMapLock.RLock()
-	partList := append([]string(nil), s.clusterMap.participantArray...)
+	partList := s.clusterMap.participantArray
 	//parts := s.clusterMap.participants
 	s.clusterMapLock.RUnlock()
 
-	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), s.notToGossipNodeStore)
+	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), s.notToGossipNodeStore, "")
 	if err != nil {
 		// TODO Need to add error event as its internal system error
 		return
@@ -1563,6 +1570,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			// Handle indirect probe here
+			//_ = s.handleIndirectProbe(ctx, node)
 			// TODO ---
 		}
 		return
