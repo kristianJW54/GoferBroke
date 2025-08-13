@@ -1198,7 +1198,6 @@ func GenerateConfigDeltas(schema map[string]*ConfigSchema, cfg *GbClusterConfig,
 		}
 
 		part.keyValues[MakeDeltaKey(delta.KeyGroup, delta.Key)] = delta
-		part.configMaxVersion = 0
 
 	}
 

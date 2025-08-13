@@ -7,15 +7,11 @@ import (
 	"time"
 )
 
-type FailureState uint8
-
 const (
-	ALIVE FailureState = iota + 1
+	ALIVE = uint8(iota) + 1
 	SUSPECTED
 	FAULTY
 )
-
-func (f FailureState) worseThan(other FailureState) bool { return f > other }
 
 type failureControl struct {
 	mu                    sync.RWMutex
@@ -27,10 +23,16 @@ type failureControl struct {
 
 type failure struct {
 	mu                 sync.RWMutex
-	state              FailureState
-	retries            uint8
+	state              uint8
 	incarnationVersion int64
 	suspectSince       time.Time
+}
+
+func newFailure() *failure {
+	return &failure{
+		state:              ALIVE,
+		incarnationVersion: 0,
+	}
 }
 
 func newFailureControl(conf *GbClusterConfig) *failureControl {
@@ -80,27 +82,11 @@ func (s *GBServer) handleIndirectProbe(ctx context.Context, target string) error
 		s.logger.Info("requesters", "name", active[t])
 	}
 
-	// now need to see if we have a client connection of the requester we wish to contact
-	client, exists, err := s.getNodeConnFromStore(active[r[0]])
+	err = s.sendProbes(ctx, r, active, target)
 	if err != nil {
-		//errCh <- Errors.ChainGBErrorf(Errors.IndirectProbeErr, err, "for requester %s", active[r[0]])
+		s.logger.Info("✗ sendProbes failed – skipping dump", "err", err)
 		return err
 	}
-	if !exists {
-		//errCh <- Errors.ChainGBErrorf(Errors.IndirectProbeErr, nil, "requester %s does not exist", helperID)
-		return err
-	}
-
-	err = s.sendSingleProbe(ctx, client, target)
-	if err != nil {
-		return err
-	}
-
-	//err = s.sendProbes(ctx, r, active, target)
-	//if err != nil {
-	//	s.logger.Info("✗ sendProbes failed – skipping dump", "err", err)
-	//	return err
-	//}
 
 	return nil
 
@@ -200,6 +186,8 @@ func (s *GBServer) sendProbes(parentCtx context.Context, helpers []int, parts []
 				return
 			}
 
+			s.logger.Info("got a response yay", "resp", string(rsp.msg))
+
 			select {
 			case doneCh <- struct{}{}:
 				cancel()
@@ -235,8 +223,43 @@ func (s *GBServer) sendProbes(parentCtx context.Context, helpers []int, parts []
 
 }
 
-func (s *GBServer) markSuspect() error {
+// If we mark a node as suspect - we must log it's time since suspected in order to measure if enough time has passed
+// between since and now to be more than convergence estimation
+
+func (s *GBServer) markSuspect(node string) error {
+
+	s.clusterMapLock.RLock()
+	part, exists := s.clusterMap.participants[node]
+	s.clusterMapLock.RUnlock()
+	if !exists {
+		return Errors.ChainGBErrorf(Errors.MarkSuspectErr, nil,
+			"node %s does not exist in cluster map", node)
+	}
+
+	part.f.mu.Lock()
+	part.f.state = SUSPECTED
+	part.f.suspectSince = time.Now()
+	part.f.mu.Unlock()
+
+	// TODO Do defensive checks here in case it's already suspected or faulty
+	v, err := encodeValue(D_UINT8_TYPE, SUSPECTED)
+	if err != nil {
+		return err
+	}
+	err = s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: node, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: v})
+	if err != nil {
+		return Errors.ChainGBErrorf(Errors.MarkSuspectErr, err, "for node: %s", node)
+	}
+
+	// TODO Finish --
+	// We don't immediately stop gossiping with the suspected node - we wait for convergence in the background process
+	// And then let that stop the gossip with the suspected - this gives the suspected node time to refute the suspicion
+
+	s.logger.Info("marking node suspected", "node", node)
 
 	return nil
 
 }
+
+//---------------------------------------------------
+// Suspect checker - to be used as background job

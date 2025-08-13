@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -221,6 +220,7 @@ type GBServer struct {
 
 	//Distributed Info
 	gossip          *gossip
+	convergenceEst  time.Duration
 	isSeed          bool
 	canBeRendezvous bool // TODO Change to reachable state machine
 	discoveryPhase  bool
@@ -926,16 +926,6 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 		maxVersion: t,
 	}
 
-	nameDelta := &Delta{
-		KeyGroup:  SYSTEM_DKG,
-		Key:       _NODE_NAME_,
-		ValueType: D_STRING_TYPE,
-		Version:   t,
-		Value:     []byte(s.name),
-	}
-
-	p.keyValues[MakeDeltaKey(nameDelta.KeyGroup, nameDelta.Key)] = nameDelta
-
 	// Add the _ADDRESS_ delta
 	addrDelta := &Delta{
 		KeyGroup:  ADDR_DKG,
@@ -947,17 +937,37 @@ func (s *GBServer) initSelfParticipant() (*Participant, error) {
 
 	p.keyValues[MakeDeltaKey(addrDelta.KeyGroup, addrDelta.Key)] = addrDelta
 
-	// TODO Implement in next release
-	// Add the _REACHABLE_ delta
-	reachDelta := &Delta{
-		KeyGroup:  NETWORK_DKG,
-		Key:       _REACHABLE_,
-		ValueType: D_INT_TYPE,
+	failureDelta := &Delta{
+		KeyGroup:  FAILURE_DKG,
+		Key:       s.ServerName,
 		Version:   t,
-		Value:     []byte{byte(int(s.reachability))},
+		ValueType: D_UINT8_TYPE,
+		Value:     []byte{ALIVE},
 	}
 
-	p.keyValues[MakeDeltaKey(reachDelta.KeyGroup, reachDelta.Key)] = reachDelta
+	p.keyValues[MakeDeltaKey(failureDelta.KeyGroup, failureDelta.Key)] = failureDelta
+
+	nameDelta := &Delta{
+		KeyGroup:  SYSTEM_DKG,
+		Key:       _NODE_NAME_,
+		ValueType: D_STRING_TYPE,
+		Version:   t,
+		Value:     []byte(s.name),
+	}
+
+	p.keyValues[MakeDeltaKey(nameDelta.KeyGroup, nameDelta.Key)] = nameDelta
+
+	// TODO Implement in next release
+	// Add the _REACHABLE_ delta
+	//reachDelta := &Delta{
+	//	KeyGroup:  NETWORK_DKG,
+	//	Key:       _REACHABLE_,
+	//	ValueType: D_INT_TYPE,
+	//	Version:   t,
+	//	Value:     []byte{byte(int(s.reachability))},
+	//}
+
+	//p.keyValues[MakeDeltaKey(reachDelta.KeyGroup, reachDelta.Key)] = reachDelta
 
 	// Add the _NODE_CONNS_ delta
 	numConns := uint16(0)
@@ -1374,8 +1384,13 @@ func (s *GBServer) incrementNodeConnCount() {
 	// Atomically increment node connections
 	atomic.AddInt64(&s.numNodeConnections, 1)
 
-	// Update our delta also
-	err := s.updateSelfInfo(SYSTEM_DKG, _NODE_CONNS_, D_UINT16_TYPE, uint16(s.numNodeConnections))
+	//Update our delta also
+	v, err := encodeValue(D_UINT16_TYPE, uint16(s.numNodeConnections))
+	if err != nil {
+		s.logger.Info("err", "err", err)
+		return
+	}
+	err = s.updateSelfInfo(&Delta{KeyGroup: SYSTEM_DKG, Key: _NODE_CONNS_, Version: time.Now().Unix(), ValueType: D_UINT16_TYPE, Value: v})
 	if err != nil {
 		s.logger.Error("error updating our delta node count", "err", err)
 	}
@@ -1391,7 +1406,12 @@ func (s *GBServer) decrementNodeConnCount() {
 	atomic.AddInt64(&s.numNodeConnections, -1)
 
 	// Update our delta also
-	err := s.updateSelfInfo(SYSTEM_DKG, _NODE_CONNS_, D_UINT16_TYPE, uint16(s.numNodeConnections))
+	v, err := encodeValue(D_UINT16_TYPE, uint16(s.numNodeConnections))
+	if err != nil {
+		s.logger.Info("err", "err", err)
+		return
+	}
+	err = s.updateSelfInfo(&Delta{KeyGroup: SYSTEM_DKG, Key: _NODE_CONNS_, Version: time.Now().Unix(), ValueType: D_UINT16_TYPE, Value: v})
 	if err != nil {
 		s.logger.Error("error updating our delta node count", "err", err)
 	}
@@ -1499,46 +1519,11 @@ func (s *GBServer) updateHeartBeat(timeOfUpdate int64) error {
 // change to the actual cluster config struct of our server
 func (s *GBServer) updateClusterConfigDeltaAndSelf(key string, d *Delta) error {
 
-	self := s.GetSelfInfo()
 	s.serverLock.RLock()
 	sch := s.configSchema
 	cfg := s.gbClusterConfig
 	s.serverLock.RUnlock()
 
-	de := &DeltaUpdateEvent{
-		DeltaKey: key,
-	}
-
-	err := self.Update(CONFIG_DKG, key, d, func(toBeUpdated, by *Delta) {
-		if by.Version > toBeUpdated.Version {
-			de.PreviousVersion = toBeUpdated.Version
-			de.PreviousValue = bytes.Clone(toBeUpdated.Value)
-
-			*toBeUpdated = *by
-
-			de.CurrentVersion = toBeUpdated.Version
-			de.CurrentValue = bytes.Clone(toBeUpdated.Value)
-		}
-	})
-
-	if err != nil {
-		handledErr := Errors.HandleError(err, func(gbError []*Errors.GBError) error {
-
-			for _, gbErr := range gbError {
-
-				if gbErr.Code == Errors.DELTA_UPDATE_NO_DELTA_CODE {
-					s.logger.Warn("config can't be updated with new fields",
-						"field", key)
-					return gbErr
-				}
-			}
-			return nil
-		})
-		if handledErr != nil {
-			return Errors.ChainGBErrorf(Errors.SelfConfigUpdateErr, err, "failed on key [%s]", key)
-		}
-
-	}
 	// If we have updated our own delta successfully we now try to update our server struct
 	s.configLock.Lock()
 	defer s.configLock.Unlock()
@@ -1557,12 +1542,18 @@ func (s *GBServer) updateClusterConfigDeltaAndSelf(key string, d *Delta) error {
 
 }
 
+func (s *GBServer) getConvergenceEst() time.Duration {
+
+	return 1 * time.Second
+
+}
+
 //======================================================
 // Background processes and job scheduler
 //======================================================
 
 type job struct {
-	task      func(ctx context.Context)
+	task      func()
 	interval  time.Duration
 	timeout   time.Duration
 	nextRun   time.Time
@@ -1579,16 +1570,14 @@ func (j *job) tryRun(parent context.Context) {
 		return // still executing
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(parent, j.timeout)
 		defer func() {
-			cancel()
 			j.isRunning.Store(false)
 		}()
-		j.task(ctx)
+		j.task()
 	}()
 }
 
-func newJob(ctx context.Context, interval time.Duration, timeout time.Duration, task func(ctx context.Context)) *job {
+func newJob(interval time.Duration, timeout time.Duration, task func()) *job {
 	return &job{
 		task:     task,
 		interval: interval,
@@ -1596,8 +1585,8 @@ func newJob(ctx context.Context, interval time.Duration, timeout time.Duration, 
 	}
 }
 
-func (bj *backgroundJobs) registerBackgroundJob(ctx context.Context, interval time.Duration, timeout time.Duration, task func(ctx context.Context)) {
-	bj.jobs = append(bj.jobs, newJob(ctx, interval, timeout, task))
+func (bj *backgroundJobs) registerBackgroundJob(interval time.Duration, timeout time.Duration, task func()) {
+	bj.jobs = append(bj.jobs, newJob(interval, timeout, task))
 }
 
 func newBackgroundJobScheduler() *backgroundJobs {

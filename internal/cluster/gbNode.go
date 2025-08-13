@@ -220,8 +220,14 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 		return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "length of digest should be 1 got [%d]", len(cd.delta))
 	}
 
+	//--------- Update our self
+
+	self := s.GetSelfInfo()
+
 	if delta, ok := cd.delta[cd.sender]; ok {
-		for _, v := range delta.keyValues {
+		for k, v := range delta.keyValues {
+
+			ourD := self.keyValues[k]
 
 			if v.KeyGroup != CONFIG_DKG {
 				return Errors.ChainGBErrorf(Errors.ConfigGroupErr, nil, "got [%s]", v.KeyGroup)
@@ -229,6 +235,15 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 
 			// We don't try to update our view of the sender in our cluster map because we are a new joiner and we have not yet
 			// Exchanged self info
+
+			// But we should update our own info to match the config version we've received
+			if v.Version <= ourD.Version {
+				continue
+			}
+
+			self.pm.Lock()
+			*ourD = *v
+			self.pm.Unlock()
 
 			err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
 			if err != nil {
@@ -656,36 +671,27 @@ func encodeValue(valueType uint8, value any) ([]byte, error) {
 	}
 }
 
-func (s *GBServer) updateSelfInfo(keyGroup, key string, valueType uint8, value any) error {
+func (s *GBServer) updateSelfInfo(d *Delta) error {
 
 	self := s.GetSelfInfo()
 
-	if delta, exists := self.keyValues[MakeDeltaKey(keyGroup, key)]; exists {
+	self.pm.Lock()
+	defer self.pm.Unlock()
 
-		v, err := encodeValue(valueType, value)
-		if err != nil {
-			return err
-		}
-
-		self.pm.Lock()
-		delta.Value = v
-
-		if delta.KeyGroup == CONFIG_DKG {
-			err := s.updateClusterConfigDeltaAndSelf(delta.Key, delta)
-			if err != nil {
-				return err
-			}
-			delta.Version++
-		} else {
-			delta.Version = time.Now().Unix()
-		}
-		self.pm.Unlock()
-
-		return nil
-
+	ourD, exists := self.keyValues[MakeDeltaKey(d.KeyGroup, d.Key)]
+	if !exists {
+		return fmt.Errorf("found no delta for %s", d.Key)
 	}
 
-	return fmt.Errorf("found no delta for %s", key)
+	*ourD = *d
+
+	if d.KeyGroup == CONFIG_DKG {
+		if err := s.updateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
+			return err
+		}
+	}
+
+	return nil
 
 }
 
@@ -768,7 +774,6 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 
 		for key, value := range n.keyValues {
 			if value.KeyGroup == ADDR_DKG {
-				fmt.Printf("tcpKey = %v\n", key)
 
 				if uint16(sizeEstimate+len(key)) > DEFAULT_MAX_DISCOVERY_SIZE {
 					return addrMap, nil
@@ -875,8 +880,6 @@ func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 	if conn, ok := s.nodeConnStore.Load(s.clusterMap.participantArray[1]); ok && !random {
 		return conn.(*gbClient), nil
 	}
-
-	fmt.Printf("No connection to original seed. Falling back to other seeds...\n")
 
 	var candidates []string
 

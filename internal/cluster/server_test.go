@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"log"
@@ -700,10 +699,9 @@ func TestBackgroundJobScheduler(t *testing.T) {
 		}
 
 		srv.bj.registerBackgroundJob(
-			srv.ServerContext,
 			2*time.Second,
 			1*time.Second,
-			func(ctx context.Context) {
+			func() {
 				srv.numNodeConnections += 1
 			},
 		)
@@ -727,19 +725,17 @@ func TestBackgroundJobScheduler(t *testing.T) {
 		}
 
 		srv.bj.registerBackgroundJob(
-			srv.ServerContext,
 			3*time.Second,
 			1*time.Second,
-			func(ctx context.Context) {
+			func() {
 				srv.numNodeConnections += 1
 			},
 		)
 
 		srv.bj.registerBackgroundJob(
-			srv.ServerContext,
 			2*time.Second,
 			1*time.Second,
-			func(ctx context.Context) {
+			func() {
 				srv.numClientConnections += 1
 			},
 		)

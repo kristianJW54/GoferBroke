@@ -403,12 +403,12 @@ func (s *GBServer) handleDeadNode(participant *Participant) {
 		participant.pm.Lock()
 		if p, ok := s.clusterMap.participants[participant.name]; ok {
 			p.keyValues = map[string]*Delta{
-				MakeDeltaKey(SYSTEM_DKG, _DEAD_): {
+				MakeDeltaKey(FAILURE_DKG, participant.name): {
 					KeyGroup:  SYSTEM_DKG,
-					Key:       _DEAD_,
+					Key:       participant.name,
 					Version:   time.Now().Unix(),
 					ValueType: D_BYTE_TYPE,
-					Value:     []byte{},
+					Value:     []byte{FAULTY},
 				},
 			}
 		}

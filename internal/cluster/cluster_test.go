@@ -317,7 +317,12 @@ func TestClusterMapLocks(t *testing.T) {
 	}
 
 	updateSelfInfo := func() {
-		err := mockServer.updateSelfInfo(SYSTEM_DKG, _HEARTBEAT_, D_INT64_TYPE, time.Now().Unix())
+
+		v, err := encodeValue(D_INT64_TYPE, time.Now().Unix())
+		if err != nil {
+			t.Errorf("Error encoding value: %v", err)
+		}
+		err = mockServer.updateSelfInfo(&Delta{KeyGroup: SYSTEM_DKG, Key: _HEARTBEAT_, Version: time.Now().Unix(), ValueType: D_INT64_TYPE, Value: v})
 		if err != nil {
 			t.Errorf("%v", err)
 		}

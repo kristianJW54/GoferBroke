@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// Test Ready ✅
 func TestBuildAddrMap(t *testing.T) {
 
 	gbs := GenerateDefaultTestServer("main-server", addressTestingKVs, 5)
@@ -66,7 +67,6 @@ func TestBuildAddrMap(t *testing.T) {
 			}
 
 			for name, value := range am {
-				fmt.Printf("name: %s\n", name)
 				if _, exists := tt.addrMapCheck[name]; !exists {
 					t.Errorf("%s not found in addr map", name)
 				}
@@ -74,7 +74,6 @@ func TestBuildAddrMap(t *testing.T) {
 					if !slices.Contains(tt.addrMapCheck[name], addr) {
 						t.Errorf("%s not found in addr map", name)
 					}
-					fmt.Println("addr:\n", addr)
 				}
 			}
 
@@ -82,17 +81,7 @@ func TestBuildAddrMap(t *testing.T) {
 	}
 }
 
-func TestPercDiff(t *testing.T) {
-
-	connCount := 3
-	knownCount := 1
-
-	res := percMakeup(knownCount, connCount)
-
-	fmt.Println(res)
-
-}
-
+// Test Ready ✅
 func TestRetrieveASeedConn(t *testing.T) {
 
 	now := time.Now().Unix()
@@ -139,14 +128,13 @@ func TestRetrieveASeedConn(t *testing.T) {
 		t.Error(err)
 	}
 
-	t.Logf("Selected node ID: %s", conn.name)
-
 	if conn.name == node1 {
 		t.Errorf("selected node should not select it self")
 	}
 
 }
 
+// Test Ready ✅
 func TestGetRandomSeedToDial(t *testing.T) {
 
 	cfg := `
@@ -160,13 +148,20 @@ func TestGetRandomSeedToDial(t *testing.T) {
 				ClusterNetworkType = "LOCAL"
 			}`
 
-	node1Cfg := `
-			Name = "node-1"
-			Host = "localhost"
-			Port = "8081"
-			IsSeed = True`
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
 
-	gbs, err := NewServerFromConfigString(node1Cfg, cfg)
+`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
 	if err != nil {
 		t.Error(err)
 	}
@@ -178,7 +173,6 @@ func TestGetRandomSeedToDial(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		fmt.Printf("Seed address: %s\n", addr.resolved.String())
 
 		if addr.resolved.String() == gbs.advertiseAddress.String() {
 			t.Errorf("retrieved seed addr should NOT be our own")
@@ -190,15 +184,18 @@ func TestGetRandomSeedToDial(t *testing.T) {
 
 }
 
+// Test Ready ✅
 func TestGetClusterConfigDeltas(t *testing.T) {
 
 	nodeCfg := `
-				Name = "node-1"
+				Name = "t-1"
 				Host = "localhost"
 				Port = "8081"
 				IsSeed = True
 				Internal {
-					DisableGossip = True	
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
@@ -243,26 +240,31 @@ func TestGetClusterConfigDeltas(t *testing.T) {
 
 }
 
-func TestGetClusterConfigUpdateExchange(t *testing.T) {
+// Test Ready ✅
+func TestGetClusterConfigUpdateFromChecksum(t *testing.T) {
 
 	nodeCfg := `
-				Name = "node-1"
+				Name = "t-1"
 				Host = "localhost"
 				Port = "8081"
 				IsSeed = True
 				Internal {
-					DisableGossip = True	
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
 
-	node2Cfg := `
-				Name = "node-2"
+	nodeCfg2 := `
+				Name = "t-2"
 				Host = "localhost"
 				Port = "8082"
 				IsSeed = False
 				Internal {
-					DisableGossip = True	
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
@@ -278,26 +280,26 @@ func TestGetClusterConfigUpdateExchange(t *testing.T) {
 
 	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
 	if err != nil {
-		t.Errorf("%v", err)
+		t.Errorf("error creating new server: %v", err)
 	}
-	gbs2, err := NewServerFromConfigString(node2Cfg, cfg)
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
 	if err != nil {
-		t.Errorf("%v", err)
+		t.Errorf("error creating new server: %v", err)
 	}
 
 	configKey := "Name"
 
+	newClusterName := "new-cluster"
+
 	go gbs.StartServer()
 	time.Sleep(1 * time.Second)
 
-	//p := gbs.clusterMap.participants[gbs.ServerName]
-
-	// TODO This needs to be an update delta function with a potential callback or if block to also update struct if CONFIG_DKG
-	//gbs.gbClusterConfig.Name = "new-cluster"
-	//p.keyValues[configKey].Value = []byte("new-cluster")
-	//p.keyValues[configKey].Version++
-
-	err = gbs.updateSelfInfo(CONFIG_DKG, configKey, D_STRING_TYPE, "new-cluster")
+	v, err := encodeValue(D_STRING_TYPE, newClusterName)
+	if err != nil {
+		t.Errorf("encoding value error %v", err)
+	}
+	err = gbs.updateSelfInfo(&Delta{KeyGroup: CONFIG_DKG, Key: configKey, Version: time.Now().Unix(), ValueType: D_STRING_TYPE, Value: v})
 	if err != nil {
 		t.Errorf("%v", err)
 	}
@@ -313,20 +315,128 @@ func TestGetClusterConfigUpdateExchange(t *testing.T) {
 
 	go gbs2.StartServer()
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	if gbs2.gbClusterConfig.Name != "new-cluster" {
 		t.Errorf("expected to get config name of [new-cluster] --> got %s", gbs2.gbClusterConfig.Name)
 	}
 
-	self := gbs2.GetSelfInfo()
-	for k, v := range self.keyValues {
-		fmt.Printf("k = %s, v = %v\n", k, v.Version)
+	gbs2.Shutdown()
+	gbs.Shutdown()
+
+	gbs2NewClusterName := gbs2.gbClusterConfig.Name
+	gbs2NewClusterNameDelta := gbs2.clusterMap.participants[gbs2.ServerName].keyValues[MakeDeltaKey(CONFIG_DKG, configKey)].Value
+	gbs2NewClusterNameDeltaForGbs := gbs2.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(CONFIG_DKG, configKey)].Value
+
+	if gbs2NewClusterName != newClusterName {
+		t.Errorf("expected to get config name of %s --> got %s", newClusterName, gbs2NewClusterName)
 	}
-	fmt.Printf("gbs2 name = %s\n", gbs2.gbClusterConfig.Name)
+
+	if string(gbs2NewClusterNameDelta) != string(gbs2NewClusterNameDeltaForGbs) && string(gbs2NewClusterNameDelta) != newClusterName {
+		t.Errorf("expected to get delta of %s --> got %s", newClusterName, gbs2NewClusterNameDelta)
+	}
+
+}
+
+// Test Ready ✅
+func TestUpdateClusterConfigFromNewDelta(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	configKey := "Name"
+
+	newClusterName := "new-cluster"
+
+	go gbs.StartServer()
+	time.Sleep(100 * time.Millisecond)
+	go gbs2.StartServer()
+
+	time.Sleep(1 * time.Second)
+
+	v, err := encodeValue(D_STRING_TYPE, newClusterName)
+	if err != nil {
+		t.Errorf("encoding value error %v", err)
+	}
+	err = gbs.updateSelfInfo(&Delta{KeyGroup: CONFIG_DKG, Key: configKey, Version: time.Now().Unix(), ValueType: D_STRING_TYPE, Value: v})
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	d, _, err := gbs.getConfigDeltasAboveVersion(0)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	if len(d[gbs.ServerName]) != 1 {
+		t.Errorf("expected to find a single delta for config key: %s --> got %d", configKey, len(d[configKey]))
+	}
+
+	time.Sleep(4 * time.Second)
+
+	if gbs2.gbClusterConfig.Name != "new-cluster" {
+		t.Errorf("expected to get config name of [new-cluster] --> got %s", gbs2.gbClusterConfig.Name)
+	}
 
 	gbs2.Shutdown()
 	gbs.Shutdown()
+
+	gbs2NewClusterName := gbs2.gbClusterConfig.Name
+	gbs2NewClusterNameDelta := gbs2.clusterMap.participants[gbs2.ServerName].keyValues[MakeDeltaKey(CONFIG_DKG, configKey)].Value
+	gbs2NewClusterNameDeltaForGbs := gbs2.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(CONFIG_DKG, configKey)].Value
+
+	if gbs2NewClusterName != newClusterName {
+		t.Errorf("expected to get config name of %s --> got %s", newClusterName, gbs2NewClusterName)
+	}
+
+	if string(gbs2NewClusterNameDelta) != string(gbs2NewClusterNameDeltaForGbs) && string(gbs2NewClusterNameDelta) != newClusterName {
+		t.Errorf("expected to get delta of %s --> got %s", newClusterName, gbs2NewClusterNameDelta)
+	}
 
 }
 
@@ -443,6 +553,7 @@ func TestProbeCommand(t *testing.T) {
 
 }
 
+// Test Ready ✅
 func TestSendProbeFunction(t *testing.T) {
 
 	nodeCfg := `
@@ -466,7 +577,7 @@ func TestSendProbeFunction(t *testing.T) {
 				Internal {
 					DisableGossip = False
 					DisableStartupMessage = True
-					DefaultLoggerEnabled = True
+					DefaultLoggerEnabled = False
 				}
 
 `
@@ -534,19 +645,17 @@ func TestSendProbeFunction(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	go gbs4.StartServer()
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	// Here we want to run two tests - one for testing that single helper selected can successfully probe the target
 	// Second that two helpers can probe in parallel the target and respect the context and channels
 	// Then we test no helpers for a quick return
 
-	ctx, cancel := context.WithTimeout(gbs2.ServerContext, 1*time.Second)
+	ctx, cancel := context.WithTimeout(gbs.ServerContext, 1*time.Second)
 	defer cancel()
-	err = gbs2.handleIndirectProbe(ctx, gbs3.ServerName)
+	err = gbs.handleIndirectProbe(ctx, gbs4.ServerName)
 	if err != nil {
 		t.Errorf("%v", err)
 	}
-
-	time.Sleep(1 * time.Second)
 
 }

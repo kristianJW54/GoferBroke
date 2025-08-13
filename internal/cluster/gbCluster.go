@@ -155,7 +155,6 @@ const (
 	_CLIENT_CONNS_    = "client_conns"
 	_HEARTBEAT_       = "heartbeat"
 	_NODE_NAME_       = "node_name"
-	_DEAD_            = "dead"
 	_TOTAL_MEMORY_    = "total_memory"
 	_USED_MEMORY_     = "used_memory"
 	_FREE_MEMORY_     = "free_memory"
@@ -445,6 +444,7 @@ func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participa
 //--------
 //Update cluster
 
+// TODO This needs to be optimised and make sure we are not delaying any hot paths
 func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 	// If we receive information about ourselves, we need to ignore as we are the only ones who should update information about ourselves
@@ -469,28 +469,38 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 					DeltaKey: k,
 				}
 
-				if v.Key == _DEAD_ {
+				if v.Key == uuid {
 
-					fmt.Printf("received a dead key :0 -- ")
+					// TODO Can be abstracted
 
-					// Add dead node kv here if we encounter one
-					participant.pm.Lock()
-					clear(participant.keyValues)
-					participant.keyValues = map[string]*Delta{
-						MakeDeltaKey(SYSTEM_DKG, _DEAD_): {
-							KeyGroup:  SYSTEM_DKG,
-							Key:       _DEAD_,
-							Version:   time.Now().Unix(),
-							ValueType: D_BYTE_TYPE,
-							Value:     []byte{},
-						},
+					val := uint8(v.Value[0])
+
+					switch val {
+					case ALIVE:
+						// Nothing
+					case SUSPECTED:
+						// We only add not to gossip
+					case FAULTY:
+						// Add dead node kv here if we encounter one
+						participant.pm.Lock()
+						clear(participant.keyValues)
+						participant.keyValues = map[string]*Delta{
+							MakeDeltaKey(FAILURE_DKG, uuid): {
+								KeyGroup:  FAILURE_DKG,
+								Key:       uuid,
+								Version:   time.Now().Unix(),
+								ValueType: D_BYTE_TYPE,
+								Value:     []byte{FAULTY},
+							},
+						}
+						participant.maxVersion = time.Now().Unix()
+						participant.pm.Unlock()
+
+						fmt.Printf("new clustermap for this part = %+v", participant.keyValues)
+
+						break
 					}
-					participant.maxVersion = time.Now().Unix()
-					participant.pm.Unlock()
 
-					fmt.Printf("new clustermap for this part = %+v", participant.keyValues)
-
-					break
 				}
 
 				// We get our own participants view of the participant in our map and update it
@@ -504,6 +514,14 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 						de.CurrentVersion = toBeUpdated.Version
 						de.CurrentValue = bytes.Clone(toBeUpdated.Value)
+
+						s.logger.Info("logging the key group ----------", "group", v.KeyGroup)
+
+						if v.KeyGroup == CONFIG_DKG {
+							s.logger.Info("i have a new config yo --------------------------")
+							// We must also align the config to our map - config is the only place we also update ourselves based on another delta
+							_ = s.updateSelfInfo(v)
+						}
 
 					}
 				})
@@ -553,12 +571,12 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 					"Delta updated",
 				})
 
-				if v.KeyGroup == CONFIG_DKG {
-					err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
-					if err != nil {
-						return err
-					}
-				}
+				//if v.KeyGroup == CONFIG_DKG {
+				//	err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
+				//	if err != nil {
+				//		return err
+				//	}
+				//}
 
 			}
 		} else {
@@ -593,6 +611,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 		name:        name,
 		keyValues:   make(map[string]*Delta), // Allocate a new map
 		paDetection: s.initPhiAccrual(),
+		f:           newFailure(),
 	}
 
 	var maxV int64
@@ -625,8 +644,6 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
-
-	s.seedEMAForAll()
 
 	s.clusterMapLock.Unlock()
 
@@ -1061,6 +1078,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			size := DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(delta.Value)
 
 			if delta.Version > phEntry.peerMaxVersion {
+				s.logger.Info("adding delta", "key", delta.Key)
 				heap.Push(&dh, &deltaQueue{
 					delta:   delta,
 					version: delta.Version,
@@ -1194,19 +1212,12 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 		// Off-load heavy work
 		go func() {
-			defer cancel() // signal caller *after* merge is done
+			defer cancel() // signal caller after merge is done
 
 			cd, e := deserialiseDelta(delta.msg)
 			if e != nil {
 				return
 			}
-
-			//c.srv.logger.Info("gsa", "message", string(delta.msg))
-
-			//err = c.srv.recordPhi(sender)
-			//if err != nil {
-			//	fmt.Printf("recordPhi failed: %v\n", err)
-			//}
 
 			// 2. Merge into server state (must be thread-safe!)
 			if e := c.srv.addGSADeltaToMap(cd); e != nil {

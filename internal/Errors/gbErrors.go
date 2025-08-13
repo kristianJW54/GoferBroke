@@ -372,6 +372,7 @@ const (
 	CONSTRUCT_NODE_HEADER_CODE        = 81
 	PREPARE_REQUEST_CODE              = 82
 	INDIRECT_PROBE_CODE               = 83
+	MARK_SUSPECT_CODE                 = 84
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -425,6 +426,7 @@ var KnownInternalErrors = map[int]*GBError{
 	CONSTRUCT_NODE_HEADER_CODE:        &GBError{Code: CONSTRUCT_NODE_HEADER_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to construct node header"},
 	PREPARE_REQUEST_CODE:              &GBError{Code: PREPARE_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to prepare request"},
 	INDIRECT_PROBE_CODE:               &GBError{Code: INDIRECT_PROBE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to send indirect probe"},
+	MARK_SUSPECT_CODE:                 &GBError{Code: MARK_SUSPECT_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "mark suspect failed"},
 }
 
 var (
@@ -456,6 +458,7 @@ var (
 	ConstructHeaderErr      = KnownInternalErrors[CONSTRUCT_NODE_HEADER_CODE]
 	PrepareRequestErr       = KnownInternalErrors[PREPARE_REQUEST_CODE]
 	IndirectProbeErr        = KnownInternalErrors[INDIRECT_PROBE_CODE]
+	MarkSuspectErr          = KnownInternalErrors[MARK_SUSPECT_CODE]
 )
 
 var (
