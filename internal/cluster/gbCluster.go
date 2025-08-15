@@ -28,6 +28,7 @@ type gossip struct {
 	gossipControlChannel chan bool
 	gossipTimeout        time.Duration
 	gossipOK             bool
+	gossipPaused         bool
 	gossipSemaphore      chan struct{}
 	gossipingWith        sync.Map
 	gossSignal           *sync.Cond
@@ -42,6 +43,7 @@ func initGossipSettings(gossipInterval time.Duration, nodeSelection uint8) *goss
 		nodeSelection:        nodeSelection,
 		gossipControlChannel: make(chan bool, 1),
 		gossipOK:             false,
+		gossipPaused:         false,
 		gossWg:               sync.WaitGroup{},
 		gossipSemaphore:      make(chan struct{}, 1),
 	}
@@ -455,7 +457,11 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 	for uuid, d := range delta.delta {
 
-		if uuid == s.getID() {
+		if uuid == s.ServerName {
+			s.logger.Info("skipping this delta in addGSADeltaToMap")
+			for k, v := range d.keyValues {
+				s.logger.Info("delta", "key", k, "value", string(v.Value))
+			}
 			continue
 		}
 
@@ -465,39 +471,24 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 			// Use the locking strategy to lock participant in order to update
 			for k, v := range d.keyValues {
 
+				if v.KeyGroup == FAILURE_DKG {
+					// We are in our view of [T-1] and received a failure key group from them
+					s.logger.Info("failure delta", "key", k, "value", string(v.Value))
+					s.logger.Info("our id", "id", s.ServerName)
+				}
+
 				de := &DeltaUpdateEvent{
 					DeltaKey: k,
 				}
 
 				if v.Key == uuid {
 
-					// TODO Can be abstracted
-
-					val := uint8(v.Value[0])
-
-					switch val {
-					case ALIVE:
-						// Nothing
-					case SUSPECTED:
-						// We only add not to gossip
-					case FAULTY:
-						// Add dead node kv here if we encounter one
-						participant.pm.Lock()
-						clear(participant.keyValues)
-						participant.keyValues = map[string]*Delta{
-							MakeDeltaKey(FAILURE_DKG, uuid): {
-								KeyGroup:  FAILURE_DKG,
-								Key:       uuid,
-								Version:   time.Now().Unix(),
-								ValueType: D_BYTE_TYPE,
-								Value:     []byte{FAULTY},
-							},
-						}
-						participant.maxVersion = time.Now().Unix()
-						participant.pm.Unlock()
-
-						fmt.Printf("new clustermap for this part = %+v", participant.keyValues)
-
+					faulty, err := s.checkFailureGSA(participant, uuid, v)
+					if err != nil {
+						return err
+					}
+					if faulty {
+						// TODO Think about what we want to do if node is faulty
 						break
 					}
 
@@ -515,10 +506,7 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 						de.CurrentVersion = toBeUpdated.Version
 						de.CurrentValue = bytes.Clone(toBeUpdated.Value)
 
-						s.logger.Info("logging the key group ----------", "group", v.KeyGroup)
-
 						if v.KeyGroup == CONFIG_DKG {
-							s.logger.Info("i have a new config yo --------------------------")
 							// We must also align the config to our map - config is the only place we also update ourselves based on another delta
 							_ = s.updateSelfInfo(v)
 						}
@@ -570,13 +558,6 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 					de,
 					"Delta updated",
 				})
-
-				//if v.KeyGroup == CONFIG_DKG {
-				//	err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
-				//	if err != nil {
-				//		return err
-				//	}
-				//}
 
 			}
 		} else {
@@ -642,10 +623,17 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	s.clusterMap.participants[name] = newParticipant
 	s.clusterMap.participantArray = append(s.clusterMap.participantArray, newParticipant.name)
 
+	// Grab self quickly to add failure delta for this node to our map
+	s.clusterMapLock.Unlock()
+
+	err := s.addDeltaToSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: name, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: []byte{ALIVE}})
+	if err != nil {
+		s.logger.Info("error updating self from addTmpParticipant", "error", err)
+		return fmt.Errorf("failed to addTmpParticipant failure delta - %v", err)
+	}
+
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
-
-	s.clusterMapLock.Unlock()
 
 	return nil
 }
@@ -1078,7 +1066,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 			size := DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(delta.Value)
 
 			if delta.Version > phEntry.peerMaxVersion {
-				s.logger.Info("adding delta", "key", delta.Key)
+				//s.logger.Info("adding delta", "key", delta.Key)
 				heap.Push(&dh, &deltaQueue{
 					delta:   delta,
 					version: delta.Version,
@@ -1327,7 +1315,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 	defer stopCondition()
 
 	for {
-		s.gossip.gossMu.Lock()
+		s.gossip.gossSignal.L.Lock()
 
 		if s.ServerContext.Err() != nil {
 			//s.endGossip()
@@ -1338,7 +1326,7 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 		// Wait for gossipOK to become true, or until serverContext is canceled.
 		if !s.gossip.gossipOK || !s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
 			s.gossip.gossSignal.Wait() // Wait until gossipOK becomes true
-
+			s.gossip.gossipPaused = false
 		}
 
 		if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
@@ -1346,15 +1334,15 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 			return
 		}
 
-		s.gossip.gossMu.Unlock()
+		s.gossip.gossSignal.L.Unlock()
 
 		// now safe to call
 		ok := s.startGossipProcess()
 
 		// optionally re-acquire if needed
-		s.gossip.gossMu.Lock()
+		s.gossip.gossSignal.L.Lock()
 		s.gossip.gossipOK = ok
-		s.gossip.gossMu.Unlock()
+		s.gossip.gossSignal.L.Unlock()
 
 	}
 }
@@ -1429,10 +1417,13 @@ func (s *GBServer) startGossipProcess() bool {
 
 		case gossipState := <-s.gossip.gossipControlChannel:
 			if !gossipState {
+				s.logger.Info("gossip stopped???")
 				// If gossipControlChannel sends 'false', stop the gossiping process
 				// Pause the phi process also
-				s.phi.phiControl <- false
-				s.gossip.gossWg.Wait() // Wait for the rounds to finish
+				//s.phi.phiControl <- false
+				s.gossip.gossWg.Wait()
+				s.endGossip()
+				s.gossip.gossipPaused = true
 				return false
 			}
 		}
@@ -1490,6 +1481,7 @@ func (s *GBServer) startGossipRound() {
 
 	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), s.notToGossipNodeStore, "")
 	if err != nil {
+		s.logger.Info("no one to gossip with :(")
 		// TODO Need to add error event as its internal system error
 		return
 	}
@@ -1581,7 +1573,10 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			// Handle indirect probe here
-			//_ = s.handleIndirectProbe(ctx, node)
+			err = s.handleIndirectProbe(ctx, node)
+			if err != nil {
+				s.logger.Error(err.Error())
+			}
 			// TODO ---
 		}
 		return

@@ -680,7 +680,32 @@ func (s *GBServer) updateSelfInfo(d *Delta) error {
 
 	ourD, exists := self.keyValues[MakeDeltaKey(d.KeyGroup, d.Key)]
 	if !exists {
-		return fmt.Errorf("found no delta for %s", d.Key)
+		return fmt.Errorf("found no delta for %s-%s", d.KeyGroup, d.Key)
+	}
+
+	*ourD = *d
+
+	if d.KeyGroup == CONFIG_DKG {
+		if err := s.updateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
+			return err
+		}
+	}
+
+	return nil
+
+}
+
+func (s *GBServer) addDeltaToSelfInfo(d *Delta) error {
+
+	self := s.GetSelfInfo()
+
+	self.pm.Lock()
+	defer self.pm.Unlock()
+
+	ourD, exists := self.keyValues[MakeDeltaKey(d.KeyGroup, d.Key)]
+	if !exists {
+		self.keyValues[MakeDeltaKey(d.KeyGroup, d.Key)] = d
+		return nil
 	}
 
 	*ourD = *d
@@ -1553,6 +1578,10 @@ func (c *gbClient) processOKResp(message []byte) {
 }
 
 func (c *gbClient) processGossSyn(message []byte) {
+
+	if c.srv.gossip.gossipPaused {
+		return
+	}
 
 	// Copy IDs early to avoid race or mutation
 	reqID := c.ph.reqID

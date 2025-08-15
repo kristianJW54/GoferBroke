@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"sync"
 	"time"
@@ -61,10 +62,17 @@ func (s *GBServer) handleIndirectProbe(ctx context.Context, target string) error
 
 	active := s.activeNodeIDs()
 
-	if len(active) == 2 {
+	if len(active) == 1 {
 		// If here we need to just add the suspect delta to our map and let the background process begin it's cleanup
 		// Unless we receive an Alive delta from the suspect
-		return Errors.ChainGBErrorf(Errors.IndirectProbeErr, nil, "not enough participants to indirect probe")
+
+		// Mark suspect here - if premature, suspect node should refute pretty quick as we are a two node cluster
+		err := s.markSuspect(target)
+		if err != nil {
+			return Errors.ChainGBErrorf(Errors.IndirectProbeErr, err, "")
+		}
+
+		return Errors.ChainGBErrorf(Errors.IndirectProbeErr, nil, "not enough participants to indirect probe -- marking node as suspect")
 	}
 
 	// we need to select k helpers to indirectly ping target
@@ -242,12 +250,9 @@ func (s *GBServer) markSuspect(node string) error {
 	part.f.mu.Unlock()
 
 	// TODO Do defensive checks here in case it's already suspected or faulty
-	v, err := encodeValue(D_UINT8_TYPE, SUSPECTED)
+	err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: node, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: []byte{SUSPECTED}})
 	if err != nil {
-		return err
-	}
-	err = s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: node, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: v})
-	if err != nil {
+		s.logger.Info("error updating self", "error", err)
 		return Errors.ChainGBErrorf(Errors.MarkSuspectErr, err, "for node: %s", node)
 	}
 
@@ -258,6 +263,73 @@ func (s *GBServer) markSuspect(node string) error {
 	s.logger.Info("marking node suspected", "node", node)
 
 	return nil
+
+}
+
+//---------------------------------------------------
+// Failure checks and refutes for on wire gossip
+
+func (s *GBServer) checkFailureGSA(part *Participant, uuid string, v *Delta) (bool, error) {
+
+	val := uint8(v.Value[0])
+
+	// First check if we are the ones being reported on for a failure level
+	if uuid == s.ServerName {
+		s.logger.Info("updating ourselves...?")
+		err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: s.ServerName, ValueType: D_UINT8_TYPE, Version: time.Now().Unix(), Value: []byte{ALIVE}})
+		if err != nil {
+			return false, err
+		}
+
+	}
+
+	switch val {
+	case ALIVE:
+		// If we have received an alive failure type we must check if we are being refuted
+		s.clusterMapLock.RLock()
+		check, exists := s.clusterMap.participants[uuid].keyValues[MakeDeltaKey(FAILURE_DKG, uuid)]
+		s.clusterMapLock.RUnlock()
+		if !exists {
+			return false, nil
+		}
+
+		if check.Value[0] == SUSPECTED {
+			// TODO Abstract to function so we can also clean up not to gossip store and any background tasks we need to check
+			s.logger.Info("we have been refuted - was SUSPECTED - now ALIVE", "node", uuid)
+			err := s.updateSelfInfo(v)
+			if err != nil {
+				return false, err
+			}
+		}
+
+		return false, nil
+	case SUSPECTED:
+		// We only add not to gossip as we are not the reporter - we don't need to handle this
+		return false, nil
+	case FAULTY:
+		// Add dead node kv here if we encounter one - tombstone basically and let the background tasks gc
+		part.pm.Lock()
+		clear(part.keyValues)
+		part.keyValues = map[string]*Delta{
+			MakeDeltaKey(FAILURE_DKG, uuid): {
+				KeyGroup:  FAILURE_DKG,
+				Key:       uuid,
+				Version:   time.Now().Unix(),
+				ValueType: D_BYTE_TYPE,
+				Value:     []byte{FAULTY},
+			},
+		}
+		part.maxVersion = time.Now().Unix()
+		part.pm.Unlock()
+
+		fmt.Printf("new clustermap for this part = %+v", part.keyValues)
+
+		// If this node is faulty we should return true to tell the caller that this node is faulty and to handle this
+		return true, nil
+
+	}
+
+	return false, nil
 
 }
 
