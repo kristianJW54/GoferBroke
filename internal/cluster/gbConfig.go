@@ -53,6 +53,7 @@ const (
 	DEFAULT_GOSSIP_ROUND_TIMEOUT      = uint16(1000)
 	DEFAULT_FAILURE_PROBE             = uint8(1)
 	DEFAULT_FAILURE_TIMEOUT           = uint16(300)
+	DEFAULT_FAULTY_FLAG               = uint16(10000)
 )
 
 // TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
@@ -91,10 +92,6 @@ type ClusterOptions struct {
 	GossipRoundTimeout             uint16 // ms
 	MaxSequenceIDPool              uint32
 	ClusterNetworkType             ClusterNetworkType
-	DynamicGossipScaling           bool // Adjusts node selection, delta size, discovery size, etc based on cluster metrics and size
-	LoggingURL                     string
-	MetricsURL                     string
-	ErrorsURL                      string
 	// TODO Think if we need a URL map that users can specify for their own endpoints
 	EndpointsURLMap map[string]string
 
@@ -105,6 +102,8 @@ type ClusterOptions struct {
 	FailureKNodesToProbe uint8
 	FailureProbeTimeout  uint16 // ms
 
+	//Background tasks
+	NodeFaultyAfter uint16 // ms
 }
 
 func InitDefaultClusterConfig() *GbClusterConfig {
@@ -129,15 +128,12 @@ func InitDefaultClusterConfig() *GbClusterConfig {
 			GossipRoundTimeout:             DEFAULT_GOSSIP_ROUND_TIMEOUT,
 			MaxSequenceIDPool:              DEFAULT_SEQUENCE_ID_POOL,
 			ClusterNetworkType:             C_UNDEFINED,
-			DynamicGossipScaling:           false,
-			LoggingURL:                     "",
-			MetricsURL:                     "",
-			ErrorsURL:                      "",
 			EndpointsURLMap:                ep,
 			NodeMTLSRequired:               false,
 			ClientMTLSRequired:             false,
 			FailureKNodesToProbe:           DEFAULT_FAILURE_PROBE,
 			FailureProbeTimeout:            DEFAULT_FAILURE_TIMEOUT,
+			NodeFaultyAfter:                DEFAULT_FAULTY_FLAG,
 		},
 	}
 

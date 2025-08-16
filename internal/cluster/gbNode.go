@@ -680,15 +680,19 @@ func (s *GBServer) updateSelfInfo(d *Delta) error {
 
 	ourD, exists := self.keyValues[MakeDeltaKey(d.KeyGroup, d.Key)]
 	if !exists {
-		return fmt.Errorf("found no delta for %s-%s", d.KeyGroup, d.Key)
+		return Errors.ChainGBErrorf(Errors.UpdateSelfInfoErr, nil, "found no delta for %s", d.Key)
 	}
 
 	*ourD = *d
 
 	if d.KeyGroup == CONFIG_DKG {
 		if err := s.updateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
-			return err
+			return Errors.ChainGBErrorf(Errors.UpdateSelfInfoErr, err, "")
 		}
+	}
+
+	if d.Version > self.maxVersion {
+		self.maxVersion = d.Version
 	}
 
 	return nil
@@ -712,8 +716,12 @@ func (s *GBServer) addDeltaToSelfInfo(d *Delta) error {
 
 	if d.KeyGroup == CONFIG_DKG {
 		if err := s.updateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
-			return err
+			return Errors.ChainGBErrorf(Errors.UpdateSelfInfoErr, err, "")
 		}
+	}
+
+	if d.Version > self.maxVersion {
+		self.maxVersion = d.Version
 	}
 
 	return nil
@@ -1224,8 +1232,6 @@ func (c *gbClient) processProbe(message []byte) {
 	if err != nil {
 		return
 	}
-
-	c.srv.logger.Info("client name", "name", client.name)
 
 	if !exists {
 		c.srv.logger.Info("client not found", "msg", name)

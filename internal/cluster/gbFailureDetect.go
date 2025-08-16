@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"sync"
 	"time"
@@ -245,6 +244,10 @@ func (s *GBServer) markSuspect(node string) error {
 	}
 
 	part.f.mu.Lock()
+	if part.f.state == SUSPECTED {
+		part.f.mu.Unlock()
+		return nil
+	}
 	part.f.state = SUSPECTED
 	part.f.suspectSince = time.Now()
 	part.f.mu.Unlock()
@@ -269,67 +272,111 @@ func (s *GBServer) markSuspect(node string) error {
 //---------------------------------------------------
 // Failure checks and refutes for on wire gossip
 
-func (s *GBServer) checkFailureGSA(part *Participant, uuid string, v *Delta) (bool, error) {
+func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 
 	val := uint8(v.Value[0])
 
 	// First check if we are the ones being reported on for a failure level
-	if uuid == s.ServerName {
+	// If we are we need to increment our ALIVE version - we gossip back and refute the claim
+	// We return early as we don't need to handle anything more
+	if v.Key == s.ServerName {
 		s.logger.Info("updating ourselves...?")
 		err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: s.ServerName, ValueType: D_UINT8_TYPE, Version: time.Now().Unix(), Value: []byte{ALIVE}})
 		if err != nil {
-			return false, err
+			return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, err, "")
 		}
+
+		return nil
 
 	}
 
 	switch val {
 	case ALIVE:
-		// If we have received an alive failure type we must check if we are being refuted
-		s.clusterMapLock.RLock()
-		check, exists := s.clusterMap.participants[uuid].keyValues[MakeDeltaKey(FAILURE_DKG, uuid)]
-		s.clusterMapLock.RUnlock()
+		// If we have received an alive failure type this will be either from a node we have suspected or an indirect gossip
+		// from a node that has been suspected - we are receiving from the initiating node during this round
+		// We need to check if we have something different in our view, if we do, then we apply the newer version and unmark as suspected
+
+		// Must check our view of the node
+		self := s.GetSelfInfo()
+		ourView, exists := self.keyValues[MakeDeltaKey(FAILURE_DKG, v.Key)]
 		if !exists {
-			return false, nil
+			return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, nil, "%s - does not exist in our view", v.Key)
 		}
 
-		if check.Value[0] == SUSPECTED {
+		if ourView.Value[0] == SUSPECTED {
 			// TODO Abstract to function so we can also clean up not to gossip store and any background tasks we need to check
 			s.logger.Info("we have been refuted - was SUSPECTED - now ALIVE", "node", uuid)
-			err := s.updateSelfInfo(v)
-			if err != nil {
-				return false, err
+			self.pm.Lock()
+			*ourView = *v
+			if v.Version > self.maxVersion {
+				self.maxVersion = v.Version
 			}
+			self.pm.Unlock()
+
+			// Now we get the suspected *Participant and unmark as suspected
+			s.clusterMapLock.RLock()
+			part, exists := s.clusterMap.participants[v.Key]
+			s.clusterMapLock.RUnlock()
+			if !exists {
+				return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, nil, "%s - does not exist in our cluster map", v.Key)
+			}
+			part.f.mu.Lock()
+			part.f.state = ALIVE
+			part.f.incarnationVersion = v.Version
+			part.f.mu.Unlock()
+
 		}
 
-		return false, nil
+		return nil
 	case SUSPECTED:
 		// We only add not to gossip as we are not the reporter - we don't need to handle this
-		return false, nil
+
+		err := s.markSuspect(v.Key)
+		if err != nil {
+			return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, err, "")
+		}
+
+		return nil
+
 	case FAULTY:
 		// Add dead node kv here if we encounter one - tombstone basically and let the background tasks gc
-		part.pm.Lock()
-		clear(part.keyValues)
-		part.keyValues = map[string]*Delta{
+		// Need to make sure we are accessing our view of the dead node
+
+		s.clusterMapLock.RLock()
+		cm := s.clusterMap
+		s.clusterMapLock.RUnlock()
+
+		dn, exists := cm.participants[v.Key]
+		if !exists {
+			return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, nil, "%s - does not exist in our clustermap", v.Key)
+		}
+
+		dn.pm.Lock()
+		clear(dn.keyValues)
+		dn.keyValues = map[string]*Delta{
 			MakeDeltaKey(FAILURE_DKG, uuid): {
 				KeyGroup:  FAILURE_DKG,
-				Key:       uuid,
+				Key:       v.Key,
 				Version:   time.Now().Unix(),
 				ValueType: D_BYTE_TYPE,
 				Value:     []byte{FAULTY},
 			},
 		}
-		part.maxVersion = time.Now().Unix()
-		part.pm.Unlock()
+		dn.maxVersion = time.Now().Unix()
+		dn.pm.Unlock()
 
-		fmt.Printf("new clustermap for this part = %+v", part.keyValues)
+		// Update our view of this
+		err := s.updateSelfInfo(v)
+		if err != nil {
+			return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, err, "")
+		}
 
 		// If this node is faulty we should return true to tell the caller that this node is faulty and to handle this
-		return true, nil
+		return nil
 
 	}
 
-	return false, nil
+	return nil
 
 }
 

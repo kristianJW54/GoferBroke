@@ -373,6 +373,8 @@ const (
 	PREPARE_REQUEST_CODE              = 82
 	INDIRECT_PROBE_CODE               = 83
 	MARK_SUSPECT_CODE                 = 84
+	CHECK_FAILURE_GSA_CODE            = 85
+	UPDATE_SELF_INFO_CODE             = 86
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -427,6 +429,8 @@ var KnownInternalErrors = map[int]*GBError{
 	PREPARE_REQUEST_CODE:              &GBError{Code: PREPARE_REQUEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to prepare request"},
 	INDIRECT_PROBE_CODE:               &GBError{Code: INDIRECT_PROBE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to send indirect probe"},
 	MARK_SUSPECT_CODE:                 &GBError{Code: MARK_SUSPECT_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "mark suspect failed"},
+	CHECK_FAILURE_GSA_CODE:            &GBError{Code: CHECK_FAILURE_GSA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "check failure during GSA received error"},
+	UPDATE_SELF_INFO_CODE:             &GBError{Code: UPDATE_SELF_INFO_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to update self info"},
 }
 
 var (
@@ -459,6 +463,8 @@ var (
 	PrepareRequestErr       = KnownInternalErrors[PREPARE_REQUEST_CODE]
 	IndirectProbeErr        = KnownInternalErrors[INDIRECT_PROBE_CODE]
 	MarkSuspectErr          = KnownInternalErrors[MARK_SUSPECT_CODE]
+	CheckFailureGSAErr      = KnownInternalErrors[CHECK_FAILURE_GSA_CODE]
+	UpdateSelfInfoErr       = KnownInternalErrors[UPDATE_SELF_INFO_CODE]
 )
 
 var (

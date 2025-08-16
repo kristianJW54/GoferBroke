@@ -386,28 +386,27 @@ func (p *Participant) Store(d *Delta) error {
 	}
 }
 
-func (p *Participant) Update(group, key string, d *Delta, update func(toBeUpdated, by *Delta)) error {
+func (p *Participant) Update(group, key string, d *Delta, apply func(toBeUpdated, by *Delta)) error {
+	k := MakeDeltaKey(group, key)
 
-	if delta, exists := p.keyValues[MakeDeltaKey(group, key)]; exists {
+	p.pm.Lock()
+	defer p.pm.Unlock()
 
-		// If either delta key or group is different, we need to dis-regard the update with an error
-		if d.KeyGroup != delta.KeyGroup || d.Key != delta.Key {
-			return Errors.DeltaUpdateKeyErr
-		}
-		p.pm.Lock()
-		update(delta, d)
-
-		if d.Version > p.maxVersion {
-			p.maxVersion = d.Version
-		}
-
-		p.pm.Unlock()
-
-		return nil
-
-	} else {
+	delta, exists := p.keyValues[k]
+	if !exists {
 		return Errors.DeltaUpdateNoDeltaErr
 	}
+	if d.KeyGroup != delta.KeyGroup || d.Key != delta.Key {
+		return Errors.DeltaUpdateKeyErr
+	}
+
+	// apply the user-provided mutation while holding p.pm
+	apply(delta, d)
+
+	if d.Version > p.maxVersion {
+		p.maxVersion = d.Version
+	}
+	return nil
 }
 
 func (p *Participant) GetAll() map[string]*Delta {
@@ -451,21 +450,18 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 	// If we receive information about ourselves, we need to ignore as we are the only ones who should update information about ourselves
 
-	s.clusterMapLock.RLock()
-	cm := s.clusterMap.participants
-	s.clusterMapLock.RUnlock()
-
 	for uuid, d := range delta.delta {
 
 		if uuid == s.ServerName {
-			s.logger.Info("skipping this delta in addGSADeltaToMap")
-			for k, v := range d.keyValues {
-				s.logger.Info("delta", "key", k, "value", string(v.Value))
-			}
 			continue
 		}
 
-		if participant, exists := cm[uuid]; exists {
+		// fetch participant under lock
+		s.clusterMapLock.RLock()
+		participant, exists := s.clusterMap.participants[uuid]
+		s.clusterMapLock.RUnlock()
+
+		if exists {
 
 			// Here we have a participant with values we need to update for our map
 			// Use the locking strategy to lock participant in order to update
@@ -473,44 +469,31 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 				if v.KeyGroup == FAILURE_DKG {
 					// We are in our view of [T-1] and received a failure key group from them
-					s.logger.Info("failure delta", "key", k, "value", string(v.Value))
-					s.logger.Info("our id", "id", s.ServerName)
-				}
-
-				de := &DeltaUpdateEvent{
-					DeltaKey: k,
-				}
-
-				if v.Key == uuid {
-
-					faulty, err := s.checkFailureGSA(participant, uuid, v)
-					if err != nil {
+					if err := s.checkFailureGSA(uuid, v); err != nil {
 						return err
 					}
-					if faulty {
-						// TODO Think about what we want to do if node is faulty
-						break
-					}
-
 				}
+
+				de := &DeltaUpdateEvent{DeltaKey: k}
 
 				// We get our own participants view of the participant in our map and update it
 				err := participant.Update(v.KeyGroup, v.Key, v, func(toBeUpdated, by *Delta) {
 					if by.Version > toBeUpdated.Version {
-
 						de.PreviousVersion = toBeUpdated.Version
 						de.PreviousValue = bytes.Clone(toBeUpdated.Value)
 
-						*toBeUpdated = *by // Shallow copy - Ok as by won't be used elsewhere - it is what was received on the wire
+						// copy fields explicitly; clone the slice
+						toBeUpdated.Version = by.Version
+						toBeUpdated.KeyGroup = by.KeyGroup
+						toBeUpdated.Key = by.Key
+						toBeUpdated.Value = bytes.Clone(by.Value)
 
 						de.CurrentVersion = toBeUpdated.Version
 						de.CurrentValue = bytes.Clone(toBeUpdated.Value)
 
 						if v.KeyGroup == CONFIG_DKG {
-							// We must also align the config to our map - config is the only place we also update ourselves based on another delta
-							_ = s.updateSelfInfo(v)
+							_ = s.updateSelfInfo(v) // locks a different participant (self), so safe
 						}
-
 					}
 				})
 

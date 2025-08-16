@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"strings"
@@ -87,6 +88,234 @@ func TestIndirectProbeErrorForTwoNodes(t *testing.T) {
 
 }
 
+// Test Ready ✅
+func TestProbeCommand(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg3 := `
+				Name = "t-3"
+				Host = "localhost"
+				Port = "8083"
+				IsSeed = False
+				Internal {
+					DisableGossip = True
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs3, err := NewServerFromConfigString(nodeCfg3, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(100 * time.Millisecond)
+	go gbs2.StartServer()
+	go gbs3.StartServer()
+
+	time.Sleep(2 * time.Second)
+
+	// node 2 want to probe node 3 through node 1
+	name := []byte(gbs3.ServerName)
+	name = append(name, '\r', '\n')
+
+	reqID, _ := gbs2.acquireReqID()
+
+	pay, err := prepareRequest(name, 1, PROBE, reqID, uint16(0))
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(gbs2.ServerContext, 7*time.Second)
+	defer cancel()
+
+	client, exists, err := gbs2.getNodeConnFromStore(gbs.ServerName)
+	if err != nil || !exists {
+		t.Errorf("%v - or doesn't exist", err)
+	}
+
+	resp := client.qProtoWithResponse(ctx, reqID, pay, true)
+
+	rsp, err := client.waitForResponseAndBlock(resp)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	gbs.Shutdown()
+	gbs2.Shutdown()
+	gbs3.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if rsp.msg == nil {
+		t.Errorf("expected to get an ok resp - got nil response instead")
+	}
+
+}
+
+// Test Ready ✅
+func TestSendProbeFunction(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg3 := `
+				Name = "t-3"
+				Host = "localhost"
+				Port = "8083"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg4 := `
+				Name = "t-4"
+				Host = "localhost"
+				Port = "8084"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs3, err := NewServerFromConfigString(nodeCfg3, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs4, err := NewServerFromConfigString(nodeCfg4, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs3.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs4.StartServer()
+
+	time.Sleep(5 * time.Second)
+
+	// Here we want to run two tests - one for testing that single helper selected can successfully probe the target
+	// Second that two helpers can probe in parallel the target and respect the context and channels
+	// Then we test no helpers for a quick return
+
+	ctx, cancel := context.WithTimeout(gbs.ServerContext, 1*time.Second)
+	defer cancel()
+	err = gbs.handleIndirectProbe(ctx, gbs4.ServerName)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	gbs.Shutdown()
+	gbs2.Shutdown()
+	gbs3.Shutdown()
+	gbs4.Shutdown()
+
+}
+
+// Test Ready ✅
 func TestMarkSuspectForTwoNodes(t *testing.T) {
 
 	nodeCfg := `
@@ -111,7 +340,77 @@ func TestMarkSuspectForTwoNodes(t *testing.T) {
 				Internal {
 					DisableGossip = False
 					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+
+	time.Sleep(4 * time.Second)
+	gbs2.gossip.gossipControlChannel <- false
+	time.Sleep(1 * time.Second)
+
+	part, exist := gbs.clusterMap.participants[gbs2.ServerName]
+	if !exist {
+		t.Errorf("participant %s not found in clusterMap", gbs2.ServerName)
+	}
+	if part.f.state != SUSPECTED {
+		t.Errorf("participant %s not suspect", gbs2.ServerName)
+	}
+
+	gbs2.Shutdown()
+	gbs.Shutdown()
+
+}
+
+// TODO Finish
+func TestRefuteSuspectForTwoNodes(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
 					DefaultLoggerEnabled = True
+					LogToBuffer = True
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
