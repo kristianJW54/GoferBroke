@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -19,6 +20,8 @@ type failureControl struct {
 	failureTimeout        time.Duration
 	gossipTimeout         time.Duration
 	maxGossipRoundTimeout time.Duration
+	suspectedNodes        map[string]struct{}
+	failedNodes           map[string]struct{}
 }
 
 type failure struct {
@@ -44,6 +47,8 @@ func newFailureControl(conf *GbClusterConfig) *failureControl {
 		failureTimeout:        time.Duration(conf.Cluster.FailureProbeTimeout),
 		gossipTimeout:         time.Duration(conf.Cluster.GossipRoundTimeout),
 		maxGossipRoundTimeout: time.Duration(maxGossipTime),
+		suspectedNodes:        make(map[string]struct{}),
+		failedNodes:           make(map[string]struct{}),
 	}
 
 }
@@ -51,9 +56,6 @@ func newFailureControl(conf *GbClusterConfig) *failureControl {
 func (s *GBServer) handleIndirectProbe(ctx context.Context, target string) error {
 
 	// first we need to check if we can indirect probe
-	s.clusterMapLock.RLock()
-	ntg := s.notToGossipNodeStore
-	s.clusterMapLock.RUnlock()
 
 	s.configLock.RLock()
 	k := s.gbClusterConfig.Cluster.FailureKNodesToProbe
@@ -75,30 +77,43 @@ func (s *GBServer) handleIndirectProbe(ctx context.Context, target string) error
 	}
 
 	// we need to select k helpers to indirectly ping target
-	if int(k) > (len(active) - 2) {
-		k = uint8(len(active) - 2)
+	if int(k) > (len(active) - 1) {
+		k = uint8(len(active) - 1)
 	}
 
 	// now we choose a requester
-	r, err := generateRandomParticipantIndexesForGossip(active, int(k), ntg, target)
+	r, err := generateRandomParticipantIndexesForGossip(active, int(k), &s.notToGossipNodeStore, target)
 	if err != nil {
 		return Errors.ChainGBErrorf(Errors.IndirectProbeErr, err, "")
 	}
 
-	for _, t := range r {
-		s.logger.Info("requesters", "name", active[t])
-	}
-
 	err = s.sendProbes(ctx, r, active, target)
 	if err != nil {
-		s.logger.Info("✗ sendProbes failed – skipping dump", "err", err)
-		return err
+		handledErr := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
+
+			for _, gbError := range gbErrors {
+				switch gbError.Code {
+				case Errors.PROBE_FAILED_CODE:
+					err = s.markSuspect(target)
+					if err != nil {
+						return Errors.ChainGBErrorf(Errors.IndirectProbeErr, err, "")
+					}
+					return err
+				}
+			}
+
+			// Need to handle other potential errors
+			return nil
+
+		})
+		return handledErr
 	}
 
 	return nil
 
 }
 
+// TODO May want to use this for simple probe rather than iterating over k nodes for parallel probing..?
 func (s *GBServer) sendSingleProbe(ctx context.Context, requester *gbClient, target string) error {
 
 	probeReqID, _ := requester.srv.acquireReqID()
@@ -151,8 +166,6 @@ func (s *GBServer) sendProbes(parentCtx context.Context, helpers []int, parts []
 		go func() {
 			defer wg.Done()
 
-			s.logger.Info("using helper", "name", helperID)
-
 			// now need to see if we have a client connection of the requester we wish to contact
 			client, exists, err := s.getNodeConnFromStore(helperID)
 			if err != nil {
@@ -163,8 +176,6 @@ func (s *GBServer) sendProbes(parentCtx context.Context, helpers []int, parts []
 				errCh <- Errors.ChainGBErrorf(Errors.IndirectProbeErr, nil, "requester %s does not exist", helperID)
 				return
 			}
-
-			s.logger.Info("is client nil?", "client", client.name)
 
 			reqID, err := client.srv.acquireReqID()
 			if err != nil {
@@ -183,7 +194,6 @@ func (s *GBServer) sendProbes(parentCtx context.Context, helpers []int, parts []
 			rsp, err := client.waitForResponseAndBlock(resp)
 			if err != nil {
 				// Need to handle the error
-				s.logger.Info("just printing the error for visibility", "error", err)
 				errCh <- err
 				return
 			}
@@ -192,8 +202,6 @@ func (s *GBServer) sendProbes(parentCtx context.Context, helpers []int, parts []
 				errCh <- Errors.ChainGBErrorf(Errors.IndirectProbeErr, nil, "expecting response to not be nil")
 				return
 			}
-
-			s.logger.Info("got a response yay", "resp", string(rsp.msg))
 
 			select {
 			case doneCh <- struct{}{}:
@@ -252,10 +260,13 @@ func (s *GBServer) markSuspect(node string) error {
 	part.f.suspectSince = time.Now()
 	part.f.mu.Unlock()
 
-	// TODO Do defensive checks here in case it's already suspected or faulty
+	s.fail.mu.Lock()
+	s.fail.suspectedNodes[node] = struct{}{}
+	s.fail.mu.Unlock()
+
+	// TODO Do defensive checks here in case it's already suspected or faulty?
 	err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: node, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: []byte{SUSPECTED}})
 	if err != nil {
-		s.logger.Info("error updating self", "error", err)
 		return Errors.ChainGBErrorf(Errors.MarkSuspectErr, err, "for node: %s", node)
 	}
 
@@ -280,7 +291,7 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 	// If we are we need to increment our ALIVE version - we gossip back and refute the claim
 	// We return early as we don't need to handle anything more
 	if v.Key == s.ServerName {
-		s.logger.Info("updating ourselves...?")
+
 		err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: s.ServerName, ValueType: D_UINT8_TYPE, Version: time.Now().Unix(), Value: []byte{ALIVE}})
 		if err != nil {
 			return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, err, "")
@@ -305,7 +316,9 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 
 		if ourView.Value[0] == SUSPECTED {
 			// TODO Abstract to function so we can also clean up not to gossip store and any background tasks we need to check
-			s.logger.Info("we have been refuted - was SUSPECTED - now ALIVE", "node", uuid)
+			s.logger.Warn("we have been refuted - was SUSPECTED - now ALIVE",
+				slog.String("refuted-node", uuid))
+
 			self.pm.Lock()
 			*ourView = *v
 			if v.Version > self.maxVersion {
@@ -324,6 +337,8 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 			part.f.state = ALIVE
 			part.f.incarnationVersion = v.Version
 			part.f.mu.Unlock()
+
+			return nil
 
 		}
 
@@ -382,3 +397,52 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 
 //---------------------------------------------------
 // Suspect checker - to be used as background job
+
+func (s *GBServer) checkSuspectedNode() {
+
+	s.logger.Info("background process - checking suspected nodes")
+
+	ct := s.getConvergenceEst()
+
+	s.configLock.RLock()
+	ft := time.Duration(uint64(s.gbClusterConfig.Cluster.NodeFaultyAfter)) * time.Millisecond
+	s.configLock.RUnlock()
+
+	s.fail.mu.RLock()
+	suspected := s.fail.suspectedNodes
+	s.fail.mu.RUnlock()
+
+	for node := range suspected {
+
+		s.logger.Info("checking node", "node", node)
+
+		s.clusterMapLock.RLock()
+		part := s.clusterMap.participants[node]
+		s.clusterMapLock.RUnlock()
+
+		elapsed := time.Since(part.f.suspectSince)
+
+		s.logger.Info("times", "elapsed", elapsed, "ct", ct)
+
+		switch part.f.state {
+		case SUSPECTED:
+			if elapsed > ct {
+				s.logger.Warn("moving node to not-to-gossip store...", "node", node, "elapsed", elapsed)
+				s.notToGossipNodeStore.Store(node, struct{}{})
+			}
+			if elapsed > ft {
+				s.logger.Warn("Node now faulty - tombstoning")
+				part.f.mu.Lock()
+				part.f.state = FAULTY
+				part.f.mu.Unlock()
+			}
+		case ALIVE:
+			s.logger.Info("removing node from suspected", "node", node)
+			s.notToGossipNodeStore.Delete(node)
+			delete(suspected, node)
+			// We have already changed the participant in our addGSADeltaToMap method - we don't need to alter participant state here
+		default:
+
+		}
+	}
+}

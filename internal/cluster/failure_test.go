@@ -68,22 +68,31 @@ func TestIndirectProbeErrorForTwoNodes(t *testing.T) {
 
 	gbs.Shutdown()
 
+	var want struct {
+		Msg string
+	}
+
 	for _, snap := range gbs.jsonBuffer.Snapshot() {
 		var rec struct {
 			Time  string `json:"time"`
 			Level string `json:"level"`
 			Msg   string `json:"msg"`
 		}
+
 		if err := json.Unmarshal(snap, &rec); err != nil {
 			t.Fatalf("bad log json: %v\n%s", err, string(snap))
 		}
-		if strings.EqualFold(rec.Level, "WARN") {
+		if rec.Level == "ERROR" {
 			// Test Assert here
-			if !strings.Contains(rec.Msg, Errors.IndirectProbeErr.ErrMsg) {
-				t.Errorf("[WARN] log does not contain [%s]", Errors.IndirectProbeErr.ErrMsg)
+			if strings.Contains(rec.Msg, Errors.IndirectProbeErr.ErrMsg) {
+				want = struct{ Msg string }{Msg: rec.Msg}
 			}
 			break
 		}
+	}
+
+	if want.Msg == "" {
+		t.Errorf("expected to get message -> %s", Errors.IndirectProbeErr.ErrMsg)
 	}
 
 }
@@ -385,7 +394,7 @@ func TestMarkSuspectForTwoNodes(t *testing.T) {
 
 }
 
-// TODO Finish
+// Test Ready ✅
 func TestRefuteSuspectForTwoNodes(t *testing.T) {
 
 	nodeCfg := `
@@ -396,7 +405,7 @@ func TestRefuteSuspectForTwoNodes(t *testing.T) {
 				Internal {
 					DisableGossip = False
 					DisableStartupMessage = True
-					DefaultLoggerEnabled = True
+					DefaultLoggerEnabled = False
 					LogToBuffer = True
 				}
 
@@ -448,5 +457,298 @@ func TestRefuteSuspectForTwoNodes(t *testing.T) {
 
 	gbs2.Shutdown()
 	gbs.Shutdown()
+
+	var want struct {
+		Msg string
+	}
+
+	for _, snap := range gbs.jsonBuffer.Snapshot() {
+		var rec struct {
+			Time  string `json:"time"`
+			Level string `json:"level"`
+			Msg   string `json:"msg"`
+		}
+
+		if err := json.Unmarshal(snap, &rec); err != nil {
+			t.Fatalf("bad log json: %v\n%s", err, string(snap))
+		}
+		if rec.Level == "WARN" {
+			// Test Assert here
+			if strings.Contains(rec.Msg, "we have been refuted") {
+				want = struct{ Msg string }{Msg: rec.Msg}
+			}
+			break
+		}
+	}
+
+	if want.Msg == "" {
+		t.Errorf("expected to get message -> we have been refuted")
+	}
+
+}
+
+// Test Ready ✅
+func TestProbeSuccessForThreeNodes(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+					LogToBuffer = True
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg3 := `
+				Name = "t-3"
+				Host = "localhost"
+				Port = "8083"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs3, err := NewServerFromConfigString(nodeCfg3, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+	go gbs3.StartServer()
+
+	time.Sleep(4 * time.Second)
+	gbs2.gossip.gossipControlChannel <- false
+	time.Sleep(1 * time.Second)
+	// Node 2 stops gossip 'slow to respond' probe commands will still work so should be able to stop being reported as suspect
+	gbs2.gossip.gossipControlChannel <- true
+	gbs2.gossip.gossSignal.Broadcast()
+
+	time.Sleep(1 * time.Second)
+
+	gbs2.Shutdown()
+	gbs3.Shutdown()
+	gbs.Shutdown()
+
+	if d, exists := gbs.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(FAILURE_DKG, gbs2.ServerName)]; exists {
+		if d.Value[0] == SUSPECTED {
+			t.Errorf("node %s should not be marked as suspected", gbs2.ServerName)
+		}
+	} else {
+		t.Errorf("node %s should exist in our clustermap", gbs2.ServerName)
+	}
+
+	if d, exists := gbs3.clusterMap.participants[gbs3.ServerName].keyValues[MakeDeltaKey(FAILURE_DKG, gbs2.ServerName)]; exists {
+		if d.Value[0] == SUSPECTED {
+			t.Errorf("node %s should not be marked as suspected", gbs2.ServerName)
+		}
+	} else {
+		t.Errorf("node %s should exist in our clustermap", gbs2.ServerName)
+	}
+
+}
+
+// Test Ready ✅
+func TestProbeFailForThreeNodes(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+					LogToBuffer = True
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg3 := `
+				Name = "t-3"
+				Host = "localhost"
+				Port = "8083"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs3, err := NewServerFromConfigString(nodeCfg3, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+	go gbs3.StartServer()
+
+	time.Sleep(5 * time.Second)
+	gbs2.Shutdown()
+	time.Sleep(3 * time.Second)
+
+	gbs3.Shutdown()
+	gbs.Shutdown()
+
+	if d, exists := gbs.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(FAILURE_DKG, gbs2.ServerName)]; exists {
+		if d.Value[0] != SUSPECTED {
+			t.Errorf("node %s should be marked as suspected", gbs2.ServerName)
+		}
+	} else {
+		t.Errorf("node %s should exist in our clustermap", gbs2.ServerName)
+	}
+
+	if d, exists := gbs3.clusterMap.participants[gbs3.ServerName].keyValues[MakeDeltaKey(FAILURE_DKG, gbs2.ServerName)]; exists {
+		if d.Value[0] != SUSPECTED {
+			t.Errorf("node %s should be marked as suspected", gbs2.ServerName)
+		}
+	} else {
+		t.Errorf("node %s should exist in our clustermap", gbs2.ServerName)
+	}
+
+}
+
+// Test Ready ✅
+func TestBackgroundJobForSuspectedNodeMoveToNoGossip(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+					LogToBuffer = True
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+
+	time.Sleep(4 * time.Second)
+	gbs2.gossip.gossipControlChannel <- false
+	time.Sleep(15 * time.Second)
+
+	gbs2.Shutdown()
+	gbs.Shutdown()
+
+	if _, exists := gbs.notToGossipNodeStore.Load(gbs2.ServerName); !exists {
+		t.Errorf("node %s should have been moved to not-to-gossip store", gbs2.ServerName)
+	}
 
 }

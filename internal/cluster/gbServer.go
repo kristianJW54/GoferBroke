@@ -252,7 +252,6 @@ type GBServer struct {
 	clusterMap ClusterMap
 
 	// Failure
-	phi  phiControl
 	fail *failureControl
 
 	//Connection Handling
@@ -264,7 +263,7 @@ type GBServer struct {
 	clientStore          sync.Map
 	tmpConnStore         sync.Map
 	nodeConnStore        sync.Map
-	notToGossipNodeStore map[string]interface{}
+	notToGossipNodeStore sync.Map
 
 	// nodeReqPool is for the server when acting as a client/node initiating requests of other nodes
 	//it must maintain a pool of active sequence numbers for open requests awaiting response
@@ -441,8 +440,6 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 		fail: fail,
 
-		notToGossipNodeStore: make(map[string]interface{}),
-
 		gossip:               goss,
 		isSeed:               gbNodeConfig.IsSeed,
 		canBeRendezvous:      false,
@@ -489,17 +486,11 @@ func (s *GBServer) initSelf() {
 
 	defer s.startupSync.Done()
 
-	// First init phi control
-	s.phi = *s.initPhiControl()
-
 	// Then we initialise our info into a participant struct
 	selfInfo, err := s.initSelfParticipant()
 	if err != nil {
 		return
 	}
-
-	// Then we set up the mechanism to calculate phi score (controlled by phi control)
-	selfInfo.paDetection = s.initPhiAccrual()
 
 	// Now we initialise our cluster map and add our own info to it
 	s.clusterMap = *initClusterMap(s.ServerName, s.boundTCPAddr, selfInfo)
@@ -513,7 +504,10 @@ func (s *GBServer) initSelf() {
 		}
 	}
 
-	s.notToGossipNodeStore[s.ServerName] = &struct{}{}
+	s.notToGossipNodeStore.Store(s.ServerName, struct{}{})
+
+	// register our background jobs
+	s.bj.registerBackgroundJob(5*time.Second, 1*time.Second, s.checkSuspectedNode)
 
 }
 
@@ -1544,7 +1538,19 @@ func (s *GBServer) updateClusterConfigDeltaAndSelf(key string, d *Delta) error {
 
 func (s *GBServer) getConvergenceEst() time.Duration {
 
-	return 1 * time.Second
+	s.configLock.RLock()
+	selection := s.gbClusterConfig.Cluster.NodeSelectionPerGossipRound
+	interval := time.Second
+	s.configLock.RUnlock()
+
+	active := len(s.activeNodeIDs())
+
+	log2N := math.Log2(float64(active))
+	rounds := 10 * log2N / float64(selection)
+
+	buffer := 5 * time.Second
+	estimate := time.Duration(rounds * float64(interval))
+	return (estimate * 2) + buffer
 
 }
 

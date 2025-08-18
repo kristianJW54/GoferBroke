@@ -19,16 +19,15 @@ func TestRandomNodeSelection(t *testing.T) {
 		"part-4",
 	}
 
-	ntg := map[string]interface{}{
-		"part-1": struct{}{},
-		//"part-3": struct{}{},
-	}
+	var ntg sync.Map
+
+	ntg.Store("part-1", struct{}{})
 
 	ns := 2
 	runs := 100
 
 	for i := 0; i < runs; i++ {
-		indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, ntg, "part-3")
+		indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, &ntg, "part-3")
 		if err != nil {
 			t.Errorf("run %d: %v", i, err)
 		}
@@ -39,8 +38,15 @@ func TestRandomNodeSelection(t *testing.T) {
 
 		for _, index := range indexes {
 			participant := partArray[index]
-			if _, skip := ntg[participant]; skip {
-				t.Errorf("run %d: selected excluded participant: %s", i, participant)
+
+			// Check against sync.Map exclusions
+			if _, skip := ntg.Load(participant); skip {
+				t.Errorf("run %d: selected excluded participant (sync.Map): %s", i, participant)
+			}
+
+			// Check against variadic exclude list
+			if participant == "part-3" {
+				t.Errorf("run %d: selected excluded participant (variadic): %s", i, participant)
 			}
 		}
 	}

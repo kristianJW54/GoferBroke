@@ -687,7 +687,6 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	select {
 	case <-rsp.ctx.Done():
-		c.srv.logger.Info("async response deadline exceeded - i think")
 		return responsePayload{}, fmt.Errorf("response timeout: %w", rsp.ctx.Err())
 
 	case <-c.srv.ServerContext.Done():

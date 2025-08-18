@@ -142,11 +142,11 @@ func (c *gbClient) sendOKResp(respID uint16) {
 
 }
 
-func (c *gbClient) sendErr(reqID, respID uint16, err string) {
+func (c *gbClient) sendErr(reqID uint16, err string) {
 
 	errBytes := []byte(err)
 
-	errPay, _ := prepareRequest(errBytes, 1, ERR_R, reqID, respID)
+	errPay, _ := prepareRequest(errBytes, 1, ERR_R, reqID, uint16(0))
 
 	c.mu.Lock()
 	c.enqueueProto(errPay)

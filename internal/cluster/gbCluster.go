@@ -225,7 +225,6 @@ type Participant struct {
 	// Will be changing to delta store interface
 	keyValues        map[string]*Delta // composite key - flattened -> group:key
 	connection       *connectionMetaData
-	paDetection      *phiAccrual
 	f                *failure
 	maxVersion       int64
 	configMaxVersion int64
@@ -572,10 +571,9 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	// Step 1: Add participant to the participants map
 	newParticipant := &Participant{
-		name:        name,
-		keyValues:   make(map[string]*Delta), // Allocate a new map
-		paDetection: s.initPhiAccrual(),
-		f:           newFailure(),
+		name:      name,
+		keyValues: make(map[string]*Delta), // Allocate a new map
+		f:         newFailure(),
 	}
 
 	var maxV int64
@@ -662,9 +660,8 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 	}
 
 	newParticipant := &Participant{
-		name:        name,
-		keyValues:   make(map[string]*Delta),
-		paDetection: s.initPhiAccrual(),
+		name:      name,
+		keyValues: make(map[string]*Delta),
 	}
 
 	for addrKey, addrValue := range disc.addr {
@@ -1272,7 +1269,6 @@ func (s *GBServer) checkGossipCondition() {
 
 	} else if nodes < 1 && s.flags.isSet(GOSSIP_SIGNALLED) {
 		s.gossip.gossipControlChannel <- false
-		s.phi.phiControl <- false
 		s.serverLock.Lock()
 		s.flags.clear(GOSSIP_SIGNALLED)
 		s.serverLock.Unlock()
@@ -1462,7 +1458,7 @@ func (s *GBServer) startGossipRound() {
 	//parts := s.clusterMap.participants
 	s.clusterMapLock.RUnlock()
 
-	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), s.notToGossipNodeStore, "")
+	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), &s.notToGossipNodeStore, "")
 	if err != nil {
 		s.logger.Info("no one to gossip with :(")
 		// TODO Need to add error event as its internal system error
@@ -1558,7 +1554,8 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 			// Handle indirect probe here
 			err = s.handleIndirectProbe(ctx, node)
 			if err != nil {
-				s.logger.Error(err.Error())
+				// We only return as we should have handled and logged the error already
+				return
 			}
 			// TODO ---
 		}

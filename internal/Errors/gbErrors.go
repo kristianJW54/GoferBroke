@@ -334,6 +334,7 @@ const (
 	NAME_NOT_FOUND_IN_FULLDIGEST_CODE = 19
 	CONFIG_CHECKSUM_FAIL_CODE         = 20
 	CONFIG_AVAILABLE_CODE             = 21
+	PROBE_FAILED_CODE                 = 22
 )
 
 // Internal Error codes
@@ -392,6 +393,7 @@ var KnownNetworkErrors = map[int]*GBError{
 	NAME_NOT_FOUND_IN_FULLDIGEST_CODE: &GBError{Code: NAME_NOT_FOUND_IN_FULLDIGEST_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "full digest map entry not found"},
 	CONFIG_CHECKSUM_FAIL_CODE:         &GBError{Code: CONFIG_CHECKSUM_FAIL_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "config checksum does not match"},
 	CONFIG_AVAILABLE_CODE:             &GBError{Code: CONFIG_AVAILABLE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "config checksum mismatch new config available"},
+	PROBE_FAILED_CODE:                 &GBError{Code: PROBE_FAILED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "probe failed"},
 }
 
 var KnownInternalErrors = map[int]*GBError{
@@ -480,4 +482,5 @@ var (
 	FullDigestMapEntryErr  = KnownNetworkErrors[NAME_NOT_FOUND_IN_FULLDIGEST_CODE]
 	ConfigChecksumFailErr  = KnownNetworkErrors[CONFIG_CHECKSUM_FAIL_CODE]
 	ConfigAvailableErr     = KnownNetworkErrors[CONFIG_AVAILABLE_CODE]
+	ProbeFailedErr         = KnownNetworkErrors[PROBE_FAILED_CODE]
 )

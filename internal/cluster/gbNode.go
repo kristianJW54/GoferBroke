@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
+	"log/slog"
 	"math/rand"
 	"net"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -957,7 +959,7 @@ func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 func generateRandomParticipantIndexesForGossip(
 	partArray []string,
 	numOfNodeSelection int,
-	notToGossip map[string]interface{},
+	notToGossip *sync.Map,
 	exclude ...string,
 ) ([]int, error) {
 
@@ -969,10 +971,14 @@ func generateRandomParticipantIndexesForGossip(
 	}
 
 	// Build a quick look-up set of names to skip.
-	skip := make(map[string]struct{}, len(notToGossip)+len(exclude))
-	for n := range notToGossip {
-		skip[n] = struct{}{}
-	}
+	skip := make(map[string]struct{})
+	// Add all keys from sync.Map
+	notToGossip.Range(func(key, _ any) bool {
+		if s, ok := key.(string); ok {
+			skip[s] = struct{}{}
+		}
+		return true
+	})
 	for _, n := range exclude {
 		skip[n] = struct{}{}
 	}
@@ -1127,7 +1133,7 @@ func (c *gbClient) processCfgCheck(message []byte) {
 	// Message should be 64 bytes long for a checksum + 2 for CLRF
 
 	if len(message) != 66 {
-		c.sendErr(reqID, 0, "invalid configuration check message length\r\n") // TODO Change to GBError
+		c.sendErr(reqID, "invalid configuration check message length\r\n") // TODO Change to GBError
 	}
 
 	// We need to compare against our config checksums
@@ -1158,7 +1164,7 @@ func (c *gbClient) processCfgCheck(message []byte) {
 				checksum, cs,
 			)
 
-			c.sendErr(reqID, 0, err.Net())
+			c.sendErr(reqID, err.Net())
 
 		} else {
 			// Now we do a final check against the original hash - if it is different then we send an error which should result in the receiver node shutting down
@@ -1169,7 +1175,7 @@ func (c *gbClient) processCfgCheck(message []byte) {
 				cs, srv.originalCfgHash, checksum,
 			)
 
-			c.sendErr(reqID, 0, err.Net())
+			c.sendErr(reqID, err.Net())
 
 		}
 
@@ -1182,7 +1188,7 @@ func (c *gbClient) processCfgRecon(message []byte) {
 
 	name, fd, err := deSerialiseDigest(message)
 	if err != nil {
-		c.sendErr(c.ph.reqID, 0, "deserialise digest failed\r\n")
+		c.sendErr(c.ph.reqID, "deserialise digest failed\r\n")
 		return
 	}
 
@@ -1220,13 +1226,14 @@ func (c *gbClient) processCfgReconResp(message []byte) {
 
 func (c *gbClient) processProbe(message []byte) {
 
+	start := time.Now()
+	s := c.srv
+
 	reqID := c.ph.reqID
 
 	buf := make([]byte, len(message))
 	copy(buf, message)
 	name := bytes.TrimSuffix(buf, []byte("\r\n"))
-
-	c.srv.logger.Info("got a message", "msg", message, "i am", c.srv.PrettyName())
 
 	client, exists, err := c.srv.getNodeConnFromStore(string(name))
 	if err != nil {
@@ -1234,7 +1241,12 @@ func (c *gbClient) processProbe(message []byte) {
 	}
 
 	if !exists {
-		c.srv.logger.Info("client not found", "msg", name)
+		s.logger.Warn("received a probe request",
+			slog.String("<--requester", c.name),
+			slog.String("status", "failed - target does not exist in our conn store"),
+			slog.Duration("duration", time.Since(start)))
+
+		return
 	}
 
 	probe := []byte("PING\r\n")
@@ -1255,21 +1267,50 @@ func (c *gbClient) processProbe(message []byte) {
 		defer cancel()
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			c.sendErr(reqID, 0, "probe timeout")
+			c.sendErr(reqID, Errors.ChainGBErrorf(Errors.ProbeFailedErr, nil, "%s", err.Error()).Net())
+
+			s.logger.Warn("received a probe request",
+				slog.String("requester", c.name),
+				slog.String("target", client.name),
+				slog.String("status", "failed"),
+				slog.String("err", err.Error()),
+				slog.Duration("duration", time.Since(start)))
+
 			return
 		}
 
 		if err != nil {
-			c.sendErr(reqID, 0, err.Error())
+			c.sendErr(reqID, Errors.ChainGBErrorf(Errors.ProbeFailedErr, nil, "%s", err.Error()).Net())
+
+			s.logger.Warn("received a probe request",
+				slog.String("<--requester", c.name),
+				slog.String("target-->", client.name),
+				slog.String("status", "failed"),
+				slog.String("err", err.Error()),
+				slog.Duration("duration", time.Since(start)))
+
 			return
 		}
 
 		if payload.msg == nil {
-			c.sendErr(reqID, uint16(0), "nil message")
+			c.sendErr(reqID, "nil message\r\n")
+
+			s.logger.Warn("received a probe request",
+				slog.String("<--requester", c.name),
+				slog.String("target-->", client.name),
+				slog.String("status", "failed - nil response"),
+				slog.Duration("duration", time.Since(start)))
+
 			return
 		}
 
 		c.sendOK(reqID)
+
+		s.logger.Warn("received a probe request",
+			slog.String("<--requester", c.name),
+			slog.String("target-->", client.name),
+			slog.String("status", "success"),
+			slog.Duration("duration", time.Since(start)))
 
 	})
 
@@ -1407,7 +1448,7 @@ func (c *gbClient) processDiscoveryReq(message []byte) {
 	// TODO Use handle error function here
 	if err != nil && cereal == nil {
 		// TODO Need to check what the error is first
-		c.sendErr(c.ph.reqID, uint16(0), Errors.EmptyAddrMapNetworkErr.Net())
+		c.sendErr(c.ph.reqID, Errors.EmptyAddrMapNetworkErr.Net())
 		return
 
 	}
@@ -1593,7 +1634,7 @@ func (c *gbClient) processGossSyn(message []byte) {
 	reqID := c.ph.reqID
 
 	if c.srv.discoveryPhase {
-		c.sendErr(reqID, uint16(0), Errors.ConductingDiscoveryErr.Net())
+		c.sendErr(reqID, Errors.ConductingDiscoveryErr.Net())
 		return
 	}
 
