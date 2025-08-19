@@ -74,7 +74,6 @@ Sync object/player/entity data in real-time between peers.
 - You want to **embed a fast, robust sync layer** into your Go app.
 - You need **live coordination without brokers**.
 - You want **customizable deltas and hooks** to drive logic.
-- You want to **stay simple and dependency-free at runtime**.
 
 > *GoferBroke turns any app into a distributed system.*
 
@@ -90,7 +89,7 @@ Sync object/player/entity data in real-time between peers.
 
 - Gossip Rounds Working and Exchanging ✅
 
-- Phi Accrual Failure Detection ✅
+- Failure Detection ✅
 
 - Cloud Platform Testing ✅
 
