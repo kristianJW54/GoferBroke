@@ -16,7 +16,7 @@
 
 ## Overview
 
-GoferBroke is a minimal, high-performance gossip protocol designed for embedding decentralized, eventually-consistent state into your application instances. Built on TCP with custom framing and no external dependencies, it allows every node to gossip deltas (state changes) and reconcile with others through a compact, version-aware protocol.
+GoferBroke is a minimal, high-performance gossip protocol designed for embedding decentralized, eventually-consistent state into your application instances. Built on TCP with custom framing, it allows every node to gossip deltas (state changes) and reconcile with others through a compact, version-aware protocol.
 
 **No brokers. No databases. No event streams. Just peers sharing state.**
 
@@ -26,11 +26,12 @@ GoferBroke is a minimal, high-performance gossip protocol designed for embedding
 
 Each node:
 
-- Gossips its state as deltas
+- Gossips its state as `deltas`
 - Reconciles state from peers using version-aware merges
 - Tracks other nodes' presence and health
 - Triggers events that applications can subscribe to (`onEvent`)
-- Remains resilient in partitions and churn
+- Detects Failures both direct and indirectly
+- Distributes Cluster Configuration and Applies State Changes
 
 ---
 
@@ -39,10 +40,8 @@ Each node:
 - **Efficient delta-based reconciliation**
 - **Custom binary protocol over TCP** (supports partial packets)
 - **Decentralized cluster** with seed-based bootstrapping
-- **No external dependencies** — runs as a CLI or embeds in any Go app
 - **User-defined deltas** for complete flexibility
-- **Flow control with overload logging**
-- **Built-in phi-accrual failure detection**
+- **Built-in failure detection**
 - **Hookable event system** for specifiying custom logic on events
 
 ---
@@ -99,26 +98,94 @@ Sync object/player/entity data in real-time between peers.
 
 - Custom Configuration Parsing ✅
 
-- CLI Tool
-
-- Network Types and NAT Handling
-
-- Internal Monitoring + Tracing
+- Async Logging and Log Buffers ✅
 
 - mTLS Encryption
 
 - Flow Control For High Load Gossip
 
+- Network Types and NAT Handling
+
+- Client SDK and CLI Tool
+
 ## Getting Started
 
 ### Examples
 
+> Running multiple nodes on a single machine may cause variance in gossip round durations and possible deadline timeouts being reached.
+> I highly suggest running on multiple computers using different ports on private IPs for same network testing
+
 You can find working examples in the [Examples Folder](https://github.com/kristianJW54/GoferBroke/tree/main/Examples/basic_node).
 
-For example, try running a basic node to quickly start a local cluster.
+For example, try running a basic `node` to quickly start a local cluster.
+
+1. Start by declaring our configuration.
+
+GoferBroke has a custom lexer/parser if wanting to load from file, or we can declare config structs and pass those in instead.
+
+```
+// Declare cluster wide config - same for all application instances - changes would be gossiped to nodes and applied
+clusterConfig := &gossip.ClusterConfig{
+    Name: "database_cluster",
+    SeedServers: []gossip.Seeds{
+        {
+            SeedHost: "localhost",
+            SeedPort: "8081",
+        },
+    },
+    NetworkType: "LOCAL",
+}
+
+node1Config := &gossip.NodeConfig{
+    Name:        "node-1", // -- Pulled from envar
+    Host:        "localhost", // -- Pulled from envar
+    Port:        "8081", // -- Pulled from envar
+    NetworkType: "LOCAL", // -- LOCAL as we are using localhost loopback only
+    IsSeed:      true, // If seed then the address would also need to be in cluster config
+    ClientPort:  "8083", // -- What port you want clients (non-nodes) to connect to
+}
+
+```
+
+2. Add another node
+
+Adding another `node` should ideally be done in another application instance.
+
+In your application you would want to dynamically load new `node` configs for each instance and include the same cluster config.
+
+But for this example we will launch both nodes on the same machine.
+
+```
+node2Config := &gossip.NodeConfig{
+    Name:        "node-2",
+    Host:        "localhost",
+    Port:        "8082", // -- different port to node-1 (pulled from envar ideally)
+    NetworkType: "LOCAL",
+    IsSeed:      false, // -- We are not a seed and so shouldn't have our address in cluster config
+    ClientPort:  "8083",
+}
+```
 
 
-### Run Locally
+3. Start gossiping - and that's it!
+
+```
+node1, err := gossip.NewNodeFromConfig(clusterConfig, node1Config)
+if err != nil {
+    panic(err)
+}
+
+node2, err := gossip.NewNodeFromConfig(clusterConfig, node2Config)
+if err != nil {
+    panic(err)
+}
+
+node1.Start()
+node2.Start()
+
+```
+
+### Run Locally Through CLI
 
 Clone the project
 
@@ -195,9 +262,6 @@ If you’re unsure where to start or have questions, feel free to open a discuss
 
 ### [Efficient Reconciliation and Flow Control for Anti-Entropy Protocols (FlowGossip)](https://www.cs.cornell.edu/home/rvr/papers/flowgossip.pdf)
 A foundational paper by van Renesse et al. describing anti-entropy protocols, reconciliation strategies, and flow control for scalable, fault-tolerant state replication.
-
-### [The Phi Accrual Failure Detector](https://www.researchgate.net/publication/29682135)
-Presents a flexible, statistically grounded failure detector that outputs suspicion levels over time instead of boolean states. Ideal for adaptive fault tolerance in distributed systems.
 
 Your contributions are what make this project thrive—thank you for supporting GoferBroke!
 

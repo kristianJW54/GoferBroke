@@ -405,21 +405,23 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 			return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, err, "")
 		}
 
-		// If this node is faulty we should return true to tell the caller that this node is faulty and to handle this
+		// We then need to close and remove the connection to ensure that it no longer appears as active node
+		if conn, exists := s.nodeConnStore.LoadAndDelete(v.Key); exists {
+			cli, ok := conn.(*gbClient)
+			if !ok {
+				return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, nil, "%s - is not a client", v.Key)
+			}
+			_ = cli.gbc.Close()
+		}
 		return nil
-
 	}
-
 	return nil
-
 }
 
 //---------------------------------------------------
 // Suspect checker - to be used as background job
 
 func (s *GBServer) checkSuspectedNode() {
-
-	s.logger.Info("background process - checking suspected nodes")
 
 	// We get the standard convergence estimate here to make sure the SUSPECTED is fully gossiped
 	ct := s.getConvergenceEst()
@@ -434,8 +436,6 @@ func (s *GBServer) checkSuspectedNode() {
 
 	for node := range suspected {
 
-		s.logger.Info("checking node", "node", node)
-
 		s.clusterMapLock.RLock()
 		part := s.clusterMap.participants[node]
 		s.clusterMapLock.RUnlock()
@@ -445,8 +445,6 @@ func (s *GBServer) checkSuspectedNode() {
 		// To calculate a fault duration we need to make a refute window which is double the convergence estimate to
 		// account for full SUSPECTED gossiped and then full ALIVE refute gossiped if refuted
 		fault := elapsed - (ct * 2)
-
-		s.logger.Info("times", "elapsed", elapsed, "ct", ct)
 
 		switch part.f.state {
 		case SUSPECTED:

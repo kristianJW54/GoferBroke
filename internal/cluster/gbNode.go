@@ -16,14 +16,20 @@ import (
 	"time"
 )
 
+/*
+
+gbNode separates server operations from node operations. It is the server as a node on the cluster so all node related operations
+are declared and executed here.
+
+All operations which are logically carried out by a node in a cluster must be declared here.
+
+gbNode also processes and dispatches commands received by other nodes in the cluster as well as creating node clients from received connections from other servers
+
+*/
+
 //===================================================================================
 // Node Struct which embeds in client
 //===================================================================================
-
-const (
-	INITIATED = "Initiated"
-	RECEIVED  = "Received"
-)
 
 type node struct {
 
@@ -36,9 +42,9 @@ type node struct {
 // Node Connection
 //===================================================================================
 
-//-------------------------------
+//-----------------------------------------------
 // Creating a node as a client from a connection
-//-------------------------------
+//-----------------------------------------------
 
 // createNode is the entry point to reading and writing
 // createNode will have a read write loop
@@ -66,9 +72,6 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 	// We temporarily store the client connection here until we have completed the info exchange and received a response.
 	s.tmpConnStore.Store(client.cid, client)
 
-	//May want to update some node connection metrics which will probably need a write lock from here
-	// Start time, reference count etc
-
 	// Track the goroutine for the read loop using startGoRoutine
 	s.startGoRoutine(s.PrettyName(), fmt.Sprintf("read loop for %s", name), func() {
 		client.readLoop()
@@ -84,16 +87,17 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 }
 
 //-------------------------------
-// Connecting to seed server
-//-------------------------------
-
-//-------------------------------
 // Cluster Config Checksum
 
+// sendClusterCgfChecksum is used when connecting to another node or mainly seed node during bootstrapping. We send our checksum
+// for our cluster config and if it matches with the clusters version we can proceed, if not then we check if we have an original
+// configuration and only need to be updated or if we are configured wrong and must fail early
 func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
-	ctx, cancel := context.WithTimeout(s.ServerContext, 3*time.Second)
+	ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 	defer cancel()
+
+	// TODO create gbErrors
 
 	reqID, err := s.acquireReqID()
 	if err != nil {

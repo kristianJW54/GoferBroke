@@ -838,6 +838,7 @@ func TestBackgroundJobTombstoneNode(t *testing.T) {
 
 }
 
+// Test Ready ✅
 func TestFaultyGossipedToOtherNode(t *testing.T) {
 
 	nodeCfg := `
@@ -875,7 +876,7 @@ func TestFaultyGossipedToOtherNode(t *testing.T) {
 				Internal {
 					DisableGossip = False
 					DisableStartupMessage = True
-					DefaultLoggerEnabled = True
+					DefaultLoggerEnabled = False
 				}
 
 `
