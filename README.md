@@ -122,7 +122,7 @@ For example, try running a basic `node` to quickly start a local cluster.
 
 GoferBroke has a custom lexer/parser if wanting to load from file, or we can declare config structs and pass those in instead.
 
-```
+```go
 // Declare cluster wide config - same for all application instances - changes would be gossiped to nodes and applied
 clusterConfig := &gossip.ClusterConfig{
     Name: "database_cluster",
@@ -154,7 +154,7 @@ In your application you would want to dynamically load new `node` configs for ea
 
 But for this example we will launch both nodes on the same machine.
 
-```
+```go
 node2Config := &gossip.NodeConfig{
     Name:        "node-2",
     Host:        "localhost",
@@ -168,7 +168,7 @@ node2Config := &gossip.NodeConfig{
 
 3. Start gossiping - and that's it!
 
-```
+```go
 node1, err := gossip.NewNodeFromConfig(clusterConfig, node1Config)
 if err != nil {
     panic(err)
