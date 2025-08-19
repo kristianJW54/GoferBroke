@@ -11,6 +11,7 @@ import (
 const (
 	ALIVE = uint8(iota) + 1
 	SUSPECTED
+	SUSPECTED_STORED
 	FAULTY
 )
 
@@ -66,8 +67,19 @@ func (s *GBServer) handleIndirectProbe(ctx context.Context, target string) error
 	if len(active) == 1 {
 		// If here we need to just add the suspect delta to our map and let the background process begin it's cleanup
 		// Unless we receive an Alive delta from the suspect
-
 		// Mark suspect here - if premature, suspect node should refute pretty quick as we are a two node cluster
+
+		s.clusterMapLock.RLock()
+		part, exists := s.clusterMap.participants[target]
+		s.clusterMapLock.RUnlock()
+		if !exists {
+			return Errors.ChainGBErrorf(Errors.IndirectProbeErr, nil, "target %s doesn't exist in cluster map", target)
+		}
+
+		if part.f.state == SUSPECTED || part.f.state == SUSPECTED_STORED {
+			return nil
+		}
+
 		err := s.markSuspect(target)
 		if err != nil {
 			return Errors.ChainGBErrorf(Errors.IndirectProbeErr, err, "")
@@ -230,7 +242,7 @@ func (s *GBServer) sendProbes(parentCtx context.Context, helpers []int, parts []
 			if err != nil {
 				failCount++
 				if failCount == len(helpers) {
-					return Errors.ChainGBErrorf(Errors.IndirectProbeErr, err, "all helpers failed")
+					return Errors.ChainGBErrorf(Errors.IndirectProbeErr, err, "")
 				}
 			}
 		}
@@ -252,7 +264,7 @@ func (s *GBServer) markSuspect(node string) error {
 	}
 
 	part.f.mu.Lock()
-	if part.f.state == SUSPECTED {
+	if part.f.state == SUSPECTED || part.f.state == SUSPECTED_STORED {
 		part.f.mu.Unlock()
 		return nil
 	}
@@ -301,6 +313,13 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 
 	}
 
+	s.clusterMapLock.RLock()
+	part, exists := s.clusterMap.participants[v.Key]
+	s.clusterMapLock.RUnlock()
+	if !exists {
+		return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, nil, "%s - does not exist in our cluster map", v.Key)
+	}
+
 	switch val {
 	case ALIVE:
 		// If we have received an alive failure type this will be either from a node we have suspected or an indirect gossip
@@ -327,12 +346,7 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 			self.pm.Unlock()
 
 			// Now we get the suspected *Participant and unmark as suspected
-			s.clusterMapLock.RLock()
-			part, exists := s.clusterMap.participants[v.Key]
-			s.clusterMapLock.RUnlock()
-			if !exists {
-				return Errors.ChainGBErrorf(Errors.CheckFailureGSAErr, nil, "%s - does not exist in our cluster map", v.Key)
-			}
+
 			part.f.mu.Lock()
 			part.f.state = ALIVE
 			part.f.incarnationVersion = v.Version
@@ -344,7 +358,12 @@ func (s *GBServer) checkFailureGSA(uuid string, v *Delta) error {
 
 		return nil
 	case SUSPECTED:
-		// We only add not to gossip as we are not the reporter - we don't need to handle this
+
+		s.logger.Info("state of part", "failure", part.f.state)
+
+		if part.f.state == SUSPECTED {
+			return nil
+		}
 
 		err := s.markSuspect(v.Key)
 		if err != nil {
@@ -402,6 +421,7 @@ func (s *GBServer) checkSuspectedNode() {
 
 	s.logger.Info("background process - checking suspected nodes")
 
+	// We get the standard convergence estimate here to make sure the SUSPECTED is fully gossiped
 	ct := s.getConvergenceEst()
 
 	s.configLock.RLock()
@@ -422,24 +442,66 @@ func (s *GBServer) checkSuspectedNode() {
 
 		elapsed := time.Since(part.f.suspectSince)
 
+		// To calculate a fault duration we need to make a refute window which is double the convergence estimate to
+		// account for full SUSPECTED gossiped and then full ALIVE refute gossiped if refuted
+		fault := elapsed - (ct * 2)
+
 		s.logger.Info("times", "elapsed", elapsed, "ct", ct)
 
 		switch part.f.state {
 		case SUSPECTED:
 			if elapsed > ct {
+				if _, exists := s.notToGossipNodeStore.Load(node); exists {
+					return
+				}
 				s.logger.Warn("moving node to not-to-gossip store...", "node", node, "elapsed", elapsed)
 				s.notToGossipNodeStore.Store(node, struct{}{})
+				part.f.mu.Lock()
+				part.f.state = SUSPECTED_STORED
+				part.f.mu.Unlock()
+
+				return
 			}
-			if elapsed > ft {
+		case SUSPECTED_STORED:
+			if fault > ft {
 				s.logger.Warn("Node now faulty - tombstoning")
 				part.f.mu.Lock()
 				part.f.state = FAULTY
 				part.f.mu.Unlock()
+
+				s.fail.mu.Lock()
+				delete(s.fail.suspectedNodes, node)
+				s.fail.failedNodes[node] = struct{}{}
+				s.fail.mu.Unlock()
+
+				err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: node, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: []byte{FAULTY}})
+				if err != nil {
+					return
+				}
+
+				part.pm.Lock()
+				clear(part.keyValues)
+				part.keyValues = map[string]*Delta{
+					MakeDeltaKey(FAILURE_DKG, node): {
+						KeyGroup:  FAILURE_DKG,
+						Key:       node,
+						Version:   time.Now().Unix(),
+						ValueType: D_BYTE_TYPE,
+						Value:     []byte{FAULTY},
+					},
+				}
+				part.maxVersion = time.Now().Unix()
+				part.pm.Unlock()
+
+				return
+
 			}
 		case ALIVE:
 			s.logger.Info("removing node from suspected", "node", node)
 			s.notToGossipNodeStore.Delete(node)
 			delete(suspected, node)
+
+			return
 			// We have already changed the participant in our addGSADeltaToMap method - we don't need to alter participant state here
 		default:
 

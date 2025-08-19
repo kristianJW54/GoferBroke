@@ -1242,7 +1242,7 @@ func (c *gbClient) processProbe(message []byte) {
 
 	if !exists {
 		s.logger.Warn("received a probe request",
-			slog.String("<--requester", c.name),
+			slog.String("requester", c.name),
 			slog.String("status", "failed - target does not exist in our conn store"),
 			slog.Duration("duration", time.Since(start)))
 
@@ -1267,7 +1267,7 @@ func (c *gbClient) processProbe(message []byte) {
 		defer cancel()
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			c.sendErr(reqID, Errors.ChainGBErrorf(Errors.ProbeFailedErr, nil, "%s", err.Error()).Net())
+			c.sendErr(reqID, Errors.ProbeFailedErr.Net())
 
 			s.logger.Warn("received a probe request",
 				slog.String("requester", c.name),
@@ -1280,11 +1280,11 @@ func (c *gbClient) processProbe(message []byte) {
 		}
 
 		if err != nil {
-			c.sendErr(reqID, Errors.ChainGBErrorf(Errors.ProbeFailedErr, nil, "%s", err.Error()).Net())
+			c.sendErr(reqID, Errors.ProbeFailedErr.Net())
 
 			s.logger.Warn("received a probe request",
-				slog.String("<--requester", c.name),
-				slog.String("target-->", client.name),
+				slog.String("requester", c.name),
+				slog.String("target", client.name),
 				slog.String("status", "failed"),
 				slog.String("err", err.Error()),
 				slog.Duration("duration", time.Since(start)))
@@ -1293,11 +1293,11 @@ func (c *gbClient) processProbe(message []byte) {
 		}
 
 		if payload.msg == nil {
-			c.sendErr(reqID, "nil message\r\n")
+			c.sendErr(reqID, Errors.ProbeFailedErr.Net())
 
 			s.logger.Warn("received a probe request",
-				slog.String("<--requester", c.name),
-				slog.String("target-->", client.name),
+				slog.String("requester", c.name),
+				slog.String("target", client.name),
 				slog.String("status", "failed - nil response"),
 				slog.Duration("duration", time.Since(start)))
 
@@ -1307,8 +1307,8 @@ func (c *gbClient) processProbe(message []byte) {
 		c.sendOK(reqID)
 
 		s.logger.Warn("received a probe request",
-			slog.String("<--requester", c.name),
-			slog.String("target-->", client.name),
+			slog.String("requester", c.name),
+			slog.String("target", client.name),
 			slog.String("status", "success"),
 			slog.Duration("duration", time.Since(start)))
 
@@ -1325,8 +1325,6 @@ func (c *gbClient) processPing(message []byte) {
 	reqID := c.ph.reqID
 
 	pong := []byte("PONG\r\n")
-
-	c.srv.logger.Info("did we get a ping?", "ping", message)
 
 	pay, err := prepareRequest(pong, 1, PONG_CMD, reqID, uint16(0))
 	if err != nil {

@@ -1548,9 +1548,9 @@ func (s *GBServer) getConvergenceEst() time.Duration {
 	log2N := math.Log2(float64(active))
 	rounds := 10 * log2N / float64(selection)
 
-	buffer := 5 * time.Second
+	buffer := 2 * time.Second
 	estimate := time.Duration(rounds * float64(interval))
-	return (estimate * 2) + buffer
+	return estimate + buffer
 
 }
 

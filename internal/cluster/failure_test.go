@@ -752,3 +752,214 @@ func TestBackgroundJobForSuspectedNodeMoveToNoGossip(t *testing.T) {
 	}
 
 }
+
+// Test Ready ✅
+func TestBackgroundJobTombstoneNode(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+					LogToBuffer = True
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+
+	time.Sleep(4 * time.Second)
+	gbs2.gossip.gossipControlChannel <- false
+	time.Sleep(25 * time.Second)
+
+	gbs2.Shutdown()
+	gbs.Shutdown()
+
+	if _, exists := gbs.notToGossipNodeStore.Load(gbs2.ServerName); !exists {
+		t.Errorf("node %s should have been moved to not-to-gossip store", gbs2.ServerName)
+	}
+
+	if n, exists := gbs.clusterMap.participants[gbs2.ServerName]; !exists {
+		t.Errorf("node %s should exist in our clustermap", gbs2.ServerName)
+	} else {
+		if len(n.keyValues) != 1 {
+			t.Errorf("node %s should only have one k-v in their map - got length %d", gbs2.ServerName, len(n.keyValues))
+		}
+		if n.f.state != FAULTY {
+			t.Errorf("node %s should have been FAULTY", gbs2.ServerName)
+		}
+	}
+
+	if n, exists := gbs.clusterMap.participants[gbs.ServerName].keyValues[MakeDeltaKey(FAILURE_DKG, gbs2.ServerName)]; !exists {
+		t.Errorf("node %s should exist in our failure view", gbs2.ServerName)
+	} else {
+		if n.Value[0] != FAULTY {
+			t.Errorf("node %s should be marked as fualty in our failure view", gbs2.ServerName)
+		}
+	}
+
+}
+
+func TestFaultyGossipedToOtherNode(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+					LogToBuffer = True
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg3 := `
+				Name = "t-3"
+				Host = "localhost"
+				Port = "8083"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = True
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs3, err := NewServerFromConfigString(nodeCfg3, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(500 * time.Millisecond)
+	go gbs2.StartServer()
+	go gbs3.StartServer()
+
+	time.Sleep(5 * time.Second)
+	gbs2.Shutdown()
+
+	time.Sleep(60 * time.Second)
+
+	// gbs3 should not be gossiping with node 2 and both should mark gbs2 as faulty
+
+	if _, exists := gbs.notToGossipNodeStore.Load(gbs2.ServerName); !exists {
+		t.Errorf("node %s should have been moved to not-to-gossip store", gbs2.ServerName)
+	}
+
+	if n, exists := gbs.clusterMap.participants[gbs2.ServerName]; !exists {
+		t.Errorf("node %s should exist in our clustermap", gbs2.ServerName)
+	} else {
+		if len(n.keyValues) != 1 {
+			t.Errorf("node %s should only have one k-v in their map - got length %d", gbs2.ServerName, len(n.keyValues))
+		}
+		if n.f.state != FAULTY {
+			t.Errorf("node %s should have been FAULTY", gbs2.ServerName)
+		}
+	}
+
+	if n, exists := gbs3.clusterMap.participants[gbs3.ServerName].keyValues[MakeDeltaKey(FAILURE_DKG, gbs2.ServerName)]; !exists {
+		t.Errorf("node %s should exist in our failure view", gbs2.ServerName)
+	} else {
+		if n.Value[0] != FAULTY {
+			t.Errorf("node %s should be marked as fualty in our failure view", gbs2.ServerName)
+		}
+	}
+
+	if _, exists := gbs3.notToGossipNodeStore.Load(gbs2.ServerName); !exists {
+		t.Errorf("node %s should have been moved to not-to-gossip store", gbs2.ServerName)
+	}
+
+	if n, exists := gbs3.clusterMap.participants[gbs2.ServerName]; !exists {
+		t.Errorf("node %s should exist in our clustermap", gbs2.ServerName)
+	} else {
+		if len(n.keyValues) != 1 {
+			t.Errorf("node %s should only have one k-v in their map - got length %d", gbs2.ServerName, len(n.keyValues))
+		}
+		if n.f.state != FAULTY {
+			t.Errorf("node %s should have been FAULTY", gbs2.ServerName)
+		}
+	}
+
+	if n, exists := gbs3.clusterMap.participants[gbs3.ServerName].keyValues[MakeDeltaKey(FAILURE_DKG, gbs2.ServerName)]; !exists {
+		t.Errorf("node %s should exist in our failure view", gbs2.ServerName)
+	} else {
+		if n.Value[0] != FAULTY {
+			t.Errorf("node %s should be marked as fualty in our failure view", gbs2.ServerName)
+		}
+	}
+
+}
