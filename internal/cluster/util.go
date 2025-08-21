@@ -119,6 +119,7 @@ func printStartup(s *GBServer) {
 	fmt.Printf("  GoferBroke Version : %s\n", internal.Version)
 	fmt.Printf("  GoferBroke Commit  : %s\n", internal.Commit)
 	fmt.Printf("  Server Created on  : %s\n", time.Now().Format(time.DateTime))
+	fmt.Printf("  Server UUID        : %s\n", s.ServerName)
 	fmt.Printf("  Name of node       : %s\n", s.name)
 	fmt.Printf("  Part of cluser     : %s\n", s.gbClusterConfig.Name)
 	fmt.Printf("  Configured addr    : %s\n", s.boundTCPAddr)

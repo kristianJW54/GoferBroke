@@ -376,6 +376,9 @@ const (
 	MARK_SUSPECT_CODE                 = 84
 	CHECK_FAILURE_GSA_CODE            = 85
 	UPDATE_SELF_INFO_CODE             = 86
+	SEND_CONFIG_CHECKSUM_CODE         = 87
+	SEND_CONFIG_DELTA_CODE            = 88
+	CONNECT_TO_NODE_CODE              = 89
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -433,40 +436,46 @@ var KnownInternalErrors = map[int]*GBError{
 	MARK_SUSPECT_CODE:                 &GBError{Code: MARK_SUSPECT_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "mark suspect failed"},
 	CHECK_FAILURE_GSA_CODE:            &GBError{Code: CHECK_FAILURE_GSA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "check failure during GSA received error"},
 	UPDATE_SELF_INFO_CODE:             &GBError{Code: UPDATE_SELF_INFO_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to update self info"},
+	SEND_CONFIG_CHECKSUM_CODE:         &GBError{Code: SEND_CONFIG_CHECKSUM_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "send config checksum failed"},
+	SEND_CONFIG_DELTA_CODE:            &GBError{Code: SEND_CONFIG_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to send cluster config delta"},
+	CONNECT_TO_NODE_CODE:              &GBError{Code: CONNECT_TO_NODE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "connect to node in map failed"},
 }
 
 var (
-	DiscoveryReqErr         = KnownInternalErrors[DISCOVERY_REQUEST_CODE]
-	ResponseErr             = KnownInternalErrors[RESPONSE_CODE]
-	EmptyAddrMapErr         = KnownInternalErrors[EMPTY_ADDR_MAP_CODE]
-	AddDiscoveryErr         = KnownInternalErrors[ADD_DICSOVERY_CODE]
-	EmptyParticipantHeapErr = KnownInternalErrors[EMPTY_PARTICIPANT_HEAP_CODE]
-	GossAckErr              = KnownInternalErrors[GOSS_ACK_CODE]
-	NodeNotFoundErr         = KnownInternalErrors[NODE_NOT_FOUND_CODE]
-	ClusterConfigErr        = KnownInternalErrors[CLUSTER_CONFIG_CODE]
-	DeltaUpdateNoDeltaErr   = KnownInternalErrors[DELTA_UPDATE_NO_DELTA_CODE]
-	DeltaUpdateKeyErr       = KnownInternalErrors[DELTA_UPDATE_KEY_CODE]
-	AddGSAErr               = KnownInternalErrors[ADD_GSA_DELTA_CODE]
-	UnableAdvertiseErr      = KnownInternalErrors[UNABLE_TO_DISCOVER_ADVERTISE_CODE]
-	DialSeedErr             = KnownInternalErrors[DIAL_SEED_CODE]
-	InternalErrorHandlerErr = KnownInternalErrors[INTERNAL_ERROR_HANDLER_CODE]
-	ConnectSeedErr          = KnownInternalErrors[CONNECT_TO_SEED_CODE]
-	ConfigDeltaVersionErr   = KnownInternalErrors[GET_CONFIG_DELTAS_FOR_RECON_CODE]
-	SerialiseDeltaErr       = KnownInternalErrors[SERIALISE_DELTA_CODE]
-	NoRequestIDErr          = KnownInternalErrors[NO_REQUEST_ID_CODE]
-	SelfConfigUpdateErr     = KnownInternalErrors[ADDING_CONFIG_UPDATE_SELF]
-	ConfigGroupErr          = KnownInternalErrors[WANT_CONFIG_GROUP]
-	ConfigDigestErr         = KnownInternalErrors[CONFIG_DIGEST_CODE]
-	RandomSeedErr           = KnownInternalErrors[RANDOM_SEED_CODE]
-	NodeConnStoreErr        = KnownInternalErrors[GET_NODE_CONN_CODE]
-	ResolveSeedAddrErr      = KnownInternalErrors[RESOLVE_SEED_ADDR_CODE]
-	DecodeDeltaErr          = KnownInternalErrors[DECODE_DELTA_CODE]
-	ConstructHeaderErr      = KnownInternalErrors[CONSTRUCT_NODE_HEADER_CODE]
-	PrepareRequestErr       = KnownInternalErrors[PREPARE_REQUEST_CODE]
-	IndirectProbeErr        = KnownInternalErrors[INDIRECT_PROBE_CODE]
-	MarkSuspectErr          = KnownInternalErrors[MARK_SUSPECT_CODE]
-	CheckFailureGSAErr      = KnownInternalErrors[CHECK_FAILURE_GSA_CODE]
-	UpdateSelfInfoErr       = KnownInternalErrors[UPDATE_SELF_INFO_CODE]
+	DiscoveryReqErr           = KnownInternalErrors[DISCOVERY_REQUEST_CODE]
+	ResponseErr               = KnownInternalErrors[RESPONSE_CODE]
+	EmptyAddrMapErr           = KnownInternalErrors[EMPTY_ADDR_MAP_CODE]
+	AddDiscoveryErr           = KnownInternalErrors[ADD_DICSOVERY_CODE]
+	EmptyParticipantHeapErr   = KnownInternalErrors[EMPTY_PARTICIPANT_HEAP_CODE]
+	GossAckErr                = KnownInternalErrors[GOSS_ACK_CODE]
+	NodeNotFoundErr           = KnownInternalErrors[NODE_NOT_FOUND_CODE]
+	ClusterConfigErr          = KnownInternalErrors[CLUSTER_CONFIG_CODE]
+	DeltaUpdateNoDeltaErr     = KnownInternalErrors[DELTA_UPDATE_NO_DELTA_CODE]
+	DeltaUpdateKeyErr         = KnownInternalErrors[DELTA_UPDATE_KEY_CODE]
+	AddGSAErr                 = KnownInternalErrors[ADD_GSA_DELTA_CODE]
+	UnableAdvertiseErr        = KnownInternalErrors[UNABLE_TO_DISCOVER_ADVERTISE_CODE]
+	DialSeedErr               = KnownInternalErrors[DIAL_SEED_CODE]
+	InternalErrorHandlerErr   = KnownInternalErrors[INTERNAL_ERROR_HANDLER_CODE]
+	ConnectSeedErr            = KnownInternalErrors[CONNECT_TO_SEED_CODE]
+	ConfigDeltaVersionErr     = KnownInternalErrors[GET_CONFIG_DELTAS_FOR_RECON_CODE]
+	SerialiseDeltaErr         = KnownInternalErrors[SERIALISE_DELTA_CODE]
+	NoRequestIDErr            = KnownInternalErrors[NO_REQUEST_ID_CODE]
+	SelfConfigUpdateErr       = KnownInternalErrors[ADDING_CONFIG_UPDATE_SELF]
+	ConfigGroupErr            = KnownInternalErrors[WANT_CONFIG_GROUP]
+	ConfigDigestErr           = KnownInternalErrors[CONFIG_DIGEST_CODE]
+	RandomSeedErr             = KnownInternalErrors[RANDOM_SEED_CODE]
+	NodeConnStoreErr          = KnownInternalErrors[GET_NODE_CONN_CODE]
+	ResolveSeedAddrErr        = KnownInternalErrors[RESOLVE_SEED_ADDR_CODE]
+	DecodeDeltaErr            = KnownInternalErrors[DECODE_DELTA_CODE]
+	ConstructHeaderErr        = KnownInternalErrors[CONSTRUCT_NODE_HEADER_CODE]
+	PrepareRequestErr         = KnownInternalErrors[PREPARE_REQUEST_CODE]
+	IndirectProbeErr          = KnownInternalErrors[INDIRECT_PROBE_CODE]
+	MarkSuspectErr            = KnownInternalErrors[MARK_SUSPECT_CODE]
+	CheckFailureGSAErr        = KnownInternalErrors[CHECK_FAILURE_GSA_CODE]
+	UpdateSelfInfoErr         = KnownInternalErrors[UPDATE_SELF_INFO_CODE]
+	SendConfigChecksumErr     = KnownInternalErrors[SEND_CONFIG_CHECKSUM_CODE]
+	SendClusterConfigDeltaErr = KnownInternalErrors[SEND_CONFIG_DELTA_CODE]
+	ConnectToNodeErr          = KnownInternalErrors[CONNECT_TO_NODE_CODE]
 )
 
 var (

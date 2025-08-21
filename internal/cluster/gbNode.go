@@ -86,6 +86,10 @@ func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, 
 
 }
 
+//===================================================================================
+// Handling Cluster Config
+//===================================================================================
+
 //-------------------------------
 // Cluster Config Checksum
 
@@ -97,16 +101,14 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 	ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
 	defer cancel()
 
-	// TODO create gbErrors
-
 	reqID, err := s.acquireReqID()
 	if err != nil {
-		return fmt.Errorf("acquire request ID: %v", err)
+		return Errors.ChainGBErrorf(Errors.SendConfigChecksumErr, err, "")
 	}
 
 	cs, err := configChecksum(s.gbClusterConfig)
 	if err != nil {
-		return fmt.Errorf("%v", err)
+		return Errors.ChainGBErrorf(Errors.SendConfigChecksumErr, nil, "%s", err.Error())
 	}
 
 	buff := make([]byte, len(cs)+2)
@@ -115,7 +117,7 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
 	pay, err := prepareRequest(buff, 1, CFG_CHECK, reqID, 0)
 	if err != nil {
-		return fmt.Errorf("prepare request: %v", err)
+		return Errors.ChainGBErrorf(Errors.SendConfigChecksumErr, err, "")
 	}
 
 	resp := client.qProtoWithResponse(ctx, reqID, pay, true)
@@ -131,6 +133,9 @@ func (s *GBServer) sendClusterCgfChecksum(client *gbClient) error {
 
 }
 
+// handleClusterConfigChecksumResponse takes a response from a config checksum mismatch. If we receive a response of new checksum
+// available then we will send a digest in order to receive config updated values. If we have a mismatch on the original cluster
+// config then we are configured wrong and must fail early and fast.
 func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr error) error {
 
 	handledErr := Errors.HandleError(respErr, func(gbErrors []*Errors.GBError) error {
@@ -181,9 +186,6 @@ func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr
 	return handledErr
 
 }
-
-//TODO Need to streamline and maybe offload some of this function (doing too much?)
-// Maybe should just send -> return response -> another function handles the response
 
 func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 
@@ -308,34 +310,28 @@ func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
 	c.mu.Unlock()
 
 	if fd == nil {
-		return fmt.Errorf("fulld digest is nil")
+		return Errors.ChainGBErrorf(Errors.SendClusterConfigDeltaErr, nil, "received digest is nil")
 	}
 
 	entry, ok := (*fd)[sender]
 	if !ok || entry == nil {
-		return fmt.Errorf("%s not found in full difest map", sender)
+		return Errors.ChainGBErrorf(Errors.SendClusterConfigDeltaErr, nil, "sender not found in digest map - [%s]", sender)
 	}
 
 	// Build method with this in it
 	configDeltas, size, err := srv.getConfigDeltasAboveVersion(entry.maxVersion)
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.SendClusterConfigDeltaErr, err, "for sender [%s]", sender)
 	}
-
-	// Not needed for now
-	//respID, err := srv.acquireReqID()
-	//if err != nil {
-	//	return err
-	//}
 
 	cereal, err := srv.serialiseConfigDelta(configDeltas, size)
 	if err != nil {
-		return fmt.Errorf("sendClusterConfigDelta - serialising configDeltas: %s", err)
+		return Errors.ChainGBErrorf(Errors.SendClusterConfigDeltaErr, nil, "serialising delta for sender [%s] failed - %s", sender, err.Error())
 	}
 
 	pay, err := prepareRequest(cereal, 1, CFG_RECON_RESP, c.ph.reqID, uint16(0)) // For now, we don't want a response of OK
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.SendClusterConfigDeltaErr, err, "for sender [%s]", sender)
 	}
 
 	c.mu.Lock()
@@ -346,9 +342,16 @@ func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
 
 }
 
+//===================================================================================
+// Connecting
+//===================================================================================
+
+//--------------------------------------------------------
+//Connecting To Seed (BootStrapping into the cluster)
+
 // connectToSeed is called by the server in a go-routine. It blocks on response to wait for the seed server to respond with a signal
 // that it has completed INFO exchange. If an error occurs through context, or response error from seed server, then connectToSeed
-// will return that error and trigger logic to either retry or exit the process
+// will return that error and trigger logic to either retry or exit the process and fail early
 func (s *GBServer) connectToSeed() error {
 
 	ctx, cancel := context.WithTimeout(s.ServerContext, 3*time.Second)
@@ -356,18 +359,14 @@ func (s *GBServer) connectToSeed() error {
 
 	conn, err := s.dialSeed()
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 	}
 
 	if conn == nil {
-		fmt.Printf("seed not reachable -- should be checking error types here to determine next steps...[TODO]\n")
-		// TODO Maybe return a specific error which we can match on and then do a retry
-		return nil
+		// If we receive a nil conn we have to fail and shutdown as dial seed will have checked all possible configured routes and
+		// attempted dials for each - meaning we have no seeds and must first configure and start those for nodes to bootstrap to
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, nil, "seed('s) not reachable - suggest checking seed servers are configured and started first before bootstrapping nodes")
 	}
-
-	//TODO If we are here - we now need to handle cluster config
-	// If we are a seed, we must hash our config - send and compare received hash - if different then we fail early or defer to older seed
-	// If we are not a seed, we must send our information and be ready to receive a cluster config
 
 	//----------------
 	// Config check to fail early
@@ -375,7 +374,7 @@ func (s *GBServer) connectToSeed() error {
 	client := s.createNodeClient(conn, "tmpClient", true, NODE)
 	err = s.sendClusterCgfChecksum(client)
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 	}
 
 	// Assume response ok if no error
@@ -385,32 +384,30 @@ func (s *GBServer) connectToSeed() error {
 
 	reqID, err := s.acquireReqID()
 	if err != nil {
-		return fmt.Errorf("connect to seed - acquire request ID: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 	}
 
 	pay1, err := s.prepareSelfInfoSend(NEW_JOIN, int(reqID), 0)
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 	}
 
 	resp := client.qProtoWithResponse(ctx, reqID, pay1, false)
 
 	r, err := client.waitForResponseAndBlock(resp)
 	if err != nil {
-		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
-		// TODO Also check the r.err channel
-		return fmt.Errorf("error waiting for self info response - %v", err)
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 	}
 
 	// If we receive no error we can assume the response was received and continue
-	// ---> We should check if there is a respID and then sendOKResp
+	// Sender expects an ok response, so we check if respID is not nil and then send
 	if r.respID != 0 {
 		client.sendOKResp(r.respID)
 	}
 
 	delta, err := deserialiseDelta(r.msg)
 	if err != nil {
-		return fmt.Errorf("connect to seed - deserialising data: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, nil, "de-serialise delta for sender [%s] failed - %s", s.ServerName, err.Error())
 	}
 
 	// Now we add the delta to our cluster map
@@ -418,13 +415,15 @@ func (s *GBServer) connectToSeed() error {
 		if _, exists := s.clusterMap.participants[name]; !exists {
 			err := s.addParticipantFromTmp(name, participant)
 			if err != nil {
-				return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
+				return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 			}
 
-			// We also need to the ID to the seed addr list
+			// We also need to the ID to the seed addr list - by adding the uuid of the seed node we have just connected to
+			// to the corresponding seed addr in the list - we are able to easily map to what seed address we are connected to
+			// retrieve the associated uuid and access its connection in the nodeConnStore
 			err = s.addIDToSeedAddrList(name, conn.RemoteAddr())
 			if err != nil {
-				return fmt.Errorf("connect to seed - adding seed id to addr list - %v", err)
+				return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 			}
 
 		}
@@ -434,7 +433,7 @@ func (s *GBServer) connectToSeed() error {
 	// Now we can remove from tmp map and add to client store including connected flag
 	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 	}
 
 	client.mu.Lock()
@@ -454,17 +453,27 @@ func (s *GBServer) connectToSeed() error {
 
 }
 
-// TODO Re-visit as we need to do address checks and also defer or reach out to other nodes if we have no addr
+//--------------------------------------------------------
+//Connecting To A Node
 
+// connectToNodeInMap
 func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
-	if _, exists, err := s.getNodeConnFromStore(node); exists {
+	if conn, exists, err := s.getNodeConnFromStore(node); exists {
 		if err != nil {
-			return err
+			return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, err, "")
 		}
-		fmt.Printf("[DEBUG] Already connected to node %s, skipping dial\n", node)
+		//TODO - need to give this more thought as we sometimes encounter instances where a node already has a
+		// connection even though we may not have been the one to initiate - this doesn't cause error so for now
+		// it's safe to just return and carry on
+		// I think it's because we when we receive a connection we also store it but may not have the actual net.Conn
+		if conn.gbc != nil {
+			return nil
+		}
 		return nil
 	}
+
+	// TODO Finish cleaning ----
 
 	s.clusterMapLock.RLock()
 	participant := s.clusterMap.participants[node]

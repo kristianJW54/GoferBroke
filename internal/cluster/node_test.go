@@ -438,3 +438,7 @@ func TestUpdateClusterConfigFromNewDelta(t *testing.T) {
 	}
 
 }
+
+// Connect to seed
+
+// Connect to node in map
