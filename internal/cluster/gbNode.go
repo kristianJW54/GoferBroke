@@ -149,7 +149,7 @@ func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr
 				// Handle here...
 				err := s.sendClusterConfigDigest(client)
 				if err != nil {
-					return err
+					return Errors.ChainGBErrorf(Errors.ConfigCheckSumRespErr, err, "")
 				}
 
 				return nil
@@ -175,7 +175,7 @@ func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr
 					"",
 				})
 
-				return Errors.ChainGBErrorf(Errors.ConnectSeedErr, respErr, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
+				return Errors.ChainGBErrorf(Errors.ConfigCheckSumRespErr, respErr, "cluster config is not accepted - suggested retrieve config from live cluster and use to bootstrap node")
 			}
 		}
 
@@ -187,6 +187,9 @@ func (s *GBServer) handleClusterConfigChecksumResponse(client *gbClient, respErr
 
 }
 
+// sendClusterConfigDigest is responsible for building a digest of our config fields and version to send to a node
+// in which we will then receive deltas on the fields we have that are outdated
+// once we receive the delta, we deserialise and apply those to our config structure and update our state
 func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 
 	d, _, err := s.serialiseClusterDigestConfigOnly()
@@ -270,6 +273,8 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 // Config Reconciliation for initial bootstrap
 //=====================================================================
 
+// getConfigDeltasAboveVersion builds a map of config fields which are above the given version in order to build deltas to
+// send to a requesting node
 func (s *GBServer) getConfigDeltasAboveVersion(version int64) (map[string][]Delta, int, error) {
 
 	s.clusterMapLock.RLock()
@@ -303,6 +308,8 @@ func (s *GBServer) getConfigDeltasAboveVersion(version int64) (map[string][]Delt
 
 }
 
+// sendClusterConfigDelta takes a digest from a requesting node and builds deltas of config fields which are newer in version
+// it then sends those to the requesting node so that it may update itself to the current cluster view of the config
 func (c *gbClient) sendClusterConfigDelta(fd *fullDigest, sender string) error {
 
 	c.mu.Lock()
@@ -443,6 +450,13 @@ func (s *GBServer) connectToSeed() error {
 	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
 	s.incrementNodeConnCount()
 
+	// Canonical Log Line
+	s.logger.Info("Connected to seed",
+		slog.String("node", s.PrettyName()),
+		slog.String("seed", client.name),
+		slog.String("seed addr", client.tcpAddr.String()),
+	)
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -456,7 +470,9 @@ func (s *GBServer) connectToSeed() error {
 //--------------------------------------------------------
 //Connecting To A Node
 
-// connectToNodeInMap
+// connectToNodeInMap attempts to make a connection with a node it has its cluster map. The node may have been added through
+// gossip with other nodes. We first look in our nodeConnStore to see if we have an active connection, if not, we then
+// dial the node and exchange information to form a formal connection
 func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	if conn, exists, err := s.getNodeConnFromStore(node); exists {
@@ -472,8 +488,6 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		}
 		return nil
 	}
-
-	// TODO Finish cleaning ----
 
 	s.clusterMapLock.RLock()
 	participant := s.clusterMap.participants[node]
@@ -494,29 +508,27 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	ip, err := net.ResolveIPAddr("ip", parts[0])
 	if err != nil {
-		return fmt.Errorf("connectToNodeInMap resolving ip address: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, nil, "failed to connect to node [%s] using ip %s -> %s", node, parts[0], err)
 	}
 
 	port := parts[1]
 
 	nodeAddr := net.JoinHostPort(ip.String(), port)
 
-	s.logger.Info("connecting to node", "name", node, "addr", nodeAddr)
-
 	// Dial here
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
-		return fmt.Errorf("connectToNodeInMap - net dial: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, nil, "failed to dial node [%s] -> %s", node, err)
 	}
 
 	reqID, err := s.acquireReqID()
 	if err != nil {
-		return fmt.Errorf("connectToNodeInMap - acquire request ID: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, err, "")
 	}
 
 	pay1, err := s.prepareSelfInfoSend(HANDSHAKE, int(reqID), 0)
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, err, "")
 	}
 
 	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
@@ -525,15 +537,14 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 	r, err := client.waitForResponseAndBlock(resp)
 	if err != nil {
-		// TODO We need to check the response err if we receive - error code which we may be able to ignore or do something with or a system error which we need to return
-		return fmt.Errorf("connectToNodeInMap - wait for response: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, err, "")
 	}
 	// If we receive no error we can assume the response was received and continue
-	// We do not need to check for respID here in r because this is a simple request with a response and is not chained
+	// We do not need to check for respID here because this is a simple request with a response and is not chained
 
 	delta, err := deserialiseDelta(r.msg)
 	if err != nil {
-		return fmt.Errorf("connectToNodeInMap - deserialising data: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, nil, "deserialise delta failed -> %s", err)
 	}
 
 	// Now we add the delta to our cluster map
@@ -541,7 +552,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		if _, exists := s.clusterMap.participants[name]; !exists {
 			err := s.addParticipantFromTmp(name, part)
 			if err != nil {
-				return fmt.Errorf("connect to seed - adding participant from tmp: %s", err)
+				return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, err, "")
 			}
 		}
 		continue
@@ -551,9 +562,8 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	//s.serverLock.Lock()
 	err = s.moveToConnected(client.cid, delta.sender)
 	if err != nil {
-		return fmt.Errorf("connectToNodeInMap - moving connection to connected: %s", err)
+		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, err, "")
 	}
-	//s.serverLock.Unlock()
 
 	client.mu.Lock()
 	client.name = delta.sender
@@ -562,6 +572,11 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 	// we call incrementNodeConnCount to safely add to the connection count and also do a check if gossip process needs to be signalled to start/stop based on count
 
 	s.incrementNodeConnCount()
+
+	// Canonical log line
+	s.logger.Info("Connected to node",
+		slog.String("node", node),
+		slog.String("addr", client.tcpAddr.String()))
 
 	select {
 	case <-ctx.Done():
@@ -573,9 +588,16 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 
 }
 
-//------------------------------------------
-// Handling Self Info - Thread safe and for high concurrency
+//===================================================================================
+// Handling Self
+//===================================================================================
 
+//--------------------------
+// Handling our own info
+
+// GetSelfInfo is a thread safe method to retrieve our own self as a *Participant. We then have
+// Access to our view of the cluster map and our own deltas. Changes we make will be to our own self in the
+// cluster map which will be gossiped to other nodes
 func (s *GBServer) GetSelfInfo() *Participant {
 	s.clusterMapLock.RLock()
 	defer s.clusterMapLock.RUnlock()
@@ -583,6 +605,9 @@ func (s *GBServer) GetSelfInfo() *Participant {
 }
 
 // TODO Consider where to put this
+// encodeValue is a helper function for when we want to update a delta in our cluster map. We give a valueType
+// and a generic value which will allow us to cast to a concrete type and know how to convert to bytes to put
+// into a delta value
 func encodeValue(valueType uint8, value any) ([]byte, error) {
 
 	if value == nil {
@@ -686,6 +711,10 @@ func encodeValue(valueType uint8, value any) ([]byte, error) {
 	}
 }
 
+// updateSelfInfo is a thread safe method to update one of our own deltas within our self as a *Participant
+// it checks if the deltas exists before updating and checks whether the delta is of CONFIG group, if so,
+// it will also update the cluster config struct in memory.
+// It also compares and updates max version for our *Participant for gossip.
 func (s *GBServer) updateSelfInfo(d *Delta) error {
 
 	self := s.GetSelfInfo()
@@ -714,6 +743,10 @@ func (s *GBServer) updateSelfInfo(d *Delta) error {
 
 }
 
+// addDeltaToSelfInfo is similar to updateSelfInfo except we don't return if the delta doesn't exist. Instead,
+// we add the delta to our own self *Participant as a new entry in the key-values of our clusterMap
+// We also do a CONFIG group check although this may not be needed as we shouldn't be adding new config entries
+// once cluster is live (may consider erroring on this in future updates)
 func (s *GBServer) addDeltaToSelfInfo(d *Delta) error {
 
 	self := s.GetSelfInfo()
@@ -749,25 +782,28 @@ func (s *GBServer) addDeltaToSelfInfo(d *Delta) error {
 // running a check on our ServerID + address
 func (s *GBServer) prepareSelfInfoSend(command int, reqID, respID int) ([]byte, error) {
 
-	//s.clusterMapLock.RLock()
 	self := s.GetSelfInfo()
 
 	//Need to serialise the tmpCluster
 	cereal, err := s.serialiseSelfInfo(self)
 	if err != nil {
-		return nil, fmt.Errorf("prepareSelfInfoSend - serialising self info: %s", err)
+		return nil, Errors.ChainGBErrorf(Errors.PrepareSelfInfoErr, nil, "failed to serialise self info -> %s", err.Error())
 	}
 
 	pay, err := prepareRequest(cereal, 1, command, uint16(reqID), uint16(respID))
 	if err != nil {
-		return nil, err
+		return nil, Errors.ChainGBErrorf(Errors.PrepareSelfInfoErr, err, "")
 	}
 
 	return pay, nil
 
 }
 
+// getKnownAddressNodes is used in the discovery request process. We fetch all known addresses known to us and return as
+// a list of strings
 func (s *GBServer) getKnownAddressNodes() ([]string, error) {
+
+	// Goss use of locks here?
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
 	s.clusterMapLock.RUnlock()
@@ -783,15 +819,16 @@ func (s *GBServer) getKnownAddressNodes() ([]string, error) {
 		}
 	}
 	if len(known) == 0 {
-		return nil, Errors.KnownInternalErrors[Errors.KNOWN_ADDR_CODE]
+		return nil, Errors.ChainGBErrorf(Errors.KnownAddrErr, nil, "known addr list is nil")
 	}
 	return known, nil
 }
 
+// buildAddrGroupMap used in discoveryRequest is similar to building a delta from a received digest. We return all the known addresses we have
+// that the sending node hasn't got in their list which they send to us
 func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error) {
 
 	// We go through each participant in the map and build an addr map of advertised addrs
-	// We may want to only include a certain network type...?
 
 	var sizeEstimate int
 
@@ -842,45 +879,52 @@ func (s *GBServer) buildAddrGroupMap(known []string) (map[string][]string, error
 }
 
 //=======================================================
-// Seed Server
+// Seed Server Logic
 //=======================================================
 
 //---------
 //Receiving Node Join
 
+// seedSendSelf is a response to a newJoiner node request. The seed node will send its own information in response to
+// receiving a nodes' information. We send our information and wait for an ok response async so as not to block any hot paths
 func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 
 	s := c.srv
 
 	respID, err := s.acquireReqID()
 	if err != nil {
-		return fmt.Errorf("seedSendSelf: %w", err)
+		return Errors.ChainGBErrorf(Errors.SeedSendSelfErr, err, "")
 	}
 
 	self, err := s.prepareSelfInfoSend(SELF_INFO, int(c.ph.reqID), int(respID))
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.SeedSendSelfErr, err, "")
 	}
 
-	ctx, cancel := context.WithTimeout(s.ServerContext, 2*time.Second)
-	//defer cancel()
+	ctx, cancel := context.WithTimeout(s.ServerContext, 1*time.Second)
 
 	resp := c.qProtoWithResponse(ctx, respID, self, false)
 
+	// If we fail here we hit our deadline timeout
 	c.waitForResponseAsync(resp, func(bytes responsePayload, err error) {
 
 		defer cancel()
 		if err != nil {
-			fmt.Printf("error in onboardNewJoiner: %v\n", err)
+			s.logger.Info("Sending self info as seed failed", slog.String("err", err.Error()))
+			return
 		}
 
-		//log.Printf("response from onboardNewJoiner: %v", string(bytes))
-		err = c.srv.moveToConnected(c.cid, cd.sender)
-		if err != nil {
-			fmt.Printf("MoveToConnected failed in process info message: %v\n", err)
-		}
+		if bytes.msg != nil {
+			err = c.srv.moveToConnected(c.cid, cd.sender)
+			if err != nil {
+				return
+			}
 
-		c.srv.incrementNodeConnCount()
+			c.srv.incrementNodeConnCount()
+		} else {
+			s.logger.Info("sending seed self info failed - msg = nil")
+			return
+		}
 
 	})
 
@@ -892,9 +936,8 @@ func (c *gbClient) seedSendSelf(cd *clusterDelta) error {
 // Retrieving Connections or Nodes
 //=======================================================
 
-//-----------------
-// Retrieve a random seed to dial
-
+// getRandomSeedToDial retrieves a random seed and is used by nodes to bootstrap into the cluster. It is called by dialSeed
+// and ensures that all seed addresses are exhausted before returning and failing causing the node to terminate early
 func (s *GBServer) getRandomSeedToDial() (*seedEntry, error) {
 
 	var candidates []*seedEntry
@@ -920,8 +963,10 @@ func (s *GBServer) getRandomSeedToDial() (*seedEntry, error) {
 
 }
 
-//-----------------
+//----------------------
 // Retrieve a seed conn
+
+// Possibly redundant as the only method using this is discovery request - can use getRandomSeedToDial instead?
 
 func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 	// First try the original seed node connection (usually second in participantArray)
@@ -965,10 +1010,15 @@ func (s *GBServer) retrieveASeedConn(random bool) (*gbClient, error) {
 	return conn.(*gbClient), nil
 }
 
-//-----------------
+//------------------------
 // Random node selector
 
 // Lock should be held on entry
+// generateRandomParticipantIndexesForGossip is used mainly in a gossip round to randomly select n amount of nodes to gossip
+// with. We do this by building an active list of candidates, shuffling them and appending to a slice consisting of their indexes
+// which we use to index into the participantArray.
+// we can also exclude extra nodes by adding their names - this is useful when generating a list of viable nodes to indirectly probe
+// when we suspect the current node we may be gossiping with
 func generateRandomParticipantIndexesForGossip(
 	partArray []string,
 	numOfNodeSelection int,
@@ -977,10 +1027,10 @@ func generateRandomParticipantIndexesForGossip(
 ) ([]int, error) {
 
 	if numOfNodeSelection <= 0 {
-		return nil, fmt.Errorf("selection count must be >0")
+		return nil, Errors.ChainGBErrorf(Errors.RandomIndexesErr, nil, "number of node selection must be positive")
 	}
 	if len(partArray) == 0 {
-		return nil, fmt.Errorf("participant list is empty")
+		return nil, Errors.ChainGBErrorf(Errors.RandomIndexesErr, nil, "empty participant list")
 	}
 
 	// Build a quick look-up set of names to skip.
@@ -1006,9 +1056,8 @@ func generateRandomParticipantIndexesForGossip(
 	}
 
 	if numOfNodeSelection > len(candidates) {
-		return nil, fmt.Errorf(
-			"cannot select %d nodes: only %d candidates after exclusions",
-			numOfNodeSelection, len(candidates))
+		return nil,
+			Errors.ChainGBErrorf(Errors.RandomIndexesErr, nil, "cannot select %d nodes: only %d candidates active after exclusions", numOfNodeSelection, len(candidates))
 	}
 
 	// Partial Fisher-Yates shuffle: randomise the first k elements.
@@ -1029,10 +1078,6 @@ func generateRandomParticipantIndexesForGossip(
 
 func (c *gbClient) dispatchNodeCommands(message []byte) {
 
-	//GOSS_SYN
-	//GOSS_SYN_ACK
-	//GOSS_ACK
-	//TEST
 	switch c.ph.command {
 	case NEW_JOIN:
 		c.processNewJoinMessage(message)
@@ -1075,11 +1120,14 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 	case ERR_RESP:
 		c.processErrResp(message)
 	default:
-		fmt.Printf("unknown command %v\n", c.ph.command)
+		//Unknown command - drop
+		// Should we clear buffers and message to get rid of it?
+		return
 	}
 
 }
 
+// processErr handles an error sent by a responder to our request
 func (c *gbClient) processErr(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1087,11 +1135,13 @@ func (c *gbClient) processErr(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		// Need to do anything here?
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
 	if rsp == nil || rsp.ctx.Err() != nil {
-		fmt.Printf("response channel closed or context expired for reqID %d\n", reqID)
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1102,13 +1152,14 @@ func (c *gbClient) processErr(message []byte) {
 
 	select {
 	case rsp.err <- msgErr: // Non-blocking
-		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
-		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
+		// channel full - drop
+		return
 	}
 
 }
 
+// processErrResp processes an error which has been sent by the original requester in answer to our response
 func (c *gbClient) processErrResp(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1116,11 +1167,12 @@ func (c *gbClient) processErrResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
 	if rsp == nil || rsp.ctx.Err() != nil {
-		fmt.Printf("response channel closed or context expired for reqID %d\n", respID)
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1131,13 +1183,15 @@ func (c *gbClient) processErrResp(message []byte) {
 
 	select {
 	case rsp.err <- msgErr: // Non-blocking
-		//log.Printf("Error message sent to response channel for reqID %d", c.ph.reqID)
 	default:
-		fmt.Printf("Warning: response channel full for respID %d\n", respID)
+		return
 	}
 
 }
 
+// processCfgCheck takes the checksum send by the requester (in this case it should be a new node joining the cluster) and compares
+// it against the checksums we have. First against our current checksum and, if different, against the original checksum
+// this node was configured with
 func (c *gbClient) processCfgCheck(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1146,7 +1200,7 @@ func (c *gbClient) processCfgCheck(message []byte) {
 	// Message should be 64 bytes long for a checksum + 2 for CLRF
 
 	if len(message) != 66 {
-		c.sendErr(reqID, "invalid configuration check message length\r\n") // TODO Change to GBError
+		c.sendErr(reqID, Errors.ChainGBErrorf(Errors.InvalidChecksumErr, nil, "got %d - should be 66", len(message)).Net())
 	}
 
 	// We need to compare against our config checksums
@@ -1161,7 +1215,8 @@ func (c *gbClient) processCfgCheck(message []byte) {
 	// First check against our current hash
 	cs, err := configChecksum(cfg)
 	if err != nil {
-		// TODO We will want an error event here as this is an internal system error
+		// TODO We will want an error event here as this is an internal system error? For now just log it
+		c.srv.logger.Error("Error checking config checksum", slog.String("err", err.Error()))
 		return
 	}
 
@@ -1197,6 +1252,8 @@ func (c *gbClient) processCfgCheck(message []byte) {
 	}
 }
 
+// processCfgRecon processes a cluster config digest from a requesting node and produces a delta including only the
+// config fields which the requesting node needs which they have outdated versions of
 func (c *gbClient) processCfgRecon(message []byte) {
 
 	name, fd, err := deSerialiseDigest(message)
@@ -1207,14 +1264,17 @@ func (c *gbClient) processCfgRecon(message []byte) {
 
 	err = c.sendClusterConfigDelta(fd, name)
 	if err != nil {
-		// TODO Need internal event error here
-		fmt.Printf("sendClusterConfigDelta failed: %v\n", err)
+		// TODO Need internal event error here?
+		c.srv.logger.Error("Error sending cluster configuration delta", slog.String("err", err.Error()))
 	}
 
 	return
 
 }
 
+// processCfgReconResp is a response from a node in which we have just sent a config delta to. We will either receive
+// an error telling us we have the wrong config leading us to shut down or, we have updated config fields which we
+// can apply to our config state.
 func (c *gbClient) processCfgReconResp(message []byte) {
 
 	reqID := c.ph.reqID
@@ -1222,7 +1282,13 @@ func (c *gbClient) processCfgReconResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
+	}
+
+	if rsp == nil || rsp.ctx.Err() != nil {
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
+		return
 	}
 
 	msg := make([]byte, len(message))
@@ -1231,12 +1297,13 @@ func (c *gbClient) processCfgReconResp(message []byte) {
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
 }
 
+// processProbe processes a request by a node to probe a target node which is being suspected as unresponsive. The requesting
+// node sends us the targets name, and we PING the target and wait async for a response via timeout
 func (c *gbClient) processProbe(message []byte) {
 
 	start := time.Now()
@@ -1329,10 +1396,12 @@ func (c *gbClient) processProbe(message []byte) {
 
 }
 
+// Not needed?
 func (c *gbClient) processProbeResp(message []byte) {
 
 }
 
+// processPing is a probe by another node where we may have been suspected. We answer PONG to tell the probe we are alive
 func (c *gbClient) processPing(message []byte) {
 
 	reqID := c.ph.reqID
@@ -1352,6 +1421,7 @@ func (c *gbClient) processPing(message []byte) {
 
 }
 
+// processPong is the suspected nodes response in the probe request we will have made and are waiting async for via response channel
 func (c *gbClient) processPong(message []byte) {
 
 	reqID := c.ph.reqID
@@ -1361,25 +1431,26 @@ func (c *gbClient) processPong(message []byte) {
 	copy(msg, message)
 	pong := bytes.TrimSuffix(msg, []byte("\r\n"))
 
-	//c.srv.logger.Info("did we get a pong?", "ping", message)
-
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: pong}:
 	default:
-		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
 }
+
+// TODO: Finish -----
 
 func (c *gbClient) processNewJoinMessage(message []byte) {
 

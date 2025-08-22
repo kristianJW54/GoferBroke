@@ -335,6 +335,7 @@ const (
 	CONFIG_CHECKSUM_FAIL_CODE         = 20
 	CONFIG_AVAILABLE_CODE             = 21
 	PROBE_FAILED_CODE                 = 22
+	INVALID_CHECKSUM_CODE             = 23
 )
 
 // Internal Error codes
@@ -379,6 +380,10 @@ const (
 	SEND_CONFIG_CHECKSUM_CODE         = 87
 	SEND_CONFIG_DELTA_CODE            = 88
 	CONNECT_TO_NODE_CODE              = 89
+	PREPARE_SELF_INFO_CODE            = 90
+	SEED_SEND_SELF_CODE               = 91
+	RANDOM_NODE_INDEXES_CODE          = 92
+	CONFIG_CHECKSUM_RESP_CODE         = 93
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -397,6 +402,7 @@ var KnownNetworkErrors = map[int]*GBError{
 	CONFIG_CHECKSUM_FAIL_CODE:         &GBError{Code: CONFIG_CHECKSUM_FAIL_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "config checksum does not match"},
 	CONFIG_AVAILABLE_CODE:             &GBError{Code: CONFIG_AVAILABLE_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "config checksum mismatch new config available"},
 	PROBE_FAILED_CODE:                 &GBError{Code: PROBE_FAILED_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "probe failed"},
+	INVALID_CHECKSUM_CODE:             &GBError{Code: INVALID_CHECKSUM_CODE, ErrLevel: NETWORK_ERR_LEVEL, ErrMsg: "invalid checksum length"},
 }
 
 var KnownInternalErrors = map[int]*GBError{
@@ -439,6 +445,10 @@ var KnownInternalErrors = map[int]*GBError{
 	SEND_CONFIG_CHECKSUM_CODE:         &GBError{Code: SEND_CONFIG_CHECKSUM_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "send config checksum failed"},
 	SEND_CONFIG_DELTA_CODE:            &GBError{Code: SEND_CONFIG_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to send cluster config delta"},
 	CONNECT_TO_NODE_CODE:              &GBError{Code: CONNECT_TO_NODE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "connect to node in map failed"},
+	PREPARE_SELF_INFO_CODE:            &GBError{Code: PREPARE_SELF_INFO_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to prepare self info"},
+	SEED_SEND_SELF_CODE:               &GBError{Code: SEED_SEND_SELF_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "seed send self info failed"},
+	RANDOM_NODE_INDEXES_CODE:          &GBError{Code: RANDOM_NODE_INDEXES_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to generate random node indexes"},
+	CONFIG_CHECKSUM_RESP_CODE:         &GBError{Code: CONFIG_CHECKSUM_RESP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "processing config checksum response failed"},
 }
 
 var (
@@ -476,6 +486,11 @@ var (
 	SendConfigChecksumErr     = KnownInternalErrors[SEND_CONFIG_CHECKSUM_CODE]
 	SendClusterConfigDeltaErr = KnownInternalErrors[SEND_CONFIG_DELTA_CODE]
 	ConnectToNodeErr          = KnownInternalErrors[CONNECT_TO_NODE_CODE]
+	PrepareSelfInfoErr        = KnownInternalErrors[PREPARE_SELF_INFO_CODE]
+	KnownAddrErr              = KnownInternalErrors[KNOWN_ADDR_CODE]
+	SeedSendSelfErr           = KnownInternalErrors[SEED_SEND_SELF_CODE]
+	RandomIndexesErr          = KnownInternalErrors[RANDOM_NODE_INDEXES_CODE]
+	ConfigCheckSumRespErr     = KnownInternalErrors[CONFIG_CHECKSUM_RESP_CODE]
 )
 
 var (
@@ -492,4 +507,5 @@ var (
 	ConfigChecksumFailErr  = KnownNetworkErrors[CONFIG_CHECKSUM_FAIL_CODE]
 	ConfigAvailableErr     = KnownNetworkErrors[CONFIG_AVAILABLE_CODE]
 	ProbeFailedErr         = KnownNetworkErrors[PROBE_FAILED_CODE]
+	InvalidChecksumErr     = KnownNetworkErrors[INVALID_CHECKSUM_CODE]
 )

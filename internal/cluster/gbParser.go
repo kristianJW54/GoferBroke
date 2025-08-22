@@ -227,6 +227,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 			}
 
 			//fmt.Printf("msg buf = %v\n", c.msgBuf)
+			//c.srv.logger.Info("bytes", "bytes", c.msgBuf)
 
 			c.processMessage(c.msgBuf)
 

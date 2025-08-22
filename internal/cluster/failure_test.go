@@ -86,8 +86,9 @@ func TestIndirectProbeErrorForTwoNodes(t *testing.T) {
 			// Test Assert here
 			if strings.Contains(rec.Msg, Errors.IndirectProbeErr.ErrMsg) {
 				want = struct{ Msg string }{Msg: rec.Msg}
+				break
 			}
-			break
+			continue
 		}
 	}
 

@@ -1,8 +1,10 @@
 package cluster
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -439,6 +441,100 @@ func TestUpdateClusterConfigFromNewDelta(t *testing.T) {
 
 }
 
-// Connect to seed
+// Test Ready ✅
+func TestConnectToSeedAndSeedSendSelf(t *testing.T) {
+
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	nodeCfg2 := `
+				Name = "t-2"
+				Host = "localhost"
+				Port = "8082"
+				IsSeed = False
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
+
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	gbs2, err := NewServerFromConfigString(nodeCfg2, cfg)
+	if err != nil {
+		t.Errorf("error creating new server: %v", err)
+	}
+
+	go gbs.StartServer()
+	time.Sleep(100 * time.Millisecond)
+	go gbs2.StartServer()
+
+	time.Sleep(2 * time.Second)
+
+	if _, exists, err := gbs2.getNodeConnFromStore(gbs.ServerName); !exists {
+		t.Errorf("%s should exist in %s node conn store", gbs.ServerName, gbs2.PrettyName())
+	} else {
+		if err != nil {
+			t.Errorf("got error getting conn from store: %v", err)
+		}
+	}
+
+	gbs.Shutdown()
+	gbs2.Shutdown()
+
+	var want struct {
+		Msg string
+	}
+
+	for _, snap := range gbs2.jsonBuffer.Snapshot() {
+		var rec struct {
+			Time  string `json:"time"`
+			Level string `json:"level"`
+			Msg   string `json:"msg"`
+		}
+
+		if err := json.Unmarshal(snap, &rec); err != nil {
+			t.Fatalf("bad log json: %v\n%s", err, string(snap))
+		}
+		if rec.Level == "INFO" {
+			// Test Assert here
+			fmt.Println(rec.Msg)
+			if strings.Contains(rec.Msg, "Connected to seed") {
+				want = struct{ Msg string }{Msg: rec.Msg}
+				break
+			}
+			continue
+		}
+	}
+
+	if want.Msg == "" {
+		t.Errorf("expected to get message -> %s", "Connected to seed")
+	}
+
+}
 
 // Connect to node in map

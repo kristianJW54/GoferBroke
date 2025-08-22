@@ -721,6 +721,7 @@ func (s *GBServer) runDiscovery(ctx context.Context) error {
 
 }
 
+// TODO Implement in future release update
 // Discovery Request for node during discovery phase - will take the gossip rounds context and timeout
 // TODO - Should this be in the node file as only nodes will be making requests - responses are then general to the cluster ? OR keep it together?
 func (s *GBServer) discoveryRequest(ctx context.Context, conn *gbClient) ([]byte, error) {
