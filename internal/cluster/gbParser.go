@@ -226,9 +226,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 				c.msgBuf = packet[c.position : i+1]
 			}
 
-			//fmt.Printf("msg buf = %v\n", c.msgBuf)
-			//c.srv.logger.Info("bytes", "bytes", c.msgBuf)
-
 			c.processMessage(c.msgBuf)
 
 			c.argBuf, c.msgBuf = nil, nil

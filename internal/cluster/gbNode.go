@@ -52,7 +52,7 @@ type node struct {
 
 // createNodeClient method belongs to the server which receives the connection from the connecting server.
 // createNodeClient is passed as a callback function to the acceptConnection method within the AcceptLoop.
-func (s *GBServer) createNodeClient(conn net.Conn, name string, initiated bool, clientType int) *gbClient {
+func (s *GBServer) createNodeClient(conn net.Conn, name string, clientType int) *gbClient {
 
 	now := time.Now()
 	clientName := fmt.Sprintf("%s_%d", name, now.Unix())
@@ -244,7 +244,7 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 				return Errors.ChainGBErrorf(Errors.ConfigGroupErr, nil, "got [%s]", v.KeyGroup)
 			}
 
-			// We don't try to update our view of the sender in our cluster map because we are a new joiner and we have not yet
+			// We don't try to update our view of the sender in our cluster map because we are a new joiner and, we have not yet
 			// Exchanged self info
 
 			// But we should update our own info to match the config version we've received
@@ -378,7 +378,7 @@ func (s *GBServer) connectToSeed() error {
 	//----------------
 	// Config check to fail early
 
-	client := s.createNodeClient(conn, "tmpClient", true, NODE)
+	client := s.createNodeClient(conn, "tmpClient", NODE)
 	err = s.sendClusterCgfChecksum(client)
 	if err != nil {
 		return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
@@ -425,7 +425,7 @@ func (s *GBServer) connectToSeed() error {
 				return Errors.ChainGBErrorf(Errors.ConnectSeedErr, err, "")
 			}
 
-			// We also need to the ID to the seed addr list - by adding the uuid of the seed node we have just connected to
+			// We also need to the ID to the seed addr list - by adding the uuid of the seed node we have just connected
 			// to the corresponding seed addr in the list - we are able to easily map to what seed address we are connected to
 			// retrieve the associated uuid and access its connection in the nodeConnStore
 			err = s.addIDToSeedAddrList(name, conn.RemoteAddr())
@@ -531,7 +531,7 @@ func (s *GBServer) connectToNodeInMap(ctx context.Context, node string) error {
 		return Errors.ChainGBErrorf(Errors.ConnectToNodeErr, err, "")
 	}
 
-	client := s.createNodeClient(conn, "tmpSeedClient", true, NODE)
+	client := s.createNodeClient(conn, "tmpSeedClient", NODE)
 
 	resp := client.qProtoWithResponse(ctx, reqID, pay1, true)
 
@@ -668,7 +668,7 @@ func encodeValue(valueType uint8, value any) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected uint8, got %T", value)
 		}
-		return []byte{byte(v)}, nil
+		return []byte{v}, nil
 	case D_UINT16_TYPE:
 		v, ok := value.(uint16)
 		if !ok {
@@ -1105,10 +1105,8 @@ func (c *gbClient) dispatchNodeCommands(message []byte) {
 		c.processCfgReconResp(message)
 	case PROBE:
 		c.processProbe(message)
-	case PROBE_RESP:
-		c.processProbeResp(message)
 	case PING_CMD:
-		c.processPing(message)
+		c.processPing()
 	case PONG_CMD:
 		c.processPong(message)
 	case OK:
@@ -1396,13 +1394,8 @@ func (c *gbClient) processProbe(message []byte) {
 
 }
 
-// Not needed?
-func (c *gbClient) processProbeResp(message []byte) {
-
-}
-
 // processPing is a probe by another node where we may have been suspected. We answer PONG to tell the probe we are alive
-func (c *gbClient) processPing(message []byte) {
+func (c *gbClient) processPing() {
 
 	reqID := c.ph.reqID
 
@@ -1450,22 +1443,23 @@ func (c *gbClient) processPong(message []byte) {
 
 }
 
-// TODO: Finish -----
-
+// processNewJoinMessage processes the information send by a joining node to the cluster, this usually means we are
+// a seed node here bootstrapping the requesting node. We deserialise the deltas and send our own self information.
 func (c *gbClient) processNewJoinMessage(message []byte) {
 
 	tmpC, err := deserialiseDelta(message)
 	if err != nil {
-		fmt.Printf("deserialise Delta failed: %v\n", err)
-		// Send err response
+		c.srv.logger.Error("deserialise delta failed in process new join message", "err", err.Error())
 	}
 
 	err = c.seedSendSelf(tmpC)
 	if err != nil {
-		fmt.Printf("onboardNewJoiner failed: %v\n", err)
+		// TODO May be want an internal error event here?
+		c.srv.logger.Error("Error in processing new join message", slog.String("err", err.Error()))
 	}
 
-	// We have to do this last because we will end up sending back the nodes own info
+	// We have to do this last because we will end up sending back the nodes own info if we send self after adding
+	// to our map
 
 	for key, value := range tmpC.delta {
 
@@ -1476,8 +1470,9 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 		if _, exists := cm.participants[key]; !exists {
 			err := c.srv.addParticipantFromTmp(key, value)
 			if err != nil {
-				fmt.Printf("AddParticipantFromTmp failed: %v\n", err)
-				//send err response
+				c.srv.logger.Error("Error in processing new join message", slog.String("err", err.Error()))
+				// Do we also want an internal error or send an err resp?
+				return
 			}
 		}
 		continue
@@ -1487,6 +1482,8 @@ func (c *gbClient) processNewJoinMessage(message []byte) {
 
 }
 
+// processSelfInfo takes a response from a seed server which has sent its information to us. The information is then
+// sent to the awaiting response payload channels
 func (c *gbClient) processSelfInfo(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1495,10 +1492,12 @@ func (c *gbClient) processSelfInfo(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1577,6 +1576,9 @@ func (c *gbClient) processDiscoveryRes(message []byte) {
 
 }
 
+// processHandShake processes the request from a node which has dialled us for the first time during gossip. It takes the
+// received handshake and deserialises the delta before sending our own information back. It then adds the deltas and
+// participant to our cluster map
 func (c *gbClient) processHandShake(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1584,13 +1586,12 @@ func (c *gbClient) processHandShake(message []byte) {
 
 	tmpC, err := deserialiseDelta(message)
 	if err != nil {
-		fmt.Printf("deserialise Delta failed: %v\n", err)
-		// Send err response
+		c.srv.logger.Error("deserialise delta failed in process handshake", "err", err.Error())
 	}
 
 	info, err := c.srv.prepareSelfInfoSend(HANDSHAKE_RESP, int(reqID), 0)
 	if err != nil {
-		fmt.Printf("prepareSelfInfoSend failed: %v\n", err)
+		c.srv.logger.Error("Error in process handshake", slog.String("err", err.Error()))
 	}
 
 	c.mu.Lock()
@@ -1601,7 +1602,7 @@ func (c *gbClient) processHandShake(message []byte) {
 		if _, exists := c.srv.clusterMap.participants[key]; !exists {
 			err := c.srv.addParticipantFromTmp(key, value)
 			if err != nil {
-				fmt.Printf("AddParticipantFromTmp failed: %v\n", err)
+				c.srv.logger.Error("Error in process handshake", slog.String("err", err.Error()))
 				//send err response
 			}
 		}
@@ -1611,16 +1612,17 @@ func (c *gbClient) processHandShake(message []byte) {
 	// Move the tmpClient to connected as it has provided its info which we have now stored
 	err = c.srv.moveToConnected(c.cid, tmpC.sender)
 	if err != nil {
-		fmt.Printf("MoveToConnected failed in process info message: %\n", err)
+		c.srv.logger.Error("Error in process handshake", slog.String("err", err.Error()))
 	}
 
-	// TODO Monitor the server lock here and be mindful
 	c.srv.incrementNodeConnCount()
 
 	return
 
 }
 
+// processHandShakeResp sends a response from a handshake request to the waiting response handler. The response should
+// consist of the responding servers information.
 func (c *gbClient) processHandShakeResp(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1629,10 +1631,12 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1643,12 +1647,12 @@ func (c *gbClient) processHandShakeResp(message []byte) {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
 }
 
+// processOK takes an ok response sent over the network and sends it to the response channel waiting for a response
 func (c *gbClient) processOK(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1657,11 +1661,12 @@ func (c *gbClient) processOK(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
 	if rsp == nil || rsp.ctx.Err() != nil {
-		fmt.Printf("response channel closed or context expired for reqID %d\n", reqID)
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1672,12 +1677,13 @@ func (c *gbClient) processOK(message []byte) {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		fmt.Printf("Warning: response channel full for reqID %d\n", reqID)
 		return
 	}
 
 }
 
+// processOKResp sends an ok response received from an original requester in a request-response chain where we have responded
+// and want a confirmation. The response is sent to the awaiting response channel
 func (c *gbClient) processOKResp(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1686,10 +1692,12 @@ func (c *gbClient) processOKResp(message []byte) {
 
 	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1700,12 +1708,12 @@ func (c *gbClient) processOKResp(message []byte) {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 		return
 	default:
-		fmt.Printf("Warning: response channel full for respID %d\n", respID)
 		return
 	}
 
 }
 
+// processGossSyn takes a digest send from a requesting node, deserialises and then send and an acknowledgement
 func (c *gbClient) processGossSyn(message []byte) {
 
 	if c.srv.gossip.gossipPaused {
@@ -1722,43 +1730,22 @@ func (c *gbClient) processGossSyn(message []byte) {
 
 	_, d, err := deSerialiseDigest(message)
 	if err != nil {
-		fmt.Printf("error serialising digest - %v\n", err)
+		c.srv.logger.Error("deserialise delta failed in process goss_syn", "err", err.Error())
 	}
-
-	//err = c.srv.recordPhi(sender)
-	//if err != nil {
-	//	fmt.Printf("recordPhi failed: %v\n", err)
-	//}
-
-	// Big lesson here (which is why I'm leaving it in):
-	// When two nodes attempt to gossip with each other at the same time - I was trying to implement a defer mechanic
-	// The node with the highest timestamp wins and makes the other defer by sending an error
-	// This would randomly cause gossip round durations to spike and after a while the two nodes would get locked
-	// in a context deadline loop
-	// Lesson = Let the damn nodes gossip boi
-
-	//deferGossip, err := c.srv.deferGossipRound(senderName)
-	//if err != nil {
-	//	fmt.Printf("error deferring gossip - %v\n", err)
-	//	return
-	//}
-	//
-	//if deferGossip {
-	//	c.sendErr(c.ph.reqID, uint16(0), Errors.GossipDeferredErr.Net())
-	//	return
-	//}
 
 	srv := c.srv
 
 	err = c.sendGossSynAck(srv.ServerName, d)
 	if err != nil {
-		fmt.Printf("sendGossSynAck failed: %v\n", err)
+		return
 	}
 
 	return
 
 }
 
+// processGossSynAck receives a responding digest from a goss_syn we have just made. The digest may also be accompanied by
+// a delta. We send the parsed packet to the awaiting response channel.
 func (c *gbClient) processGossSynAck(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1767,10 +1754,12 @@ func (c *gbClient) processGossSynAck(message []byte) {
 
 	rsp, err := c.getResponseChannel(reqID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
-	if rsp == nil {
+	if rsp == nil || rsp.ctx.Err() != nil {
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1780,12 +1769,12 @@ func (c *gbClient) processGossSynAck(message []byte) {
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		fmt.Printf("Warning: response channel full for reqID %d\n", c.ph.reqID)
 		return
 	}
 
 }
 
+// processGossAck takes the final acknowledgement in the gossip chain cycle and sends to awaiting response handlers
 func (c *gbClient) processGossAck(message []byte) {
 
 	// Copy IDs early to avoid race or mutation
@@ -1794,11 +1783,12 @@ func (c *gbClient) processGossAck(message []byte) {
 
 	rsp, err := c.getResponseChannel(respID)
 	if err != nil {
-		fmt.Printf("getResponseChannel failed: %v\n", err)
+		c.srv.logger.Error("Error getting response channel", slog.String("err", err.Error()))
+		return
 	}
 
-	if rsp == nil {
-		fmt.Printf("[WARN] No response channel found for respID %d\n", respID)
+	if rsp == nil || rsp.ctx.Err() != nil {
+		c.srv.logger.Error("Response error - got nil response or context err", slog.String("err", rsp.ctx.Err().Error()))
 		return
 	}
 
@@ -1808,7 +1798,6 @@ func (c *gbClient) processGossAck(message []byte) {
 	select {
 	case rsp.ch <- responsePayload{reqID: reqID, respID: respID, msg: msg}:
 	default:
-		fmt.Printf("Warning: response channel full for respID %d\n", respID)
 		return
 	}
 

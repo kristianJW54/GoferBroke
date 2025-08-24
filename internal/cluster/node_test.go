@@ -522,7 +522,6 @@ func TestConnectToSeedAndSeedSendSelf(t *testing.T) {
 		}
 		if rec.Level == "INFO" {
 			// Test Assert here
-			fmt.Println(rec.Msg)
 			if strings.Contains(rec.Msg, "Connected to seed") {
 				want = struct{ Msg string }{Msg: rec.Msg}
 				break

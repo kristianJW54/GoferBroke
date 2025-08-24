@@ -206,24 +206,38 @@ func (sf *ServerID) updateTime(time uint64) {
 
 // GBServer is the main server struct
 type GBServer struct {
-	//Server Info - can add separate info struct later
 	ServerID
-	ServerName       string //ID and timestamp
-	initialised      uint64 //time of server creation - can point to ServerID timestamp
-	host             string
-	port             string
-	addr             string
-	boundTCPAddr     *net.TCPAddr
+	// ServerName is the official name of the server which is UUID@TIMESATMP and is what other nodes in the cluster
+	// identify the server with. ServerName is also used in our view of the cluster map as our own self info - we access
+	// it and address it the same as any other node
+	ServerName string
+	//time of server creation - can point to ServerID timestamp
+	initialised uint64
+	// Host IP of the server at start
+	host string
+	// Port the server can be reached on
+	port string
+	addr string
+	// boundTCPAddr is the join of host and port
+	boundTCPAddr *net.TCPAddr
+	// advertiseAddress is the resolved address and the address which we advertise to other nodes when we connect
 	advertiseAddress *net.TCPAddr
 	clientTCPAddr    *net.TCPAddr
-	reachability     Network.NodeNetworkReachability
+	// reachability describes the type of network this node is subscribed to LOCAL/DYNAMIC/PUBLIC/PRIVATE
+	reachability Network.NodeNetworkReachability
 
 	//Distributed Info
-	gossip          *gossip
-	convergenceEst  time.Duration
-	isSeed          bool
-	canBeRendezvous bool // TODO Change to reachable state machine
-	discoveryPhase  bool
+
+	// gossip embeds the control structure and parameters for gossip engine
+	gossip         *gossip
+	convergenceEst time.Duration
+	// isSeed declares if this server is a seed or not
+	isSeed bool
+	// canBeRendezvous is used for NAT Traversal and hole punching
+	// TODO To implement
+	canBeRendezvous bool
+	// TODO To implement
+	discoveryPhase bool
 
 	//Events
 	pendingHandlerRegs []HandlerRegistrationFunc
@@ -255,10 +269,9 @@ type GBServer struct {
 	fail *failureControl
 
 	//Connection Handling
-	gcid uint64 // Global client ID counter
-	// May need one for client and one for node as we will treat them differently
-	numNodeConnections   int64 //Atomically incremented
-	numClientConnections int64 //Atomically incremented
+	gcid                 uint64 // Global client ID counter
+	numNodeConnections   int64  //Atomically incremented
+	numClientConnections int64  //Atomically incremented
 
 	clientStore          sync.Map
 	tmpConnStore         sync.Map
@@ -298,6 +311,8 @@ type seedEntry struct {
 	nodeID   string // This should be set when we make connection which will enable us to access the node conn in store and cluster map
 }
 
+// NewServerFromConfigFile take config file paths and parses into config structures and schema to build a new server. A
+// new instance of GBServer is returned
 func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServer, error) {
 
 	nodeCfg := InitDefaultNodeConfig()
@@ -321,6 +336,8 @@ func NewServerFromConfigFile(nodeConfigPath, clusterConfigPath string) (*GBServe
 	return srv, nil
 }
 
+// NewServerFromConfigString takes raw string inputs and parses into valid config structures and schemas. New GBServer instance
+// is returned
 func NewServerFromConfigString(nodeConfigData, clusterConfigData string) (*GBServer, error) {
 
 	nodeCfg := InitDefaultNodeConfig()
@@ -344,6 +361,63 @@ func NewServerFromConfigString(nodeConfigData, clusterConfigData string) (*GBSer
 	return srv, nil
 }
 
+// NewServerFromConfig takes either raw string or config structure inputs to build a new instance of GBServer from.
+func NewServerFromConfig(nodeConfigData, clusterConfigData any) (*GBServer, error) {
+
+	nodeCfg := InitDefaultNodeConfig()
+	clusterCfg := InitDefaultClusterConfig()
+
+	// Handle node config
+	switch v := nodeConfigData.(type) {
+	case string:
+		_, err := BuildConfigFromString(v, nodeCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse node config: %w", err)
+		}
+	case GbNodeConfig:
+		nodeCfg = &v
+	case *GbNodeConfig:
+		nodeCfg = v
+	default:
+		return nil, fmt.Errorf("invalid node config type %T, must be string or gbNodeConfig", v)
+	}
+
+	// Handle cluster config
+	var sch map[string]*ConfigSchema
+	switch v := clusterConfigData.(type) {
+	case string:
+		var err error
+		sch, err = BuildConfigFromString(v, clusterCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse cluster config: %w", err)
+		}
+	case GbClusterConfig:
+		clusterCfg = &v
+	case *GbClusterConfig:
+		clusterCfg = v
+	default:
+		return nil, fmt.Errorf("invalid cluster config type %T, must be string or gbClusterConfig", v)
+	}
+
+	srv, err := NewServer(
+		nodeCfg.Name,
+		clusterCfg,
+		sch,
+		nodeCfg,
+		nodeCfg.Host,
+		nodeCfg.Port,
+		nodeCfg.ClientPort,
+		net.ListenConfig{},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return srv, nil
+}
+
+// NewServer is the main function to create a new instance of GBServer. It takes a node config and a cluster config as well as address values and client ports
+// to construct a server that can be started.
 func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*ConfigSchema, gbNodeConfig *GbNodeConfig, nodeHost string, nodePort, clientPort string, lc net.ListenConfig) (*GBServer, error) {
 
 	if len([]byte(serverName)) > ServerNameMaxLength {
@@ -1187,7 +1261,7 @@ func (s *GBServer) AcceptNodeLoop() error {
 	s.startGoRoutine(s.PrettyName(), "accept-connection routine", func() {
 		s.acceptConnection(nl, "node-loop",
 			func(conn net.Conn) {
-				s.createNodeClient(conn, "node-client", false, NODE)
+				s.createNodeClient(conn, "node-client", NODE)
 			},
 			func(err error) bool {
 				select {
@@ -1300,17 +1374,6 @@ func (s *GBServer) registerAndStartInternalHandlers() error {
 	}
 
 	// Next handler process here
-
-	//if _, err := s.AddHandler(s.ServerContext, NewDeltaAdded, true, func(event Event) error {
-	//	return s.event.HandleDeltaAddedEvent(event)
-	//}); err != nil {
-	//	return err
-	//}
-
-	// Need to register handlers for when metrics change like memory increases - address changes etc
-	// Background process will check every 2 minutes (configured) to see what has changed
-
-	//--
 
 	return nil
 
