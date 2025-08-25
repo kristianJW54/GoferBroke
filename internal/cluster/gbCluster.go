@@ -22,9 +22,10 @@ import (
 // Gossip
 //===================================================================================
 
+// gossip holds the logic to run the gossip engine.
 type gossip struct {
 	gossInterval         time.Duration
-	nodeSelection        uint8 // Remove and use node config instead OR use config to populate this
+	nodeSelection        uint8
 	gossipControlChannel chan bool
 	gossipTimeout        time.Duration
 	gossipOK             bool
@@ -69,16 +70,16 @@ func (s *GBServer) gossipCleanup() {
 ====================== CLUSTER MAP LOCKING STRATEGY ======================
 
 🔹 General Locking Rules:
-1️⃣ **Always acquire ClusterMap.mu first** when modifying the ClusterMap.
-2️⃣ **Release ClusterMap.mu before locking Participant.pm** to prevent deadlocks.
-3️⃣ **Never hold ClusterMap.mu while locking Participant.pm** (avoids circular waits).
-4️⃣ **Use RWMutex**:
+1️. **Always acquire ClusterMap.mu first** when modifying the ClusterMap.
+2️. **Release ClusterMap.mu before locking Participant.pm** to prevent deadlocks.
+3️. **Never hold ClusterMap.mu while locking Participant.pm** (avoids circular waits).
+4️. **Use RWMutex**:
    - `ClusterMap.RLock()` for read operations (e.g., looking up participants).
    - `ClusterMap.Lock()` for write operations (e.g., adding/removing participants).
    - `Participant.pm.Lock()` only for modifying a specific participant.
 
 🔹 Safe Locking Order:
-✅ **Read a participant (safe)**
+  **Read a participant (safe)**
    1. `ClusterMap.RLock()`
    2. Lookup participant
    3. `ClusterMap.RUnlock()`
@@ -86,7 +87,7 @@ func (s *GBServer) gossipCleanup() {
    5. Modify participant
    6. `Participant.pm.Unlock()`
 
-✅ **Modify a participant (safe)**
+  **Modify a participant (safe)**
    1. `ClusterMap.RLock()`
    2. Lookup participant
    3. `ClusterMap.RUnlock()`
@@ -94,22 +95,22 @@ func (s *GBServer) gossipCleanup() {
    5. Modify participant
    6. `Participant.pm.Unlock()`
 
-✅ **Add a participant (safe)**
+  **Add a participant (safe)**
    1. `ClusterMap.Lock()`
    2. Add participant to map
    3. `ClusterMap.Unlock()`
 
-✅ **Remove a participant (safe)**
+  **Remove a participant (safe)**
    1. `ClusterMap.Lock()`
    2. Lookup participant
    3. Remove from map
-   4. `ClusterMap.Unlock()` ✅ (Release before locking `Participant.pm`)
+   4. `ClusterMap.Unlock()`  (Release before locking `Participant.pm`)
    5. `Participant.pm.Lock()`
    6. Perform cleanup - if needed
    7. `Participant.pm.Unlock()`
 
-🚨 **Avoid Deadlocks:**
-❌ **Never do this:** `ClusterMap.Lock()` → `Participant.pm.Lock()`
+  **Avoid Deadlocks:**
+  **Never do this:** `ClusterMap.Lock()` → `Participant.pm.Lock()`
    - This can cause a circular wait if another goroutine holds `Participant.pm.Lock()`
      and then tries to acquire `ClusterMap.Lock()`.
 
@@ -180,6 +181,8 @@ const (
 	FAILURE_DKG   = "failure"
 )
 
+// DELTA_META_SIZE is made up of DELTA_META_SIZE + len(delta.KeyGroup) + len(delta.Key) + len(delta.Value)
+// META_SIZE --> |keyGroup Len (u8) |key Len (u8) |Version (u64) |ValueType (u8) |Value Len (u32) |
 const (
 	DELTA_META_SIZE = 15
 )
@@ -188,9 +191,10 @@ type Seed struct {
 	seedAddr *net.TCPAddr
 }
 
-//-------------------
-// Main cluster map for gossiping
+//-------------------------------------------------------------------
+// Delta
 
+// Delta holds the single delta as a value inside the KeyValues of a ClusterMap
 type Delta struct {
 	index     int
 	KeyGroup  string
@@ -211,6 +215,8 @@ type deltaQueue struct {
 	index   int
 }
 
+// connectionMetaData is for NAT Traversal
+// TODO Implement in future release
 type connectionMetaData struct {
 	inboundSuccess    bool
 	advertisedAddr    *net.TCPAddr
@@ -218,8 +224,14 @@ type connectionMetaData struct {
 	reachableObserved int
 }
 
+// deltaHeap declares a heap for available deltas which are dynamically added during each round of gossip
 type deltaHeap []*deltaQueue
 
+//-------------------------------------------------------------------
+// Participant
+
+// Participant is the servers view of a node in the cluster and holds information on its view of that node including
+// failure, delta map and max version for efficient diff comparison
 type Participant struct {
 	name string
 	// Will be changing to delta store interface
@@ -231,6 +243,11 @@ type Participant struct {
 	pm               sync.RWMutex
 }
 
+//-------------------------------------------------------------------
+// ClusterMap
+
+// ClusterMap is the main structure and entry point into the Servers ClusterMap. This holds the Servers view of the
+// Cluster
 type ClusterMap struct {
 	seedServer       *Seed
 	participants     map[string]*Participant
@@ -245,6 +262,7 @@ type participantQueue struct {
 	peerMaxVersion  int64
 }
 
+// participantHeap holds a list of participants which are out of date and to which we have newer version deltas for.
 type participantHeap []*participantQueue
 
 //=======================================================
@@ -348,10 +366,13 @@ func (dh *deltaHeap) update(item *deltaQueue, version int64) {
 // Delta Handling - Internal Delta API
 //=======================================================
 
+// MakeDeltaKey is a small helper function which combine a KeyGroup with a Key into KeyGroup:Key to conform to the
+// ClusterMap key composition in the keyValues
 func MakeDeltaKey(group, key string) string {
 	return fmt.Sprintf("%s:%s", group, key)
 }
 
+// ParseDeltaKey is a helper function to parse the composite key of a clusterMap 'KeyGroup:Key' key
 func ParseDeltaKey(key string) (string, string) {
 	parts := strings.Split(key, ":")
 	return parts[0], parts[1]
@@ -372,7 +393,7 @@ func (p *Participant) Store(d *Delta) error {
 			*toBeUpdated = *by
 		})
 		if err != nil {
-			return err
+			return Errors.ChainGBErrorf(Errors.StoreDeltaErr, err, "")
 		}
 
 		return nil
@@ -385,6 +406,8 @@ func (p *Participant) Store(d *Delta) error {
 	}
 }
 
+// Update is a callback method where a delta is updated in place by a new delta using a callback specified by the caller
+// if the update is successful - Update also tries to update the max version for that Participant
 func (p *Participant) Update(group, key string, d *Delta, apply func(toBeUpdated, by *Delta)) error {
 	k := MakeDeltaKey(group, key)
 
@@ -393,10 +416,10 @@ func (p *Participant) Update(group, key string, d *Delta, apply func(toBeUpdated
 
 	delta, exists := p.keyValues[k]
 	if !exists {
-		return Errors.DeltaUpdateNoDeltaErr
+		return Errors.ChainGBErrorf(Errors.UpdateDeltaErr, Errors.DeltaUpdateNoDeltaErr, "for key %s", key)
 	}
 	if d.KeyGroup != delta.KeyGroup || d.Key != delta.Key {
-		return Errors.DeltaUpdateKeyErr
+		return Errors.ChainGBErrorf(Errors.UpdateDeltaErr, Errors.DeltaUpdateKeyErr, "for key %s", key)
 	}
 
 	// apply the user-provided mutation while holding p.pm
@@ -408,9 +431,12 @@ func (p *Participant) Update(group, key string, d *Delta, apply func(toBeUpdated
 	return nil
 }
 
+// GetAll simply returns the key value ClusterMap for the particular Participant with which we call the method on
 func (p *Participant) GetAll() map[string]*Delta {
 	return p.keyValues
 }
+
+// TODO Implement
 
 func (p *Participant) Get(deltaKey string) (*Delta, error) {
 
@@ -421,9 +447,8 @@ func (p *Participant) Get(deltaKey string) (*Delta, error) {
 // Cluster Map Handling
 //=======================================================
 
-//---------------------
-
-// TODO We need to return error for this and handle them accordingly + also refactor so (SRP) compliant
+// initClusterMap returns a standard instance of a ClusterMap for the particular Participant passed in
+// this function is mostly used to initialise our own servers ClusterMap as other nodes will have initialised their own maps
 func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participant) *ClusterMap {
 
 	cm := &ClusterMap{
@@ -432,8 +457,6 @@ func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participa
 		make([]string, 0, 4),
 	}
 
-	// We don't add the phiAccrual here as we don't track our own internal failure detection
-
 	cm.participants[serverName] = participant
 	cm.participantArray = append(cm.participantArray, participant.name)
 
@@ -441,13 +464,18 @@ func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participa
 
 }
 
-//--------
-//Update cluster
+//-------------------------
+//Updating cluster
 
 // TODO This needs to be optimised and make sure we are not delaying any hot paths
 func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 	// If we receive information about ourselves, we need to ignore as we are the only ones who should update information about ourselves
+	// This does NOT mean we ignore any failure information about ourselves as every node carries failure deltas as Deltas within their maps
+	// with the particular node name as the key
+	// So while we ignore our own Participant information - we still can detect our own failure information within other Participants maps
+
+	// TODO Continue cleaning -->
 
 	for uuid, d := range delta.delta {
 
@@ -1074,7 +1102,7 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 
 			if d.size+sizeOfDelta > remaining {
 				sd := size + sizeOfDelta
-				s.logger.Info("broke size", "size", sd, "name", s.PrettyName(), "dropping", d.delta.Value)
+				s.logger.Warn("broke size", "size", sd, "name", s.PrettyName(), "dropping", d.delta.Value)
 				break
 			}
 

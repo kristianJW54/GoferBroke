@@ -384,6 +384,8 @@ const (
 	SEED_SEND_SELF_CODE               = 91
 	RANDOM_NODE_INDEXES_CODE          = 92
 	CONFIG_CHECKSUM_RESP_CODE         = 93
+	UPDATE_DELTA_CODE                 = 94
+	STORE_DELTA_CODE                  = 95
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -420,8 +422,8 @@ var KnownInternalErrors = map[int]*GBError{
 	GOSS_ACK_CODE:                     &GBError{Code: GOSS_ACK_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "goss ack error"},
 	NODE_NOT_FOUND_CODE:               &GBError{Code: NODE_NOT_FOUND_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "node not found in cluster map"},
 	CLUSTER_CONFIG_CODE:               &GBError{Code: CLUSTER_CONFIG_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "seed config error"},
-	DELTA_UPDATE_NO_DELTA_CODE:        &GBError{Code: DELTA_UPDATE_NO_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - no delta found"},
-	DELTA_UPDATE_KEY_CODE:             &GBError{Code: DELTA_UPDATE_KEY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "delta update - keyGroup or Key cannot be changed"},
+	DELTA_UPDATE_NO_DELTA_CODE:        &GBError{Code: DELTA_UPDATE_NO_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "no delta found"},
+	DELTA_UPDATE_KEY_CODE:             &GBError{Code: DELTA_UPDATE_KEY_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "keyGroup or Key cannot be changed"},
 	ADD_GSA_DELTA_CODE:                &GBError{Code: ADD_GSA_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "error adding GSA delta to map"},
 	UNABLE_TO_DISCOVER_ADVERTISE_CODE: &GBError{Code: UNABLE_TO_DISCOVER_ADVERTISE_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "unable to determine advertise address"},
 	DIAL_SEED_CODE:                    &GBError{Code: DIAL_SEED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "dial seed failed"},
@@ -449,6 +451,8 @@ var KnownInternalErrors = map[int]*GBError{
 	SEED_SEND_SELF_CODE:               &GBError{Code: SEED_SEND_SELF_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "seed send self info failed"},
 	RANDOM_NODE_INDEXES_CODE:          &GBError{Code: RANDOM_NODE_INDEXES_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to generate random node indexes"},
 	CONFIG_CHECKSUM_RESP_CODE:         &GBError{Code: CONFIG_CHECKSUM_RESP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "processing config checksum response failed"},
+	UPDATE_DELTA_CODE:                 &GBError{Code: UPDATE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "update delta failed"},
+	STORE_DELTA_CODE:                  &GBError{Code: STORE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "store delta failed"},
 }
 
 var (
@@ -491,6 +495,8 @@ var (
 	SeedSendSelfErr           = KnownInternalErrors[SEED_SEND_SELF_CODE]
 	RandomIndexesErr          = KnownInternalErrors[RANDOM_NODE_INDEXES_CODE]
 	ConfigCheckSumRespErr     = KnownInternalErrors[CONFIG_CHECKSUM_RESP_CODE]
+	UpdateDeltaErr            = KnownInternalErrors[UPDATE_DELTA_CODE]
+	StoreDeltaErr             = KnownInternalErrors[STORE_DELTA_CODE]
 )
 
 var (

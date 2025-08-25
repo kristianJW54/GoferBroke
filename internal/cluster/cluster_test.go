@@ -3,6 +3,7 @@ package cluster
 import (
 	"bytes"
 	"container/heap"
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -10,47 +11,7 @@ import (
 	"time"
 )
 
-// Test Ready ✅
-func TestRandomNodeSelection(t *testing.T) {
-	partArray := []string{
-		"part-1",
-		"part-2",
-		"part-3",
-		"part-4",
-	}
-
-	var ntg sync.Map
-
-	ntg.Store("part-1", struct{}{})
-
-	ns := 2
-	runs := 100
-
-	for i := 0; i < runs; i++ {
-		indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, &ntg, "part-3")
-		if err != nil {
-			t.Errorf("run %d: %v", i, err)
-		}
-
-		if len(indexes) != ns {
-			t.Errorf("run %d: expected %d indexes, got %d", i, ns, len(indexes))
-		}
-
-		for _, index := range indexes {
-			participant := partArray[index]
-
-			// Check against sync.Map exclusions
-			if _, skip := ntg.Load(participant); skip {
-				t.Errorf("run %d: selected excluded participant (sync.Map): %s", i, participant)
-			}
-
-			// Check against variadic exclude list
-			if participant == "part-3" {
-				t.Errorf("run %d: selected excluded participant (variadic): %s", i, participant)
-			}
-		}
-	}
-}
+// Helpers
 
 func makeTestDeltas(t *testing.T, numberOfDeltas int, versionBaseline int64, numberOfOutdated int, overLoadBaseline, numberOfOverloaded int) map[string]*Delta {
 
@@ -97,8 +58,59 @@ func makeTestDeltas(t *testing.T, numberOfDeltas int, versionBaseline int64, num
 
 }
 
-// Test discovery by test config and turning off gossip
+func cloneKeyValues(src map[string]*Delta) map[string]*Delta {
+	dst := make(map[string]*Delta, len(src))
+	for k, v := range src {
+		copys := *v
+		copys.Value = append([]byte(nil), v.Value...) // clone []byte
+		dst[k] = &copys
+	}
+	return dst
+}
 
+// Test Ready ✅
+func TestRandomNodeSelection(t *testing.T) {
+	partArray := []string{
+		"part-1",
+		"part-2",
+		"part-3",
+		"part-4",
+	}
+
+	var ntg sync.Map
+
+	ntg.Store("part-1", struct{}{})
+
+	ns := 2
+	runs := 100
+
+	for i := 0; i < runs; i++ {
+		indexes, err := generateRandomParticipantIndexesForGossip(partArray, ns, &ntg, "part-3")
+		if err != nil {
+			t.Errorf("run %d: %v", i, err)
+		}
+
+		if len(indexes) != ns {
+			t.Errorf("run %d: expected %d indexes, got %d", i, ns, len(indexes))
+		}
+
+		for _, index := range indexes {
+			participant := partArray[index]
+
+			// Check against sync.Map exclusions
+			if _, skip := ntg.Load(participant); skip {
+				t.Errorf("run %d: selected excluded participant (sync.Map): %s", i, participant)
+			}
+
+			// Check against variadic exclude list
+			if participant == "part-3" {
+				t.Errorf("run %d: selected excluded participant (variadic): %s", i, participant)
+			}
+		}
+	}
+}
+
+// Test Ready ✅
 func TestParticipantHeapDepthFirst(t *testing.T) {
 
 	heapM1 := makeTestDeltas(t, 4, 1640995213, 0, 0, 0)
@@ -165,14 +177,13 @@ func TestParticipantHeapDepthFirst(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	fmt.Println(ph[0].name)
-
 	if ph[0].name != "third-node" {
 		t.Fatalf("participant heap should have prioritised third-node - got %s instead", ph[0].name)
 	}
 
 }
 
+// Test Ready ✅
 func TestBuildDeltaOutdatedOnly(t *testing.T) {
 
 	// We are testing that only outdated deltas are including in the build delta list
@@ -212,9 +223,85 @@ func TestBuildDeltaOutdatedOnly(t *testing.T) {
 	}
 	gbs.clusterMap.participantArray[1] = "second-node"
 
-	// Main node will have 3 newer deltas than the other node
-	// Both will have 5 deltas
-	// Delta list should only have 3 deltas
+	// We build a fake digest to say that the second node has an outdated map of the main node
+
+	// Because test deltas are formed in ascending order up until the max version we specify, we provide a fake
+	// digest of a second node which has an outdated view of us which we will need to update them on
+	// they provide a version 2 below the current version in the test.
+
+	// Meaning they have 2 deltas which are outdated for us - so the delta heap should send
+	// test-server-1 = {0 TEST key1 1640995212 1 []}
+	// test-server-1 = {0 TEST key0 1640995213 1 []}
+
+	d := &fullDigest{
+
+		"second-node": &digest{
+			"second-node",
+			version,
+		},
+		gbs.ServerName: &digest{
+			gbs.ServerName,
+			version - 2,
+		},
+	}
+
+	ph, err := gbs.generateParticipantHeap("second-node", d)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	dl, _, err := gbs.buildDelta(&ph, 1000)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(dl[gbs.ServerName]) != 2 {
+		t.Errorf("expected to get deltas list of 2 but got %v", len(dl[gbs.ServerName]))
+	}
+
+}
+
+// Test Ready ✅
+func TestDropDeltaFromHeap(t *testing.T) {
+
+	// We are testing that some deltas get dropped when over remaining limit
+
+	nodeCfg := InitDefaultNodeConfig()
+	logger, fl, jrb := setupLogger(context.Background(), nodeCfg)
+
+	version := int64(1640995213)
+	nod := 4
+
+	normalKV := makeTestDeltas(t, nod, version, 0, 0, 0)
+
+	gbs := &GBServer{
+		ServerName: "test-server-1",
+		clusterMap: ClusterMap{
+			participants:     make(map[string]*Participant, 2),
+			participantArray: make([]string, 2),
+		},
+		gbClusterConfig: InitDefaultClusterConfig(),
+		gbNodeConfig:    nodeCfg,
+		logger:          logger,
+		slogHandler:     fl,
+		jsonBuffer:      jrb,
+	}
+
+	gbs.clusterMap.participants[gbs.ServerName] = &Participant{
+		name:       gbs.ServerName,
+		keyValues:  normalKV,
+		maxVersion: version,
+	}
+	gbs.clusterMap.participantArray[0] = gbs.ServerName
+
+	// Now make fake second node
+
+	gbs.clusterMap.participants["second-node"] = &Participant{
+		name:       "second-node",
+		keyValues:  normalKV,
+		maxVersion: version,
+	}
+	gbs.clusterMap.participantArray[1] = "second-node"
 
 	// We build a fake digest to say that the second node has an outdated map of the main node
 
@@ -235,21 +322,37 @@ func TestBuildDeltaOutdatedOnly(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("ph = %s - max version %v - peerMaxVersion %v\n", ph[0].name, ph[0].maxVersion, ph[0].peerMaxVersion)
+	// We set the remaining size to 50 which should only be enough for 1 test delta to be added to the heap
+	// the other one will be dropped
 
-	dl, _, err := gbs.buildDelta(&ph, 1000)
+	dl, _, err := gbs.buildDelta(&ph, 50)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if len(dl[gbs.ServerName]) != 2 {
-		t.Errorf("expected to get deltas list of 2 but got %v", len(dl[gbs.ServerName]))
+	if len(dl[gbs.ServerName]) != 1 {
+		t.Errorf("expected to get deltas list of 1 but got %v", len(dl[gbs.ServerName]))
+	}
+
+	// If we up our remaining and build again we should see 2 deltas added
+
+	ph2, err := gbs.generateParticipantHeap("second-node", d)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	dl2, _, err := gbs.buildDelta(&ph2, 70)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(dl2[gbs.ServerName]) != 2 {
+		t.Errorf("expected to get deltas list of 2 but got %v", len(dl2[gbs.ServerName]))
 	}
 
 }
 
-// TODO Finish fulling testing build delta for all cases
-
+// Test Ready ✅
 func TestDeltaHeap(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
@@ -285,13 +388,11 @@ func TestDeltaHeap(t *testing.T) {
 		if assertion[i] != int(result) {
 			t.Errorf("Expected %d, got %d", assertion[i], result)
 			return
-		} else {
-			fmt.Printf("Version %d --> assertion %d\n", assertion[i], result)
 		}
 	}
 }
 
-// Good test - keep
+// Test Ready ✅
 func TestClusterMapLocks(t *testing.T) {
 
 	// To test cluster map locks under high concurrency by having worker routines reading cluster map,
@@ -363,22 +464,10 @@ func TestClusterMapLocks(t *testing.T) {
 	close(taskQ)
 
 	wg.Wait()
-	fmt.Println("Tasks complete")
 
 }
 
-// Deep copy helper
-func cloneKeyValues(src map[string]*Delta) map[string]*Delta {
-	dst := make(map[string]*Delta, len(src))
-	for k, v := range src {
-		copys := *v
-		copys.Value = append([]byte(nil), v.Value...) // clone []byte
-		dst[k] = &copys
-	}
-	return dst
-}
-
-// Good test - keep
+// Test Ready ✅
 func TestGSATwoNodes(t *testing.T) {
 
 	now := time.Now().Unix()
@@ -589,7 +678,7 @@ func TestGSATwoNodes(t *testing.T) {
 	}
 }
 
-// Test is good to keep
+// Test Ready ✅
 func TestAddGSADeltaToMap(t *testing.T) {
 
 	now := time.Now().Unix()
@@ -689,8 +778,7 @@ func TestAddGSADeltaToMap(t *testing.T) {
 
 }
 
-// Delta Handling Tests
-
+// Test Ready ✅
 func TestAddAndUpdateDelta(t *testing.T) {
 
 	now := time.Now().Unix()
@@ -737,8 +825,6 @@ func TestAddAndUpdateDelta(t *testing.T) {
 	if err != nil {
 		t.Errorf("update delta failed: %v", err)
 	}
-
-	fmt.Printf("delta = %s\n", self.keyValues[key].Value)
 
 	if delta, exists := self.keyValues[key]; !exists {
 		t.Errorf("delta does not exist")

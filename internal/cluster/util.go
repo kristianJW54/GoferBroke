@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal"
@@ -188,22 +189,22 @@ func GenerateDefaultTestServer(serverName string, kv map[string]*Delta, numParti
 		numParticipants = 1
 	}
 
+	nodeCfg := InitDefaultNodeConfig()
+	logger, fl, jrb := setupLogger(context.Background(), nodeCfg)
+
 	// Mock server setup
 	gbs := &GBServer{
 		clusterMap: ClusterMap{
 			participants:     make(map[string]*Participant, numParticipants),
 			participantArray: make([]string, numParticipants),
 		},
-		ServerName: serverName,
-		gbClusterConfig: &GbClusterConfig{
-			SeedServers: []*Seeds{
-				{},
-			},
-			Cluster: &ClusterOptions{},
-		},
-		gbNodeConfig: &GbNodeConfig{
-			Internal: &InternalOptions{},
-		},
+		ServerName:      serverName,
+		gbClusterConfig: InitDefaultClusterConfig(),
+		gbNodeConfig:    nodeCfg,
+		logger:          logger,
+		slogHandler:     fl,
+		jsonBuffer:      jrb,
+		event:           NewEventDispatcher(),
 	}
 
 	maxV := int64(0)
@@ -240,76 +241,6 @@ func GenerateDefaultTestServer(serverName string, kv map[string]*Delta, numParti
 			name:       participantName,
 			keyValues:  kv,
 			maxVersion: maxV,
-		}
-
-		gbs.clusterMap.participantArray[i] = gbs.name
-
-		// Add participant to the ClusterMap
-		gbs.clusterMap.participants[participantName] = participant
-
-	}
-
-	return gbs
-
-}
-
-func GenerateDefaultTestServerWithDiff(serverName string, kv, diff map[string]*Delta, numParticipants int) *GBServer {
-
-	if numParticipants == 0 {
-		numParticipants = 1
-	}
-
-	// Mock server setup
-	gbs := &GBServer{
-		clusterMap: ClusterMap{
-			participants:     make(map[string]*Participant, numParticipants),
-			participantArray: make([]string, numParticipants),
-		},
-		ServerName: serverName,
-	}
-
-	maxV := int64(0)
-
-	for _, value := range kv {
-		if value.Version > maxV {
-			maxV = value.Version
-		}
-	}
-
-	maxVDiff := int64(0)
-
-	for _, value := range diff {
-		if value.Version > maxVDiff {
-			maxVDiff = value.Version
-		}
-	}
-
-	gbs.numNodeConnections = int64(numParticipants)
-
-	mainPart := &Participant{
-		name:       serverName,
-		keyValues:  diff,
-		maxVersion: maxVDiff,
-	}
-
-	gbs.clusterMap.participantArray[0] = mainPart.name
-
-	gbs.clusterMap.participants[gbs.ServerName] = mainPart
-
-	if numParticipants == 1 {
-		return gbs
-	}
-
-	for i := 1; i < numParticipants; i++ {
-
-		participantName := fmt.Sprintf("node-test-%d", i)
-		gbs.name = participantName
-
-		// Create a participant
-		participant := &Participant{
-			name:       participantName,
-			keyValues:  diff,
-			maxVersion: maxVDiff,
 		}
 
 		gbs.clusterMap.participantArray[i] = gbs.name
