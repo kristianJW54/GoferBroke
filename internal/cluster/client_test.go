@@ -1,28 +1,27 @@
 package cluster
 
 import (
-	"fmt"
 	"net"
 	"testing"
 	"time"
 )
 
-// Delta Header should be --> Command[V], MessageLength[0 0], KeyLength[0], ValueLength [0 0]
-
-func TestClientDelta(t *testing.T) {
+// Test Ready ✅
+func TestCreateClient(t *testing.T) {
 
 	nodeCfg := `
 				Name = "t-1"
 				Host = "localhost"
 				Port = "8081"
 				IsSeed = True
-				ClientPort = "6000"
 				Internal {
-					DisableGossip = True
+					DisableGossip = False
 					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
 				}
 
 `
+
 	cfg := `Name = "default-local-cluster"
 	SeedServers = [
 	   {Host: "localhost", Port: "8081"},
@@ -37,29 +36,30 @@ func TestClientDelta(t *testing.T) {
 		t.Errorf("error creating new server: %v", err)
 	}
 
-	go gbs.StartServer()
+	server, client := net.Pipe()
+	defer func() {
+		_ = server.Close()
+		_ = client.Close()
+	}()
+
+	var c *gbClient
+
+	c = gbs.createClient(client, CLIENT)
 
 	time.Sleep(1 * time.Second)
 
-	// Dial the TCP server
-	conn, err := net.Dial("tcp", "localhost:6000")
-	if err != nil {
-		fmt.Printf("Failed to connect: %v\n", err)
-		return
+	if !c.flags.isSet(WRITE_LOOP_STARTED) || !c.flags.isSet(READ_LOOP_STARTED) {
+		t.Errorf("expected both read and write loops to have started")
+	}
+
+	if c.name == "" {
+		t.Errorf("client should have a name")
+	}
+
+	if _, ok := gbs.clientStore.Load(c.name); !ok {
+		t.Errorf("client should be stored in clientStore")
 	}
 
 	time.Sleep(1 * time.Second)
-
-	conn.Write([]byte("PING\r\n"))
-
-	time.Sleep(100 * time.Millisecond)
-
-	//Check the cluster map is the same
-
-	gbs.Shutdown()
-
-	time.Sleep(100 * time.Millisecond)
-
-	gbs.logActiveGoRoutines()
 
 }

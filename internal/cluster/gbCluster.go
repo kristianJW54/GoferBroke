@@ -467,15 +467,14 @@ func initClusterMap(serverName string, seed *net.TCPAddr, participant *Participa
 //-------------------------
 //Updating cluster
 
-// TODO This needs to be optimised and make sure we are not delaying any hot paths
+// TODO This needs to be optimised and make sure we are not delaying any hot paths - currently doing too many things
+// TODO May also want to rename to just addDeltaToMap? as we can receive a delta in a GOS_SYN as well..
 func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 
 	// If we receive information about ourselves, we need to ignore as we are the only ones who should update information about ourselves
 	// This does NOT mean we ignore any failure information about ourselves as every node carries failure deltas as Deltas within their maps
 	// with the particular node name as the key
 	// So while we ignore our own Participant information - we still can detect our own failure information within other Participants maps
-
-	// TODO Continue cleaning -->
 
 	for uuid, d := range delta.delta {
 
@@ -495,15 +494,17 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 			for k, v := range d.keyValues {
 
 				if v.KeyGroup == FAILURE_DKG {
-					// We are in our view of [T-1] and received a failure key group from them
+					// We are in our view of *Participant and received a failure key group from them which could be about
+					// any node - we must check the key to understand which node
 					if err := s.checkFailureGSA(uuid, v); err != nil {
-						return err
+						return Errors.ChainGBErrorf(Errors.AddGSAErr, err, "")
 					}
 				}
 
-				de := &DeltaUpdateEvent{DeltaKey: k}
+				// Initialise an update event
+				de := &DeltaUpdateEvent{DeltaKey: v.Key, DeltaGroup: v.KeyGroup}
 
-				// We get our own participants view of the participant in our map and update it
+				// We get our own view of the participant in our map and update it
 				err := participant.Update(v.KeyGroup, v.Key, v, func(toBeUpdated, by *Delta) {
 					if by.Version > toBeUpdated.Version {
 						de.PreviousVersion = toBeUpdated.Version
@@ -519,6 +520,7 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 						de.CurrentValue = bytes.Clone(toBeUpdated.Value)
 
 						if v.KeyGroup == CONFIG_DKG {
+							// Need to think about how to handle error
 							_ = s.updateSelfInfo(v) // locks a different participant (self), so safe
 						}
 					}
@@ -542,7 +544,8 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 									EventType: NewDeltaAdded,
 									Time:      time.Now().Unix(),
 									Payload: &DeltaAddedEvent{
-										DeltaKey:   k,
+										DeltaGroup: v.KeyGroup,
+										DeltaKey:   v.Key,
 										DeltaValue: bytes.Clone(v.Value),
 									},
 									Message: "New delta added", // Using this string in server test - careful if changing
@@ -575,26 +578,23 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 			// If here then we have a new participant to add
 			err := s.addParticipantFromTmp(uuid, d)
 			if err != nil {
-				return err
+				return Errors.ChainGBErrorf(Errors.AddGSAErr, err, "")
 			}
-
-			// Event call for new participant added
 
 		}
 	}
 	return nil
 }
 
-//--
-
 //=======================================================
 // Participant Handling
+//=======================================================
 
 //Add/Remove Participant
 
-// -- TODO Look at weak pointers for tmpP in order to release to GC as soon as possible
-// -- TODO do we need to think about comparisons here?
 // Thread safe
+// addParticipantFromTmp takes a temporary participant as well as the key-values and adds them into our clusterMap
+// A new failure delta is added to our self view to track this particular participants failure delta
 func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) error {
 
 	// Step 1: Add participant to the participants map
@@ -605,6 +605,8 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	}
 
 	var maxV int64
+
+	now := time.Now().Unix()
 
 	// Deep copy each key-value pair
 	for k, v := range tmpP.keyValues {
@@ -637,9 +639,20 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 
 	err := s.addDeltaToSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: name, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: []byte{ALIVE}})
 	if err != nil {
-		s.logger.Info("error updating self from addTmpParticipant", "error", err)
-		return fmt.Errorf("failed to addTmpParticipant failure delta - %v", err)
+		return Errors.ChainGBErrorf(Errors.AddTmpPartErr, err, "")
 	}
+
+	// Dispatch new participant added event
+	s.DispatchEvent(Event{
+		NewParticipantAdded,
+		now,
+		NewParticipantJoin{
+			Name:       name,
+			Time:       now,
+			MaxVersion: maxV,
+		},
+		ParseEventEnumToString(NewParticipantAdded),
+	})
 
 	// Clear tmpParticipant references
 	tmpP.keyValues = nil
@@ -647,6 +660,11 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	return nil
 }
 
+//=======================================================
+// Discovery Phase
+//=======================================================
+
+// TODO Implement in future release
 func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 
 	s.clusterMapLock.Lock()
@@ -715,10 +733,6 @@ func (s *GBServer) addDiscoveryToMap(name string, disc *discoveryValues) error {
 	return nil
 
 }
-
-//=======================================================
-// Discovery Phase
-//=======================================================
 
 func (s *GBServer) runDiscovery(ctx context.Context) error {
 
@@ -873,13 +887,18 @@ func (c *gbClient) discoveryResponse(request []string) ([]byte, error) {
 // Generate Digest
 
 // Thread safe
+// generateDigest loops through our clusterMap and for each participant and produces a list of all participant names and
+// their max versions. It then serializes and returns the bytes, size, and any errors.
 func (s *GBServer) generateDigest() ([]byte, int, error) {
+
+	// Can we be using read locks more efficiently here?
 	s.clusterMapLock.RLock()
 	cm := s.clusterMap
 	partList := cm.participantArray
 	partMap := cm.participants
 	s.clusterMapLock.RUnlock()
 
+	// first we estimate what a full digest could be and if we need to maybe only produce a digest chunk instead
 	mtuEstimate := CEREAL_DIGEST_HEADER_SIZE + len(partMap)*32
 	if mtuEstimate > MTU_DIGEST && len(partList) > 10 {
 		var newPartArray []string
@@ -902,7 +921,7 @@ func (s *GBServer) generateDigest() ([]byte, int, error) {
 
 		cereal, err := s.serialiseClusterDigestWithArray(newPartArray, subsetSize)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, Errors.ChainGBErrorf(Errors.GenerateDigestErr, nil, "%s", err)
 		}
 		return cereal, subsetSize, nil
 	}
@@ -910,6 +929,9 @@ func (s *GBServer) generateDigest() ([]byte, int, error) {
 	return s.serialiseClusterDigest()
 }
 
+// modifyDigest is a helper function for removing the CLRF at the end of a digest if we have received a GOS_SYN with
+// a digest + delta we only need the CLRF at the end of the delta. We return the modified bytes, the size and a fmt error
+// as this is a ground level method
 func (s *GBServer) modifyDigest(digest []byte) ([]byte, int, error) {
 
 	if bytes.HasSuffix(digest, []byte(CLRF)) {
@@ -926,7 +948,7 @@ func (s *GBServer) modifyDigest(digest []byte) ([]byte, int, error) {
 
 }
 
-//-------------------------
+//----------------------------------------
 // Send Digest in GOSS_SYN - Stage 1
 
 // sendDigest takes the parent context (gossip round context) and makes a child context which will have a baseline timeout
@@ -942,29 +964,29 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 	// Generate the digest
 	digest, _, err := s.generateDigest()
 	if err != nil {
-		return responsePayload{}, fmt.Errorf("sendDigest - generate digest error: %w", err)
+		return responsePayload{}, err
 	}
 
 	// Acquire request ID
 	reqID, err := s.acquireReqID()
 	if err != nil {
-		return responsePayload{}, fmt.Errorf("sendDigest - acquiring ID error: %w", err)
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, err, "")
 	}
 
 	// Construct the packet
-	header := constructNodeHeader(1, GOSS_SYN, reqID, 0, uint16(len(digest)), NODE_HEADER_SIZE_V1)
+	header := constructNodeHeader(1, GOSS_SYN, reqID, uint16(0), uint16(len(digest)), NODE_HEADER_SIZE_V1)
 	packet := &nodePacket{
 		header,
 		digest,
 	}
 	cereal, gbErr := packet.serialize()
 	if gbErr != nil {
-		return responsePayload{}, fmt.Errorf("sendDigest - serialize error: %w", gbErr)
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, err, "")
 	}
 
 	select {
 	case <-ctx.Done():
-		return responsePayload{}, fmt.Errorf("sendDigest - context canceled before sending digest: %w", ctx.Err())
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, nil, "context: %s", ctx.Err())
 	default:
 
 	}
@@ -975,9 +997,9 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
 		if childCtx.Err() != nil {
-			return responsePayload{}, context.DeadlineExceeded
+			return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, err, "child context: %s", childCtx.Err())
 		}
-		return responsePayload{}, err
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, err, "")
 	}
 
 	return r, nil
@@ -988,9 +1010,11 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 // GOSS_SYN_ACK Prep
 //=======================================================
 
+// generateParticipantHeap initialises a priority heap to fill with participants which have available deltas where the max
+// versions are above the provided versions in the received digest
 func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (ph participantHeap, err error) {
 
-	// Here we are not looking at participants we are missing - that will be sent to us when we send our digest
+	// Here we are not looking at participants we are missing for us - that will be sent to us when we send our digest
 	// We are focusing on what we have that the other node does not based on their digest we are receiving
 
 	s.clusterMapLock.RLock()
@@ -1021,8 +1045,6 @@ func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (p
 			}
 		}
 
-		//log.Printf("available deltas for %s = %v (peerMaxVersion: %d)", name, available, peerMaxVersion)
-
 		if available > 0 {
 			heap.Push(&partQueue, &participantQueue{
 				name:            name,
@@ -1036,13 +1058,16 @@ func (s *GBServer) generateParticipantHeap(sender string, digest *fullDigest) (p
 	heap.Init(&partQueue)
 
 	if len(partQueue) == 0 {
-		return nil, Errors.EmptyParticipantHeapErr
+		return nil, Errors.ChainGBErrorf(Errors.EmptyParticipantHeapErr, nil, "for sender %s", sender)
 	}
 
 	return partQueue, nil
 
 }
 
+// TODO Returns no errors - need to fix
+// buildDelta takes a participantHeap and looks at what versions we have that are above the max version for each participant
+// we prioritise the most outdated participants on the heap as per scuttle depth. We return selected deltas, size and any errors
 func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta map[string][]Delta, size int, err error) {
 
 	// Need to go through each participant in the heap - add each delta to a heap order it - pop each delta
@@ -1118,14 +1143,14 @@ func (s *GBServer) buildDelta(ph *participantHeap, remaining int) (finalDelta ma
 	return selectedDeltas, sizeOfDelta, nil
 }
 
-// TODO So during this process I want to log or track the amount of times we go over MTU - so log as warning but also take the count along with the trace of where and when
-
+// prepareGossSynAck takes the digest and generates our own digest. It then builds a delta so send back if we have one available
+// the return is a serialised digest and a delta if we have none
 func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte, error) {
 
 	// Prepare our own digest first as we need to know if digest reaches its cap, so we know how much space we have left for the Delta
 	d, _, err := s.generateDigest()
 	if err != nil {
-		return nil, fmt.Errorf("compareAndBuildDelta - generate digest error: %w", err)
+		return nil, Errors.ChainGBErrorf(Errors.SendGSAErr, err, "")
 	}
 
 	// Compare here - Will need to take a remaining size left over from generating our digest
@@ -1150,7 +1175,7 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	//Modify digest if no error
 	newD, newSize, err := s.modifyDigest(d)
 	if err != nil {
-		return nil, err
+		return nil, Errors.ChainGBErrorf(Errors.SendGSAErr, nil, "%s", err)
 	}
 
 	remaining := int(DEFAULT_MAX_GSA) - newSize
@@ -1158,7 +1183,7 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	// Populate delta queues and build selected deltas
 	selectedDeltas, deltaSize, err := s.buildDelta(&partQueue, remaining)
 	if err != nil {
-		return nil, err
+		return nil, Errors.ChainGBErrorf(Errors.SendGSAErr, err, "")
 	}
 
 	// Serialise
@@ -1168,9 +1193,11 @@ func (s *GBServer) prepareGossSynAck(sender string, digest *fullDigest) ([]byte,
 	return cereal, nil
 }
 
-//-------------------------
+//-----------------------------------------------------
 // Send Digest And Delta in GOSS_SYN_ACK - Stage 2
 
+// sendGossSynAck prepares the acknowledgement to send back after receiving a goss_syn, it sends a digest and a delta if we
+// have one available. It then waits for a response async and processes the goss_syn_ack
 func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 	reqID := c.ph.reqID
@@ -1181,19 +1208,15 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 		return err
 	}
 
-	//fmt.Printf("gsa = %+s\n", gsa)
-
 	respID, err := c.srv.acquireReqID()
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.SendGSAErr, err, "")
 	}
 
 	pay, err := prepareRequest(gsa, 1, GOSS_SYN_ACK, reqID, respID)
 	if err != nil {
-		return err
+		return Errors.ChainGBErrorf(Errors.SendGSAErr, err, "")
 	}
-
-	//log.Printf("%s --> sent GSA - waiting for response async", c.srv.ServerName)
 
 	ctx, cancel := context.WithTimeout(c.srv.ServerContext, 1*time.Second)
 
@@ -1207,17 +1230,26 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 			return
 		}
 
-		// Off-load heavy work
+		// TODO Right now we're not handling these errors
+		// Off-load heavy work from the hot path
 		go func() {
 			defer cancel() // signal caller after merge is done
 
 			cd, e := deserialiseDelta(delta.msg)
 			if e != nil {
+				c.srv.logger.Info("received error when deserialising delta response",
+					slog.String("error", e.Error()),
+					slog.String("sender", sender),
+				)
 				return
 			}
 
 			// 2. Merge into server state (must be thread-safe!)
 			if e := c.srv.addGSADeltaToMap(cd); e != nil {
+				c.srv.logger.Info("received error when adding goss_syn_ack to map",
+					slog.String("error", e.Error()),
+					slog.String("sender", sender),
+				)
 				return
 			}
 		}()
@@ -1231,6 +1263,8 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 // GOSS_ACK Prep
 //=======================================================
 
+// prepareACK takes the final digest from the goss_syn_ack response and either returns a serialised delta or nil if it
+// nothing to send
 func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 
 	// Compare here - Will need to take a remaining size left over from generating our digest
@@ -1260,7 +1294,7 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 	// Populate delta queues and build selected deltas
 	selectedDeltas, deltaSize, err := s.buildDelta(&partQueue, remaining)
 	if err != nil {
-		return nil, err
+		return nil, Errors.ChainGBErrorf(Errors.GossAckErr, err, "")
 	}
 
 	delta, err := s.serialiseACKDelta(selectedDeltas, deltaSize)
@@ -1272,6 +1306,7 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 
 }
 
+// TODO possibly split into another file?
 //========================================================================================
 // GOSSIP
 //========================================================================================
@@ -1283,9 +1318,8 @@ func (s *GBServer) prepareACK(sender string, fd *fullDigest) ([]byte, error) {
 //----------------
 //Gossip Signalling
 
-// TODO when we start the node again the flags need to be reset so gossip_signalled should be clear here
-
 // Thread safe
+// checkGossipCondition checks gossip flags and sends bool on control channel to either pause or start gossip
 func (s *GBServer) checkGossipCondition() {
 	nodes := atomic.LoadInt64(&s.numNodeConnections)
 
@@ -1305,12 +1339,10 @@ func (s *GBServer) checkGossipCondition() {
 
 }
 
-//----------------
-//Gossip sync.Map
-
-//----------------
+//------------------------------
 //Gossip Control
 
+// gossipProcess is the main loop for gossip. It waits on a sync.Cond broadcast signal to start gossip rounds
 func (s *GBServer) gossipProcess(ctx context.Context) {
 	stopCondition := context.AfterFunc(ctx, func() {
 		// Notify all waiting goroutines to proceed if needed.
@@ -1358,6 +1390,8 @@ func (s *GBServer) gossipProcess(ctx context.Context) {
 //----------------
 //Gossip Check
 
+// tryStartGossip is a semaphore check to see if we are currently gossiping. It blocks future calls to start gossip rounds
+// if the semaphore is held
 func (s *GBServer) tryStartGossip() bool {
 	// Check if shutting down or context is canceled before attempting gossip
 	if s.flags.isSet(SHUTTING_DOWN) || s.ServerContext.Err() != nil {
@@ -1373,6 +1407,7 @@ func (s *GBServer) tryStartGossip() bool {
 	}
 }
 
+// endGossip releases the semaphore so tryStartGossip doesn't stop another round
 func (s *GBServer) endGossip() {
 	select {
 	case <-s.gossip.gossipSemaphore:
@@ -1382,8 +1417,6 @@ func (s *GBServer) endGossip() {
 
 //----------------
 //Gossip Process
-
-// TODO We need start gossip process to return false in order for us to kick back up to main gossip process and exit or wait
 
 func (s *GBServer) startGossipProcess() bool {
 	ticker := time.NewTicker(1 * time.Second)
@@ -1442,6 +1475,8 @@ func (s *GBServer) startGossipProcess() bool {
 // Gossip Round
 //=======================================================
 
+// startGossipRound is the main gossip round which selects random participants to gossip with and starts rounds. It waits
+// for all rounds to finish before returning or before timeout
 func (s *GBServer) startGossipRound() {
 
 	start := time.Now()
@@ -1452,16 +1487,17 @@ func (s *GBServer) startGossipRound() {
 		duration := time.Since(start)
 
 		s.logger.Info("gossip round complete",
-			//slog.String("node", s.PrettyName()),
-			slog.Duration("---------duration", duration),
-			//slog.Int("peers_contacted", len(indexes)),
-			//slog.Int("active participants", len(s.clusterMap.participantArray)),
+			slog.String("node", s.PrettyName()),
+			slog.Duration("duration", duration),
+			slog.Int("peers_contacted", len(indexes)),
+			slog.Int("active participants", len(s.clusterMap.participantArray)),
 		)
 
 		s.endGossip()
 		s.gossip.gossWg.Done()
 	}()
 
+	// TODO Implement in future release
 	//for discoveryPhase we want to be quick here and not hold up the gossip round - so we conduct discovery and exit
 	//log.Printf("are we in a discovery phase ====== %v", s.discoveryPhase)
 	//if s.discoveryPhase {
@@ -1484,30 +1520,18 @@ func (s *GBServer) startGossipRound() {
 
 	s.clusterMapLock.RLock()
 	partList := s.clusterMap.participantArray
-	//parts := s.clusterMap.participants
 	s.clusterMapLock.RUnlock()
 
 	indexes, err := generateRandomParticipantIndexesForGossip(partList, int(ns), &s.notToGossipNodeStore, "")
 	if err != nil {
-		s.logger.Info("no one to gossip with :(")
 		// TODO Need to add error event as its internal system error
 		return
 	}
 
 	var wg sync.WaitGroup
-	// We could add a semaphore channel for maximum amount of nodes allowed to be selected limiting the potential for lots of node gossip round spawns
 
 	for _, idx := range indexes {
 		nodeID := partList[idx]
-
-		//if parts[nodeID].paDetection.dead {
-		//	// Add event here and also handle with background task
-		//	s.logger.Info("skipping dead node -----")
-		//	continue
-		//}
-		//} else if !s.shouldWeGossip(parts[nodeID]) {
-		//	continue
-		//}
 
 		wg.Add(1)
 		go func(node string) {
@@ -1544,6 +1568,8 @@ func (s *GBServer) startGossipRound() {
 
 //TODO Need to decide how to propagate errors
 
+// gossipWithNode is the singular gossip round between our server and a node. It gets the connection, and conducts each stage of the
+// gossip process
 func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 
 	if s.flags.isSet(SHUTTING_DOWN) {
@@ -1568,13 +1594,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 		return
 	}
 
-	//var stage int
-
-	// So what we can do is set up a progress and error collection
-
 	//------------- GOSS_SYN Stage 1 -------------//
-
-	//stage = 1
 
 	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
@@ -1586,22 +1606,22 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 				// We only return as we should have handled and logged the error already
 				return
 			}
-			// TODO ---
+			// Any more cases here?
 		}
 		return
 	}
 
 	//------------- GOSS_SYN_ACK Stage 2 -------------//
-	//stage = 2
 
+	// Stage 2: Handle goss_syn_ack response
 	sender, fdValue, cdValue, err := deserialiseGSA(resp.msg)
 	if err == nil && cdValue != nil {
 		_ = s.addGSADeltaToMap(cdValue)
 	}
 
 	//------------- GOSS_ACK Stage 3 -------------//
-	//stage = 3
 
+	// Stage 3: Send goss_ack
 	ack, err := s.prepareACK(sender, fdValue)
 	if err != nil || ack == nil {
 		conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Net())
@@ -1615,8 +1635,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 		conn.mu.Unlock()
 	}
 
-	//------------- Handle Completion -------------//
+	// Complete
+	return
 
 }
-
-// ======================

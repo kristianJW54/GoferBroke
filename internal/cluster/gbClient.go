@@ -26,9 +26,6 @@ type clientFlags uint16 // Inspired by NATS bit mask for flags
 const (
 	CONNECTED = 1 << iota
 	FLUSH_OUTBOUND
-	CLOSED
-	MARKED_CLOSED
-	NO_RECONNECT
 	WRITE_LOOP_STARTED
 	READ_LOOP_STARTED
 )
@@ -57,20 +54,11 @@ func (cf *clientFlags) setIfNotSet(c clientFlags) bool {
 	return false
 }
 
-type ClosedState int
-
-const (
-	ClientClosed = ClosedState(iota + 1)
-	WriteError
-	ReadError
-	ParseError
-	ServerShutdown
-)
-
 //===================================================================================
 // Client | Node
 //===================================================================================
 
+// gbClient is the main structure for holding a connection to the server. gbClient can be either a client or a node
 type gbClient struct {
 	name    string
 	created time.Time
@@ -90,16 +78,12 @@ type gbClient struct {
 	// directionType determines if the conn was initiated (dialed by this server) or received (accepted in the accept loop)
 	directionType string
 
-	// TODO Add client options and better handling/separation of client types
-
 	// Node client - extra node specific details
 	node
 
-	//Parsing + State
-	//stateMachine
+	// embedded parser for holding message parsing state
 	parser
 
-	//Flags --> will tell us what state the client is in (connected, awaiting_syn_ack, etc...)
 	flags clientFlags
 
 	//Responses
@@ -133,7 +117,6 @@ func (e *NodeWriteError) Error() string {
 	return fmt.Sprintf("write error: %s", e.err)
 }
 
-// TODO separate the channels to avoid contention
 func (c *gbClient) handleReadError(err error) {
 
 	switch c.cType {
@@ -246,16 +229,13 @@ func (c *gbClient) initClient() {
 
 	s := c.srv
 
-	//Setup id for tracking in server map
 	c.cid = atomic.AddUint64(&s.gcid, 1) // Assign unique ID
-	//Outbound setup
-	c.outbound.flushSignal = sync.NewCond(&(c.mu))
 
-	//c.responseHandler.resp = make(map[int]chan []byte, 10) // Need to align with SeqID pool-size
+	c.outbound.flushSignal = sync.NewCond(&(c.mu))
 
 	respHanlder := &responseHandler{}
 
-	c.rh = respHanlder // Need to align with SeqID pool-size
+	c.rh = respHanlder
 
 	c.errChan = make(chan error, 1)
 
@@ -263,6 +243,8 @@ func (c *gbClient) initClient() {
 
 }
 
+// createClient returns a new gbClient from a received conn during the accept loop. It also starts a read and write loop
+// for handling messages on the wire
 func (s *GBServer) createClient(conn net.Conn, clientType int) *gbClient {
 
 	uuid := uuid2.New()
@@ -299,22 +281,23 @@ func (s *GBServer) createClient(conn net.Conn, clientType int) *gbClient {
 
 }
 
+// moveToConnected takes a temporary client connection and moves it to a conn store depending on client type
 func (s *GBServer) moveToConnected(cid uint64, name string) error {
 
 	client, exists := s.tmpConnStore.LoadAndDelete(cid)
 	if !exists {
-		return fmt.Errorf("client %v not found", cid)
+		return Errors.ChainGBErrorf(Errors.MoveToConnectedErr, nil, "client %s not found", name)
 	}
 
 	c, ok := client.(*gbClient)
 	if !ok {
-		return fmt.Errorf("client %v is not a client of type gbClient - got: %T", cid, client)
+		return Errors.ChainGBErrorf(Errors.MoveToConnectedErr, nil, "client %s is not a client of type gbClient - got: %T", name, client)
 	}
 
 	c.name = name
 
 	if _, exists := s.nodeConnStore.Load(name); exists {
-		return fmt.Errorf("client %s already exists in nodeConnStore: %+v", name, c.gbc)
+		return Errors.ChainGBErrorf(Errors.MoveToConnectedErr, nil, "client %s already exists", name)
 	}
 
 	switch c.cType {
@@ -324,9 +307,10 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 			c.flags.set(CONNECTED)
 			return nil
 		} else {
-			return fmt.Errorf("client is nil for some reason lol")
+			return Errors.ChainGBErrorf(Errors.MoveToConnectedErr, nil, "client is nil")
 		}
 	case CLIENT:
+		// TODO To implement in future release
 		return fmt.Errorf("found client in tmpConnStore %s", name)
 	default:
 		return nil
@@ -341,6 +325,7 @@ func (s *GBServer) moveToConnected(cid uint64, name string) error {
 //---------------------------
 //Read Loop
 
+// readLoop reads from the wire, manages a dynamic buffer and sends packets to the parser
 func (c *gbClient) readLoop() {
 
 	c.mu.Lock()
@@ -372,14 +357,10 @@ func (c *gbClient) readLoop() {
 		n, err := reader.Read(buff)
 		if err != nil {
 			if err == io.EOF {
-				// Maybe it reaches out to another node?
-				// Maybe it exits and then applies its own reconnect with backoff retries
-				// Will then need to log monitoring for full restart
-				//buff = nil
 				return
 			}
 
-			//c.handleReadError(err)
+			//c.handleReadError(err) ??
 
 			return
 		}
@@ -390,7 +371,6 @@ func (c *gbClient) readLoop() {
 
 		// Check if we are utilizing more than half the buffer capacity - if not we may need to shrink
 		if n <= cap(buff)/2 {
-			//log.Println("low buff utilization - increasing shrink count")
 			c.inbound.expandCount++
 		} else if n > cap(buff) {
 			c.inbound.expandCount = 0
@@ -423,6 +403,7 @@ func (c *gbClient) readLoop() {
 		//-----------------------------
 		// Parsing the packet
 
+		// Pointless?
 		if c.cType == CLIENT {
 			c.ParsePacket(buff[:n])
 		} else if c.cType == NODE {
@@ -441,6 +422,7 @@ func (c *gbClient) readLoop() {
 //Queueing
 
 // Lock should be held coming in to this
+// queueOutbound queues bytes in the write buffer ready to be flushed
 func (c *gbClient) queueOutbound(data []byte) {
 
 	if c.gbc == nil {
@@ -485,6 +467,7 @@ func (c *gbClient) flushSignal() {
 }
 
 // Lock must be held coming in
+// flushWriteOutbound takes the write buffer and flushes it to the connection
 func (c *gbClient) flushWriteOutbound() bool {
 
 	if c.flags.isSet(FLUSH_OUTBOUND) {
@@ -575,6 +558,7 @@ func (c *gbClient) flushWriteOutbound() bool {
 // met
 // https://pkg.go.dev/context#example-AfterFunc-Cond
 
+// writeLoop waits for flush signals to flush bytes from the write buffer
 func (c *gbClient) writeLoop() {
 
 	c.mu.Lock()
@@ -639,12 +623,15 @@ func (c *gbClient) enqueueProto(data []byte) {
 // Response Handling
 //===================================================================================
 
+// responsePayload is the payload of a response or request with the accompanying bytes message
 type responsePayload struct {
 	respID uint16
 	reqID  uint16
 	msg    []byte
 }
 
+// response handles response payloads using a channel, it holds its own context and err channel as well as an id so it can
+// be mapped
 type response struct {
 	id      int
 	ch      chan responsePayload
@@ -653,6 +640,7 @@ type response struct {
 	ctx     context.Context
 }
 
+// responseHandler holds a map of open responses that are waiting to be fulfilled
 type responseHandler struct {
 	resp sync.Map
 }
@@ -667,7 +655,6 @@ func (c *gbClient) addResponseChannel(ctx context.Context, seqID int) *response 
 	}
 
 	c.rh.resp.Store(seqID, rsp) // Store safely in sync.Map
-	//log.Printf("response channel made for %v", seqID)
 
 	return rsp
 }
@@ -676,14 +663,13 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 	if val, ok := c.rh.resp.Load(int(respID)); ok {
 		_ = val.(*response)
 		c.srv.releaseReqID(respID)
-		//close(rsp.ch)
-		//close(rsp.err)
+
 		c.rh.resp.Delete(respID) // Remove safely
 
-		//log.Printf("responseCleanup - cleaned up response ID %d", respID)
 	}
 }
 
+// waitForResponse waits on select channels for either a message, err or context.
 func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	select {
 	case <-rsp.ctx.Done():
@@ -703,6 +689,7 @@ func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	}
 }
 
+// waitForResponseAndBlock waits for the response and blocks until received
 func (c *gbClient) waitForResponseAndBlock(rsp *response) (responsePayload, error) {
 
 	defer c.responseCleanup(rsp, uint16(rsp.id))
@@ -717,6 +704,8 @@ func (c *gbClient) waitForResponseAndBlock(rsp *response) (responsePayload, erro
 }
 
 // Must defer response cleanup in callback
+// waitForResponseAsync waits for a response in a go-routine and uses a callback function to allow the handling of the response
+// once received
 func (c *gbClient) waitForResponseAsync(rsp *response, handleResponse func(responsePayload, error)) {
 
 	go func() {
@@ -752,8 +741,8 @@ func (c *gbClient) getResponseChannel(id uint16) (*response, error) {
 
 }
 
-// Can think about inserting a command and callback function to specify what we want to do based on the response
 // Lock not held on entry
+// qProtoWithResponse returns a response to wait on after sending bytes
 func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []byte, sendNow bool) *response {
 	rsp := c.addResponseChannel(ctx, int(id)) // Create a response channel
 
@@ -808,6 +797,9 @@ func (c *gbClient) processMessage(message []byte) {
 
 	}
 }
+
+// TODO Client Commands will be fully implemented in a future release
+// Need to think about side car clients who may not want to embed gossip?
 
 //===================================================================================
 // Client Commands

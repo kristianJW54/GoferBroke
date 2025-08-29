@@ -1706,3 +1706,11 @@ func (s *GBServer) startBJ() {
 		}
 	}
 }
+
+// --------------------------------------------
+// Server background tasks
+
+// TODO Implement in future release
+// Memory checker
+// One for updating metric deltas
+// Another for reaching memory limit and sending event

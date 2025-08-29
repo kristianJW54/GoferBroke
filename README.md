@@ -99,11 +99,17 @@ Sync object/player/entity data in real-time between peers.
 
 - Async Logging and Log Buffers ✅
 
+- Add Memory Management Delta Updates and Events
+
+- Build out Client Commands and Connection Handling
+
+- Implement full discovery phase for joining nodes of a big cluster
+
 - mTLS Encryption
 
 - Flow Control For High Load Gossip
 
-- Network Types and NAT Handling
+- NAT Hole-Punching and NAT Traversal
 
 - Client SDK and CLI Tool
 

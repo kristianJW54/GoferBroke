@@ -86,6 +86,7 @@ func mapInternalPayloadToPublic(eventType cluster.EventEnum, payload any) any {
 	case cluster.NewDeltaAdded:
 		if internal, ok := payload.(*cluster.DeltaAddedEvent); ok {
 			return &DeltaAddedEvent{ // <-- public SDK struct
+				DeltaGroup: internal.DeltaGroup,
 				DeltaKey:   internal.DeltaKey,
 				DeltaValue: internal.DeltaValue,
 			}
@@ -93,11 +94,20 @@ func mapInternalPayloadToPublic(eventType cluster.EventEnum, payload any) any {
 	case cluster.DeltaUpdated:
 		if internal, ok := payload.(*cluster.DeltaUpdateEvent); ok {
 			return &DeltaUpdateEvent{
+				DeltaGroup:      internal.DeltaGroup,
 				DeltaKey:        internal.DeltaKey,
 				PreviousVersion: internal.PreviousVersion,
 				PreviousValue:   internal.PreviousValue,
 				CurrentVersion:  internal.CurrentVersion,
 				CurrentValue:    internal.CurrentValue,
+			}
+		}
+	case cluster.NewParticipantAdded:
+		if internal, ok := payload.(*cluster.NewParticipantJoin); ok {
+			return &NewParticipantJoin{
+				Name:       internal.Name,
+				Time:       internal.Time,
+				MaxVersion: internal.MaxVersion,
 			}
 		}
 		// Handle other types...
@@ -130,6 +140,7 @@ func (n *Node) OnEvent(eventType EventEnum, handler func(Event) error) (string, 
 //=======================================================
 
 type DeltaUpdateEvent struct {
+	DeltaGroup      string
 	DeltaKey        string
 	PreviousVersion int64
 	PreviousValue   []byte
@@ -138,6 +149,7 @@ type DeltaUpdateEvent struct {
 }
 
 type DeltaAddedEvent struct {
+	DeltaGroup string
 	DeltaKey   string
 	DeltaValue []byte
 }
@@ -146,4 +158,10 @@ type NewNodeJoin struct {
 	Name    string
 	Time    int64
 	Address string
+}
+
+type NewParticipantJoin struct {
+	Name       string
+	Time       int64
+	MaxVersion int64
 }

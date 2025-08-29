@@ -386,6 +386,10 @@ const (
 	CONFIG_CHECKSUM_RESP_CODE         = 93
 	UPDATE_DELTA_CODE                 = 94
 	STORE_DELTA_CODE                  = 95
+	ADD_TMP_PARTICIPANT_CODE          = 96
+	GENERATE_DIGEST_CODE              = 97
+	SEND_GSA_CODE                     = 98
+	MOVE_TO_CONNECTED_CODE            = 99
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -453,6 +457,10 @@ var KnownInternalErrors = map[int]*GBError{
 	CONFIG_CHECKSUM_RESP_CODE:         &GBError{Code: CONFIG_CHECKSUM_RESP_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "processing config checksum response failed"},
 	UPDATE_DELTA_CODE:                 &GBError{Code: UPDATE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "update delta failed"},
 	STORE_DELTA_CODE:                  &GBError{Code: STORE_DELTA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "store delta failed"},
+	ADD_TMP_PARTICIPANT_CODE:          &GBError{Code: ADD_TMP_PARTICIPANT_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to add temp participant"},
+	GENERATE_DIGEST_CODE:              &GBError{Code: GENERATE_DIGEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to generate digest"},
+	SEND_GSA_CODE:                     &GBError{Code: SEND_GSA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "send goss_syn_ack failed"},
+	MOVE_TO_CONNECTED_CODE:            &GBError{Code: MOVE_TO_CONNECTED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to move temporary connection to conn store"},
 }
 
 var (
@@ -497,6 +505,10 @@ var (
 	ConfigCheckSumRespErr     = KnownInternalErrors[CONFIG_CHECKSUM_RESP_CODE]
 	UpdateDeltaErr            = KnownInternalErrors[UPDATE_DELTA_CODE]
 	StoreDeltaErr             = KnownInternalErrors[STORE_DELTA_CODE]
+	AddTmpPartErr             = KnownInternalErrors[ADD_TMP_PARTICIPANT_CODE]
+	GenerateDigestErr         = KnownInternalErrors[GENERATE_DIGEST_CODE]
+	SendGSAErr                = KnownInternalErrors[SEND_GSA_CODE]
+	MoveToConnectedErr        = KnownInternalErrors[MOVE_TO_CONNECTED_CODE]
 )
 
 var (
