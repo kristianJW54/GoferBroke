@@ -256,7 +256,7 @@ func (s *GBServer) sendClusterConfigDigest(client *gbClient) error {
 			*ourD = *v
 			self.pm.Unlock()
 
-			err := s.updateClusterConfigDeltaAndSelf(v.Key, v)
+			err := s.UpdateClusterConfigDeltaAndSelf(v.Key, v)
 			if err != nil {
 				return Errors.ChainGBErrorf(Errors.ConfigDigestErr, err, "for key [%s]", v.Key)
 			}
@@ -730,7 +730,7 @@ func (s *GBServer) updateSelfInfo(d *Delta) error {
 	*ourD = *d
 
 	if d.KeyGroup == CONFIG_DKG {
-		if err := s.updateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
+		if err := s.UpdateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
 			return Errors.ChainGBErrorf(Errors.UpdateSelfInfoErr, err, "")
 		}
 	}
@@ -763,7 +763,7 @@ func (s *GBServer) addDeltaToSelfInfo(d *Delta) error {
 	*ourD = *d
 
 	if d.KeyGroup == CONFIG_DKG {
-		if err := s.updateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
+		if err := s.UpdateClusterConfigDeltaAndSelf(d.Key, d); err != nil {
 			return Errors.ChainGBErrorf(Errors.UpdateSelfInfoErr, err, "")
 		}
 	}

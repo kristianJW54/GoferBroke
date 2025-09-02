@@ -209,46 +209,40 @@ func setupLogger(ctx context.Context, n *GbNodeConfig) (*slog.Logger, *fastLogge
 		return root, async, async.jsonBuf
 	}
 
-	//return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})), nil, nil
-
 }
 
 //==================================================
 // Client handling
 //==================================================
 
-// TODO Finish and test
-
 func (fl *fastLogger) AddStreamLoggerHandler(
 	ctx context.Context,
 	id string,
 	handler func([]byte) error,
 ) {
-	// Per-streamer buffer; tune as you like.
+
 	ch := make(chan []byte, 128)
 
 	entry := &streamLogger{
 		id:      id,
 		logCh:   ch,
-		handler: handler, // renamed field for clarity
+		handler: handler,
 	}
 
-	// Copy-on-write add (no pauses for readers)
 	fl.muCopy.Lock()
 	fl.stream = append(append([]*streamLogger(nil), fl.stream...), entry)
 	fl.muCopy.Unlock()
 
 	// Fan-out goroutine for this client
 	go func() {
-		//defer fl.RemoveStreamer(id) // auto-unregister on exit
 
 		for {
 			select {
 			case b := <-ch:
-				// Append CRLF only once; avoids fmt / alloc
+
 				framed := append(b, '\r', '\n')
 				if err := entry.handler(framed); err != nil {
-					return // stop on error (client closed etc.)
+					return
 				}
 			case <-ctx.Done():
 				return

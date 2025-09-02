@@ -63,3 +63,5 @@ func TestCreateClient(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 }
+
+// TODO Need more client tests

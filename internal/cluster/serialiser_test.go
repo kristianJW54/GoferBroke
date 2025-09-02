@@ -167,7 +167,9 @@ func TestSerialiseDiscoveryRequest(t *testing.T) {
 		t.Fatalf("Error deserialising known addresses: %v", err)
 	}
 
-	fmt.Printf("data = %+s\n", parts)
+	if len(parts) <= 2 {
+		t.Errorf("Expected at least 2 parts, got %d", len(parts))
+	}
 
 	// First element is the sender
 	//gbs.serialiseDiscoveryResponse(parts)
@@ -189,22 +191,22 @@ func TestDiscoveryResponse(t *testing.T) {
 		knownAddr[name][1] = gbs.clusterMap.participants[name].keyValues[MakeDeltaKey(ADDR_DKG, "CLOUD")].Key
 	}
 
-	fmt.Printf("data = %+s\n", knownAddr)
-
 	data, err := gbs.serialiseDiscoveryAddrs(knownAddr)
 	if err != nil {
 		t.Fatalf("Error serialising known addresses: %v", err)
 	}
-
-	fmt.Printf("addresses = %+v\n", data)
 
 	addrMap, err := deserialiseDiscovery(data)
 	if err != nil {
 		t.Fatalf("Error deserialising addresses: %v", err)
 	}
 
-	for key, value := range addrMap.dv {
-		fmt.Printf("addr = %s%+v\n", key, value.addr)
+	if m, exists := addrMap.dv["node-test-1"]; !exists {
+		t.Errorf("expected node-test-1 map entry to exist")
+	} else {
+		if _, exists := m.addr["CLOUD"]; !exists {
+			t.Errorf("expected CLOUD key in addr map entry to exist")
+		}
 	}
 
 }
@@ -291,12 +293,10 @@ func TestDiscoveryResponseTable(t *testing.T) {
 				if _, exists := tt.checkAddrMap[name]; !exists {
 					t.Errorf("node name does not exist: %s", name)
 				}
-				fmt.Printf("got name %s\n", name)
 				for key, addr := range value.addr {
 					if key, exists := tt.checkAddrMap[name][key]; !exists {
 						t.Errorf("address not found for key: %s", key)
 					}
-					fmt.Printf("got address key %s - value: %s\n", key, addr)
 					if addr != tt.checkAddrMap[name][key] {
 						t.Errorf("address mismatch: got %s, want %s", addr, tt.checkAddrMap[name][key])
 					}
@@ -310,12 +310,31 @@ func TestDiscoveryResponseTable(t *testing.T) {
 
 func TestSerialiseConfigDigest(t *testing.T) {
 
-	cfg := "../../Configs/cluster/default_cluster_config.conf"
-	nodeCfg := "../../Configs/node/basic_test_seed_config.conf"
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
 
-	gbs, err := NewServerFromConfigFile(nodeCfg, cfg)
+`
+
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
+
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
 	if err != nil {
-		t.Fatalf("Error creating server: %v", err)
+		t.Errorf("error creating new server: %v", err)
 	}
 
 	gbs.StartServer()
@@ -326,12 +345,10 @@ func TestSerialiseConfigDigest(t *testing.T) {
 		t.Fatalf("Error serialising config: %v", err)
 	}
 
-	name, fd, err := deSerialiseDigest(d)
+	_, fd, err := deSerialiseDigest(d)
 	if err != nil {
 		t.Fatalf("Error serialising config: %v", err)
 	}
-
-	fmt.Printf("digest = %+v\n", (*fd)[name])
 
 	entry, ok := (*fd)[gbs.ServerName]
 	if !ok || entry == nil {
@@ -346,8 +363,6 @@ func TestSerialiseConfigDigest(t *testing.T) {
 	gbs.Shutdown()
 
 }
-
-// TODO ALL TESTS BELOW NEED TO HAVE ASSERTIONS AND REMOVE LOGS
 
 func TestSerialiseDigest(t *testing.T) {
 
@@ -404,12 +419,13 @@ func TestSerialiseDigest(t *testing.T) {
 		fmt.Println("error ", err)
 	}
 
-	fmt.Printf("serialised digest = %v\n", cereal)
-
 	_, digest, err := deSerialiseDigest(cereal)
+	if err != nil {
+		t.Fatalf("Error serialising config: %v", err)
+	}
 
-	for _, value := range *digest {
-		fmt.Printf("%v:%v\n", value.nodeName, value.maxVersion)
+	if len(*digest) != 5 {
+		t.Errorf("error serialising digest: expected %d, got %d", 5, len(*digest))
 	}
 
 }
@@ -465,24 +481,29 @@ func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 
 	}
 
-	// Create subset array
-	subsetArray := make([]string, 3)
-	selectedNodes := make(map[string]struct{})
-	subsetSize := 0
+	time.Sleep(100 * time.Millisecond)
 
-	for i := 0; i < 3; i++ {
-		randNum := rand.Intn(len(gbs.clusterMap.participants))
-		node := gbs.clusterMap.participantArray[randNum]
-		if _, exists := selectedNodes[node]; exists {
-			continue // Skip duplicates
+	// build exactly 3 unique names
+	subsetArray := make([]string, 0, 3)
+	selected := make(map[string]struct{})
+
+	for len(subsetArray) < 3 {
+		node := gbs.clusterMap.participantArray[rand.Intn(len(gbs.clusterMap.participantArray))]
+		if _, seen := selected[node]; seen {
+			continue
 		}
-		selectedNodes[node] = struct{}{}
-		subsetArray[i] = node
-
-		subsetSize += 1 + len(node) + 8
+		selected[node] = struct{}{}
+		subsetArray = append(subsetArray, node)
 	}
 
-	fmt.Printf("subset array = %+v\n", subsetArray)
+	subsetSize := 0
+	for _, name := range subsetArray {
+		subsetSize += 1 + len(name) + 8 // 1-byte len, name, 8-byte maxVersion
+	}
+
+	if len(subsetArray) != 3 {
+		t.Errorf("invalid subset array size")
+	}
 
 	newDigest, err := gbs.serialiseClusterDigestWithArray(subsetArray, subsetSize)
 	if err != nil {
@@ -494,8 +515,8 @@ func TestSerialiseDigestWithSubsetArray(t *testing.T) {
 		fmt.Println("error ", err)
 	}
 
-	for _, value := range *digest {
-		fmt.Printf("%v:%v\n", value.nodeName, value.maxVersion)
+	if len(*digest) != 3 {
+		t.Errorf("error serialising digest: expected %d, got %d", 3, len(*digest))
 	}
 
 }
@@ -545,10 +566,13 @@ func TestGSASerialisation(t *testing.T) {
 		t.Fatalf("Failed to deserialise GSA: %v", err)
 	}
 
-	for n, fdValue := range cd.delta {
-		fmt.Printf("delta check\n")
-		for k, v := range fdValue.keyValues {
-			fmt.Printf("%s --> key %s = %+v\n", n, k, v)
+	if len(cd.delta) != 5 {
+		t.Errorf("invalid GSA delta size")
+	}
+
+	for _, fdValue := range cd.delta {
+		if len(fdValue.keyValues) != 2 {
+			t.Errorf("invalid key values length")
 		}
 	}
 
@@ -557,47 +581,5 @@ func TestGSASerialisation(t *testing.T) {
 	//for k, v := range gbs.clusterMap.participants[gbs.ServerName].keyValues {
 	//	log.Printf("key %s = %+v", k, v)
 	//}
-
-}
-
-func BenchmarkMapIteration(b *testing.B) {
-	m := make(map[string]int)
-	for i := 0; i < 100; i++ {
-		m[fmt.Sprintf("participant%d", i)] = i
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for k, v := range m {
-			_ = k
-			_ = v
-		}
-	}
-}
-
-func BenchmarkSliceIteration(b *testing.B) {
-	s := make([]string, 100)
-	for i := 0; i < 100; i++ {
-		s[i] = fmt.Sprintf("participant%d", i)
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, v := range s {
-			_ = v
-		}
-	}
-}
-
-func TestVersion(t *testing.T) {
-
-	num1 := int64(1)
-	num2 := time.Now().Unix()
-
-	if num1 > num2 {
-		fmt.Printf("OH NO\n")
-	}
-
-	num1++
-
-	fmt.Printf("num1 = %d\n", num1)
 
 }

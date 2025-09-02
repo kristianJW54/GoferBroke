@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+func (ed *EventDispatcher) HandleDeltaUpdateEvent(t testing.TB, e Event) (string, string, error) {
+
+	t.Helper()
+
+	payload, ok := e.Payload.(*DeltaUpdateEvent)
+	if !ok {
+		return "", "", fmt.Errorf("invalid payload for DeltaUpdateEvent")
+	}
+
+	return string(payload.PreviousValue), string(payload.CurrentValue), nil
+
+}
+
 func TestEventBasic(t *testing.T) {
 
 	now := time.Now().Unix()
@@ -53,8 +66,17 @@ func TestEventBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var prev string
+	var curr string
+
 	if _, err := gbs2.AddHandler(ctx, DeltaUpdated, true, func(event Event) error {
-		return gbs2.event.HandleDeltaUpdateEvent(event)
+		p, c, err := gbs2.event.HandleDeltaUpdateEvent(t, event)
+
+		prev = p
+		curr = c
+
+		return err
+
 	}); err != nil {
 		t.Errorf("error adding event: %v", err)
 	}
@@ -90,6 +112,19 @@ func TestEventBasic(t *testing.T) {
 	}
 
 	time.Sleep(10 * time.Millisecond)
+
+	if prev == curr {
+		fmt.Printf("prev: %v, curr: %v\n", prev, curr)
+		t.Errorf("previous value should have been updated")
+	}
+
+	if curr != "I am a delta blissfully unaware as to how annoying I am to code" {
+		if curr != "Try to gossip about me and see what happens" {
+			t.Errorf("wrong update - got %s", curr)
+		}
+
+	}
+
 	ctx.Done()
 
 }
@@ -170,11 +205,12 @@ func TestAsyncErrorEvent(t *testing.T) {
 	// Monitor stop
 	select {
 	case <-wait:
-		fmt.Println("error received, stopping process")
 		processStopped = true
 		return
 	case <-ctx.Done():
-		t.Log("context canceled before wait signaled")
+		return
+	default:
+
 	}
 
 	// Now assert properly

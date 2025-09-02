@@ -1,6 +1,8 @@
 package gossip
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"time"
 )
@@ -52,4 +54,74 @@ func (n *Node) Add(d *cluster.Delta) error {
 	return self.Store(d)
 }
 
-// Events
+func (n *Node) Update(keyGroup, key string, d *cluster.Delta) error {
+	self := n.server.GetSelfInfo()
+	err := self.Update(keyGroup, key, d, func(toBeUpdated, by *cluster.Delta) {
+
+		// copy fields explicitly; clone the slice
+		toBeUpdated.Version = by.Version
+		toBeUpdated.KeyGroup = by.KeyGroup
+		toBeUpdated.Key = by.Key
+		toBeUpdated.Value = bytes.Clone(by.Value)
+
+		if keyGroup == cluster.CONFIG_DKG {
+			err := n.server.UpdateClusterConfigDeltaAndSelf(key, d)
+			if err != nil {
+				return
+			}
+		}
+
+	})
+	return err
+}
+
+func (n *Node) GetAllParticipants() []string {
+	return n.server.GetAllParticipants()
+}
+
+func (n *Node) GetParticipantDeltas(name string) ([]Delta, error) {
+
+	d, err := n.server.GetParticipantDeltas(name)
+	if err != nil {
+		return nil, fmt.Errorf("error getting deltas for participant %s: %s", name, err)
+	}
+
+	out := make([]Delta, len(d))
+	for i, delta := range d {
+
+		nd := Delta{
+			KeyGroup:  delta.KeyGroup,
+			Key:       delta.Key,
+			Version:   delta.Version,
+			ValueType: delta.ValueType,
+		}
+
+		if delta.Value != nil {
+			nd.Value = make([]byte, len(delta.Value))
+			copy(nd.Value, delta.Value)
+		}
+		out[i] = nd
+	}
+
+	return out, nil
+
+}
+
+func (n *Node) GetDeltaFromSelf(keyGroup, key string) Delta {
+
+	delta := n.server.GetDeltaFromSelf(keyGroup, key)
+	nd := Delta{
+		KeyGroup:  delta.KeyGroup,
+		Key:       delta.Key,
+		Version:   delta.Version,
+		ValueType: delta.ValueType,
+	}
+
+	if delta.Value != nil {
+		nd.Value = make([]byte, len(delta.Value))
+		copy(nd.Value, delta.Value)
+	}
+
+	return nd
+
+}

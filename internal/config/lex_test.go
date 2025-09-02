@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"fmt"
 	"math/bits"
 	"strings"
 	"testing"
@@ -11,16 +10,8 @@ import (
 
 func TestBitMaskClassifications(t *testing.T) {
 
-	for ascii := 0; ascii <= 255; ascii++ {
-
-		fmt.Printf("%c\n", ascii)
-
-	}
-
 	pattern1 := identifier | digit
 	wantIndex := []int{7, 6}
-
-	fmt.Printf("ident = %08b\n", pattern1)
 
 	var pos = 8
 	posIndex := make([]int, 2)
@@ -30,7 +21,6 @@ func TestBitMaskClassifications(t *testing.T) {
 		pos--
 
 		if pattern1&(1<<i) != 0 {
-			fmt.Printf("found bit at %d\n", pos)
 			posIndex[i] = pos
 		}
 
@@ -55,8 +45,6 @@ func TestBitMaskClassifications(t *testing.T) {
 	if testLookupTable[testChar] != pattern1 {
 		t.Errorf("rune 'a' in lookup table is classified incorrectly - got %08b, want %08b", testLookupTable[testChar], pattern1)
 	}
-
-	fmt.Printf("got %08b, want %08b\n", testLookupTable[testChar], pattern1)
 
 }
 
@@ -96,8 +84,14 @@ func TestBuildTable(t *testing.T) {
 	testWord := "@hello 007 look_me_up []"
 
 	for _, char := range testWord {
-
-		fmt.Printf("%c - %08b - %s\n", char, table[char], BitMaskToString(table[char]))
+		if char == 'k' {
+			if table[char] != 00000001 {
+				t.Errorf("wrong bit mask for char k")
+			}
+			if BitMaskToString(table[char]) != "IDENTIFIER" {
+				t.Errorf("wrong bit flag for k - expected [IDENTIFIER], got %s", BitMaskToString(table[char]))
+			}
+		}
 
 	}
 
@@ -111,8 +105,15 @@ func TestNextMethod(t *testing.T) {
 
 	sfTop(lex)
 
-	for i := 0; i <= len(input); i++ {
-		fmt.Println(string(lex.next()))
+	check := []string{"t", "e", "s", "t"}
+
+	for i := 0; i <= len(input)-1; i++ {
+
+		letter := string(lex.next())
+
+		if check[i] != letter {
+			t.Errorf("wrong next char: expected %s, got %s", check[i], letter)
+		}
 		// Last rune is int32(0) marking EOF
 	}
 
@@ -127,11 +128,16 @@ func TestKeyStringValueEmit(t *testing.T) {
 
 	token := lex.nextToken()
 
-	fmt.Println(token)
+	if token.value != "some-key" {
+		println(token.value)
+		t.Errorf("wrong token value - got %s", token.value)
+	}
 
 	token2 := lex.nextToken()
 
-	fmt.Println(token2)
+	if token2.value != "value \"is\" this" {
+		t.Errorf("wrong token value - got %s", token2.value)
+	}
 
 }
 
@@ -153,13 +159,13 @@ func TestArrayEmit(t *testing.T) {
 			t.Fatal("lexer timeout")
 		default:
 			token := lex.nextToken()
-			fmt.Println(token)
-
 			tokenCount++
 			tokens = append(tokens, token.value)
 
 			if token.typ == tokenEOF {
-				fmt.Printf("total tokens = %v || tokens --> %+s\n", tokenCount, tokens)
+				if tokenCount != 3 {
+					t.Errorf("wrong token count - got %d, want 3", tokenCount)
+				}
 				return
 			}
 		}
@@ -190,13 +196,14 @@ func TestMapEmit(t *testing.T) {
 			t.Fatal("lexer timeout")
 		default:
 			token := lex.nextToken()
-			fmt.Println(token)
 
 			tokenCount++
 			tokens = append(tokens, token.value)
 
 			if token.typ == tokenEOF {
-				fmt.Printf("total tokens = %v || tokens --> %+s\n", tokenCount, tokens)
+				if tokenCount != 11 {
+					t.Errorf("wrong token count - got %d, want 11", tokenCount)
+				}
 				return
 			}
 		}
@@ -228,13 +235,13 @@ Cluster {}`
 			t.Fatal("lexer timeout")
 		default:
 			token := lex.nextToken()
-			fmt.Println(token)
-
 			tokenCount++
 			tokens = append(tokens, token.value)
 
 			if token.typ == tokenEOF {
-				fmt.Printf("total tokens = %v || tokens --> %+s\n", tokenCount, tokens)
+				if tokenCount != 21 {
+					t.Errorf("wrong token count - got %d, want 21", tokenCount)
+				}
 				return
 			}
 		}

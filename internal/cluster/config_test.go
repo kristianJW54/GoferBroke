@@ -26,21 +26,17 @@ func TestKeyPathFlatten(t *testing.T) {
 		t.Errorf("Error building complex config file: %v", err)
 	}
 
-	printConfig(cfg)
-
 	var paths []string
 	CollectPaths(reflect.ValueOf(cfg), "", &paths)
 
-	for _, path := range paths {
-		fmt.Println(path)
+	if paths[1] != "SeedServers.0.Host" {
+		t.Errorf("paths[1] does not contain \"SeedServers.0.Host\"")
 	}
 
-	result, _, err := GetByPath(sch, cfg, paths[1])
+	_, _, err = GetByPath(sch, cfg, paths[1])
 	if err != nil {
 		t.Errorf("Error getting by path: %v", err)
 	}
-
-	fmt.Println(result)
 
 }
 
@@ -54,8 +50,6 @@ func TestGenerateConfigDeltas(t *testing.T) {
 		t.Errorf("Error building complex config file: %v", err)
 	}
 
-	printConfig(cfg)
-
 	part := &Participant{
 		keyValues: make(map[string]*Delta, 4),
 	}
@@ -63,6 +57,10 @@ func TestGenerateConfigDeltas(t *testing.T) {
 	err = GenerateConfigDeltas(sch, cfg, part)
 	if err != nil {
 		t.Errorf("Error generating deltas: %v", err)
+	}
+
+	if _, exists := part.keyValues[MakeDeltaKey(CONFIG_DKG, "SeedServers.0.Host")]; !exists {
+		t.Errorf("expected to get delta")
 	}
 
 }
@@ -79,8 +77,6 @@ func TestSliceConfigSchema(t *testing.T) {
 
 	schema := BuildConfigSchema(cfg)
 
-	fmt.Printf("Old port = %s\n", cfg.SeedServers[1].Port)
-
 	newPort := "5000"
 
 	err := SetByPath(schema, cfg, "SeedServers.1.Port", newPort)
@@ -91,7 +87,6 @@ func TestSliceConfigSchema(t *testing.T) {
 	if cfg.SeedServers[1].Port != newPort {
 		t.Errorf("New port is %s, wanted %s", cfg.SeedServers[1].Port, newPort)
 	}
-	fmt.Printf("New port = %s\n", cfg.SeedServers[1].Port)
 
 }
 
@@ -145,8 +140,6 @@ func TestSetComplexConfigSchema(t *testing.T) {
 	}
 
 	t.Run("Set nested map inside slice", func(t *testing.T) {
-		oldVal := cfg.ComplexNest.ArrayMapTest[1]["two"]
-		t.Logf("Old value of two: %d", oldVal)
 
 		err := SetByPath(schema, &cfg, "ComplexNest.ArrayMapTest.1.two", 9)
 		if err != nil {
@@ -154,7 +147,6 @@ func TestSetComplexConfigSchema(t *testing.T) {
 		}
 
 		newVal := cfg.ComplexNest.ArrayMapTest[1]["two"]
-		t.Logf("New value of two: %d", newVal)
 
 		if newVal != 9 {
 			t.Errorf("Expected two to be 9, got %d", newVal)
@@ -162,8 +154,6 @@ func TestSetComplexConfigSchema(t *testing.T) {
 	})
 
 	t.Run("Set slice inside map value", func(t *testing.T) {
-		oldVal := cfg.ComplexNest.MapTest["bar"][1]
-		t.Logf("Old value of bar[1]: %d", oldVal)
 
 		err := SetByPath(schema, &cfg, "ComplexNest.MapTest.bar.1", 42)
 		if err != nil {
@@ -171,7 +161,6 @@ func TestSetComplexConfigSchema(t *testing.T) {
 		}
 
 		newVal := cfg.ComplexNest.MapTest["bar"][1]
-		t.Logf("New value of bar[1]: %d", newVal)
 
 		if newVal != 42 {
 			t.Errorf("Expected bar[1] to be 42, got %d", newVal)
@@ -230,7 +219,6 @@ func TestGetComplexConfigSchema(t *testing.T) {
 
 	t.Run("Get nested map inside slice", func(t *testing.T) {
 		valCheck := cfg.ComplexNest.ArrayMapTest[1]["two"]
-		t.Logf("Want for value of two: %d", valCheck)
 
 		val, _, err := GetByPath(schema, &cfg, "ComplexNest.ArrayMapTest.1.two")
 		if err != nil {
@@ -241,7 +229,6 @@ func TestGetComplexConfigSchema(t *testing.T) {
 		if !ok {
 			t.Errorf("Expected value to be an int, got %T", val)
 		}
-		t.Logf("Got for value of two: %d", newVal)
 
 		if newVal != valCheck {
 			t.Errorf("Expected two to be %d, got %d", valCheck, newVal)
@@ -250,7 +237,6 @@ func TestGetComplexConfigSchema(t *testing.T) {
 
 	t.Run("Get slice inside map value", func(t *testing.T) {
 		valCheck := cfg.ComplexNest.MapTest["bar"][0]
-		t.Logf("Want for value of bar[0]: %d", valCheck)
 
 		val, _, err := GetByPath(schema, &cfg, "ComplexNest.MapTest.bar.0")
 		if err != nil {
@@ -261,7 +247,6 @@ func TestGetComplexConfigSchema(t *testing.T) {
 		if !ok {
 			t.Errorf("Expected value to be an int, got %T", val)
 		}
-		t.Logf("Got for value of bar[0]: %d", newVal)
 
 		if newVal != valCheck {
 			t.Errorf("Expected bar[0] to be %d, got %d", valCheck, newVal)
@@ -309,8 +294,6 @@ func TestBuildComplexConfig(t *testing.T) {
 		t.Errorf("Error building complex config file: %v", err)
 	}
 
-	printConfig(cfg)
-
 }
 
 func TestNodeConfigFile(t *testing.T) {
@@ -323,8 +306,6 @@ func TestNodeConfigFile(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error building complex config file: %v", err)
 	}
-
-	printConfig(nodeCfg)
 
 }
 
@@ -353,8 +334,5 @@ func TestConfigCheckSum(t *testing.T) {
 	if cs == cs2 {
 		t.Errorf("Config checksums should be different")
 	}
-
-	fmt.Printf("cs --> %s\n", cs)
-	fmt.Printf("cs2 --> %s\n", cs2)
 
 }

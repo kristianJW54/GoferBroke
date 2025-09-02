@@ -306,7 +306,7 @@ func HandleError(err error, callback func(gbErrors []*GBError) error) error {
 		}
 	}
 
-	// Default: return the most severe or last one
+	// Default: return the most severe or last one?
 	return nil
 }
 
@@ -390,6 +390,7 @@ const (
 	GENERATE_DIGEST_CODE              = 97
 	SEND_GSA_CODE                     = 98
 	MOVE_TO_CONNECTED_CODE            = 99
+	CONTEXT_ERROR_CODE                = 100
 )
 
 var KnownNetworkErrors = map[int]*GBError{
@@ -461,6 +462,7 @@ var KnownInternalErrors = map[int]*GBError{
 	GENERATE_DIGEST_CODE:              &GBError{Code: GENERATE_DIGEST_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to generate digest"},
 	SEND_GSA_CODE:                     &GBError{Code: SEND_GSA_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "send goss_syn_ack failed"},
 	MOVE_TO_CONNECTED_CODE:            &GBError{Code: MOVE_TO_CONNECTED_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "failed to move temporary connection to conn store"},
+	CONTEXT_ERROR_CODE:                &GBError{Code: CONTEXT_ERROR_CODE, ErrLevel: INTERNAL_ERR_LEVEL, ErrMsg: "context error"},
 }
 
 var (
@@ -509,6 +511,7 @@ var (
 	GenerateDigestErr         = KnownInternalErrors[GENERATE_DIGEST_CODE]
 	SendGSAErr                = KnownInternalErrors[SEND_GSA_CODE]
 	MoveToConnectedErr        = KnownInternalErrors[MOVE_TO_CONNECTED_CODE]
+	ContextErr                = KnownInternalErrors[CONTEXT_ERROR_CODE]
 )
 
 var (

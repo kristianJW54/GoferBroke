@@ -21,10 +21,8 @@ func TestParserToken(t *testing.T) {
 		t.Error(err)
 	}
 
-	fmt.Printf("%v number of nodes in tree\n", len(token.Nodes))
-
-	for _, node := range token.Nodes {
-		walkNode(node, "")
+	if len(token.Nodes) != 1 {
+		t.Error("Expected one node in tree")
 	}
 
 }
@@ -38,10 +36,8 @@ func TestParserWithTestFile(t *testing.T) {
 		t.Error(err)
 	}
 
-	fmt.Printf("%v number of nodes in tree\n", len(cfg.Nodes))
-
-	for _, node := range cfg.Nodes {
-		walkNode(node, "")
+	if len(cfg.Nodes) != 4 {
+		t.Error("Expected 4 nodes in tree")
 	}
 
 }
@@ -55,10 +51,8 @@ func TestParserWithBasicFile(t *testing.T) {
 		t.Error(err)
 	}
 
-	fmt.Printf("%v number of nodes in tree\n", len(cfg.Nodes))
-
-	for _, node := range cfg.Nodes {
-		walkNode(node, "")
+	if len(cfg.Nodes) != 3 {
+		t.Error("Expected 3 nodes in tree")
 	}
 
 }
@@ -94,24 +88,4 @@ func walkNode(n Node, indent string) {
 	default:
 		fmt.Printf("%sUnknown node type: %T\n", indent, node)
 	}
-}
-
-func TestASTPathValues(t *testing.T) {
-
-	filePath := "../../Configs/cluster/complex_test_config.conf"
-
-	root, err := ParseConfigFromFile(filePath)
-	if err != nil {
-		t.Error(err)
-	}
-
-	av, err := StreamAST(root)
-	if err != nil {
-		t.Error(err)
-	}
-
-	for i, paths := range av {
-		fmt.Printf("%d -> path = %s\n", i, paths.Path)
-	}
-
 }

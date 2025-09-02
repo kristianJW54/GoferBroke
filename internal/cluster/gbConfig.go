@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"github.com/kristianJW54/GoferBroke/internal/Network"
-	cfg "github.com/kristianJW54/GoferBroke/internal/config"
+	config3 "github.com/kristianJW54/GoferBroke/internal/config"
 	"math"
 	"reflect"
 	"strconv"
@@ -55,8 +55,6 @@ const (
 	DEFAULT_FAILURE_TIMEOUT           = uint16(300)
 	DEFAULT_FAULTY_FLAG               = uint16(10000)
 )
-
-// TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
 
 type GbClusterConfig struct {
 	Name        string
@@ -219,6 +217,8 @@ func InitDefaultNodeConfig() *GbNodeConfig {
 		},
 	}
 }
+
+// TODO May want a config mutex lock?? -- Especially if gossip messages will mean our server makes changes to it's config
 
 //=====================================================================
 // Config Checksum
@@ -475,8 +475,6 @@ func buildSchemaRecursive(v reflect.Value, parent string, out map[string]*Config
 	}
 
 }
-
-// TODO From here onwards - need proper GBError handling and returning
 
 //=====================================================================
 // Config Type Coercion
@@ -905,7 +903,7 @@ func SetConfigValue(schema map[string]*ConfigSchema, cfg any, path string, value
 func BuildConfigFromFile(filePath string, config any) (map[string]*ConfigSchema, error) {
 
 	// Parse the config from file into an ast tree
-	root, err := cfg.ParseConfigFromFile(filePath)
+	root, err := config3.ParseConfigFromFile(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -917,7 +915,7 @@ func BuildConfigFromFile(filePath string, config any) (map[string]*ConfigSchema,
 	//}
 
 	// Use the ast tree to populate a list of path values to populate the config with
-	pathValues, err := cfg.StreamAST(root)
+	pathValues, err := config3.StreamAST(root)
 	if err != nil {
 		return nil, err
 	}
@@ -938,7 +936,7 @@ func BuildConfigFromFile(filePath string, config any) (map[string]*ConfigSchema,
 func BuildConfigFromString(data string, config any) (map[string]*ConfigSchema, error) {
 
 	// Parse the config from file into an ast tree
-	root, err := cfg.ParseConfig(data)
+	root, err := config3.ParseConfig(data)
 	if err != nil {
 		return nil, err
 	}
@@ -950,7 +948,7 @@ func BuildConfigFromString(data string, config any) (map[string]*ConfigSchema, e
 	//}
 
 	// Use the ast tree to populate a list of path values to populate the config with
-	pathValues, err := cfg.StreamAST(root)
+	pathValues, err := config3.StreamAST(root)
 	if err != nil {
 		return nil, err
 	}
@@ -1204,15 +1202,6 @@ func GenerateConfigDeltas(schema map[string]*ConfigSchema, cfg *GbClusterConfig,
 // Config Internal API
 //=====================================================================
 
-func (cfg *GbClusterConfig) getNodeSelection() uint8 {
-
-	if cfg.Cluster.NodeSelectionPerGossipRound == 0 {
-		return 1
-	}
-
-	return cfg.Cluster.NodeSelectionPerGossipRound
-}
-
 //=====================================================================
 
 func ParseNodeNetworkTypeFromString(s string) (NodeNetworkType, error) {
@@ -1313,9 +1302,14 @@ func ParseClusterConfigNetworkType(netType string) (ClusterNetworkType, error) {
 
 }
 
-//TODO Need config initializer here to set values and any defaults needed
+func (cfg *GbClusterConfig) GetNodeSelection() uint8 {
 
-// TODO need update functions and methods for when server runs background processes to update config based on gossip
+	if cfg.Cluster.NodeSelectionPerGossipRound == 0 {
+		return 1
+	}
+
+	return cfg.Cluster.NodeSelectionPerGossipRound
+}
 
 func ConfigInitialNetworkCheck(cluster *GbClusterConfig, node *GbNodeConfig, reach Network.NodeNetworkReachability) error {
 
@@ -1391,6 +1385,3 @@ func ConfigInitialNetworkCheck(cluster *GbClusterConfig, node *GbNodeConfig, rea
 	return fmt.Errorf("unknown cluster network type - %d", c)
 
 }
-
-// Need to do a further config check for LOCAL and loopback
-// TODO Encapsulate as much as we can into a validateConfig() check so we can pass a cluster config in and return on any errors

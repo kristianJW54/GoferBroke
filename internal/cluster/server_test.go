@@ -319,8 +319,8 @@ func TestDecreaseNodeConnCount(t *testing.T) {
 func TestUpdateHeartBeat(t *testing.T) {
 
 	keyValues := map[string]*Delta{
-		"system:heartbeat": &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
-		"system:tcp":       &Delta{KeyGroup: SYSTEM_DKG, ValueType: INTERNAL_D, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
+		"system:heartbeat": &Delta{KeyGroup: SYSTEM_DKG, ValueType: D_BYTE_TYPE, Key: _HEARTBEAT_, Version: 1640995200, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
+		"system:tcp":       &Delta{KeyGroup: SYSTEM_DKG, ValueType: D_BYTE_TYPE, Key: _ADDRESS_, Version: 1640995200, Value: []byte("127.0.0.0.1:8081")},
 	}
 
 	// Initialize config with the seed server address
@@ -396,6 +396,7 @@ func TestServerRunningTwoNodes(t *testing.T) {
 	}
 
 	go gbs.StartServer()
+	time.Sleep(100 * time.Millisecond)
 	go gbs2.StartServer()
 
 	time.Sleep(5 * time.Second)
@@ -555,7 +556,7 @@ func TestServerUpdateSelfConfig(t *testing.T) {
 	// Now we change a config in the cluster
 
 	if _, exists := gbs.clusterMap.participants[gbs.ServerName].keyValues["config:Name"]; exists {
-		err := gbs.updateClusterConfigDeltaAndSelf(deltaUpdate.Key, deltaUpdate)
+		err := gbs.UpdateClusterConfigDeltaAndSelf(deltaUpdate.Key, deltaUpdate)
 		if err != nil {
 			t.Errorf("%v", err)
 		}

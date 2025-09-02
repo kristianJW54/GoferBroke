@@ -1,137 +1,38 @@
 package cluster
 
 import (
-	"context"
+	"encoding/binary"
 	"fmt"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
-	"sync"
+	"log/slog"
+	"math"
+	"reflect"
 	"time"
 )
-
-type gossipRoundEvent struct {
-	timestamp        time.Time
-	peer             string
-	deltasSent       int
-	deltasReceived   int
-	duration         time.Duration
-	deadlineExceeded bool
-}
-
-type gossipRoundEventBuffer struct {
-	mu     sync.Mutex
-	ctx    context.Context
-	cancel context.CancelFunc
-	events []*gossipRoundEvent
-	ch     chan *gossipRoundEvent
-	max    int
-	idx    int
-	full   bool
-}
-
-func newGossipRoundEventBuffer(max int) *gossipRoundEventBuffer {
-	ctx, cancel := context.WithCancel(context.Background())
-	buf := &gossipRoundEventBuffer{
-		events: make([]*gossipRoundEvent, max),
-		ch:     make(chan *gossipRoundEvent, 1024), // or tunable
-		max:    max,
-		ctx:    ctx,
-		cancel: cancel,
-	}
-	go buf.run()
-	return buf
-}
-
-func (b *gossipRoundEventBuffer) addToBuffer(e *gossipRoundEvent) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.events[b.idx] = e
-	b.idx = (b.idx + 1) % len(b.events)
-	if b.idx == 0 {
-		b.full = true
-	}
-}
-
-func (b *gossipRoundEventBuffer) Add(e *gossipRoundEvent) {
-	select {
-	case b.ch <- e:
-	case <-b.ctx.Done():
-		// Drop silently
-	default:
-		// Optionally track overflow
-	}
-}
-
-func (b *gossipRoundEventBuffer) run() {
-	for {
-		select {
-		case e := <-b.ch:
-			b.addToBuffer(e)
-		case <-b.ctx.Done():
-			return
-		}
-	}
-}
-
-func (b *gossipRoundEventBuffer) Snapshot() []*gossipRoundEvent {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	var out []*gossipRoundEvent
-	if b.full {
-		out = append(out, b.events[b.idx:]...)
-		out = append(out, b.events[:b.idx]...)
-	} else {
-		out = append(out, b.events[:b.idx]...)
-	}
-	return out
-}
-
-func (b *gossipRoundEventBuffer) Summary() (avg time.Duration, max, min time.Duration, count int) {
-	evts := b.Snapshot()
-	if len(evts) == 0 {
-		return
-	}
-
-	var total time.Duration
-	max, min = evts[0].duration, evts[0].duration
-	for _, e := range evts {
-		d := e.duration
-		total += d
-		if d > max {
-			max = d
-		}
-		if d < min {
-			min = d
-		}
-	}
-	avg = total / time.Duration(len(evts))
-	count = len(evts)
-	return
-}
 
 //===========================================================
 // gopsutil system metrics
 
 type systemMetrics struct {
-	hostName       string
-	uptime         uint64
-	procs          uint64
-	os             string
-	platform       string
-	platformFamily string
-	hostID         string
-	totalMemory    uint64
-	freeMemory     uint64
-	usedMemory     uint64
-	usedPercent    float64
-	cpuVendorID    string
-	cpuFamily      string
-	cores          int32
-	modelName      string
-	mhz            float64
-	cacheSize      int32
+	HostName       string
+	Uptime         uint64
+	Procs          uint64
+	Os             string
+	Platform       string
+	PlatformFamily string
+	HostID         string
+	TotalMemory    uint64
+	FreeMemory     uint64
+	UsedMemory     uint64
+	UsedPercent    float64
+	CpuVendorID    string
+	CpuFamily      string
+	Cores          int32
+	ModelName      string
+	Mhz            float64
+	CacheSize      int32
 }
 
 // New metrics will just be function calling the gopsutil functions and assigning
@@ -141,33 +42,51 @@ type systemMetrics struct {
 
 // While we do this - use the process to also check for other updates to our server like resolving addr and making sure it's up-to-date and reachable
 
-func newSystemMetrics() *systemMetrics {
+func fieldNames[T any]() []string {
+	var t T
+	ty := reflect.TypeOf(t)
+	if ty.Kind() == reflect.Pointer {
+		ty = ty.Elem()
+	}
+	names := make([]string, 0, ty.NumField())
+	for i := 0; i < ty.NumField(); i++ {
+		sf := ty.Field(i)
+		if sf.PkgPath == "" { // exported only
+			names = append(names, sf.Name)
+		}
+	}
+	return names
+}
+
+func newSystemMetrics() (*systemMetrics, []string) {
 
 	h, _ := host.Info()
 	c, _ := cpu.Info()
 	v, _ := mem.VirtualMemory()
 
 	sm := &systemMetrics{
-		hostName:       h.Hostname,
-		uptime:         h.Uptime,
-		procs:          h.Procs,
-		os:             h.OS,
-		platform:       h.Platform,
-		platformFamily: h.PlatformFamily,
-		hostID:         h.HostID,
-		totalMemory:    v.Total,
-		freeMemory:     v.Free,
-		usedMemory:     v.Used,
-		usedPercent:    v.UsedPercent,
-		cpuVendorID:    c[0].VendorID,
-		cpuFamily:      c[0].Family,
-		cores:          c[0].Cores,
-		modelName:      c[0].ModelName,
-		mhz:            c[0].Mhz,
-		cacheSize:      c[0].CacheSize,
+		HostName:       h.Hostname,
+		Uptime:         h.Uptime,
+		Procs:          h.Procs,
+		Os:             h.OS,
+		Platform:       h.Platform,
+		PlatformFamily: h.PlatformFamily,
+		HostID:         h.HostID,
+		TotalMemory:    v.Total,
+		FreeMemory:     v.Free,
+		UsedMemory:     v.Used,
+		UsedPercent:    v.UsedPercent,
+		CpuVendorID:    c[0].VendorID,
+		CpuFamily:      c[0].Family,
+		Cores:          c[0].Cores,
+		ModelName:      c[0].ModelName,
+		Mhz:            c[0].Mhz,
+		CacheSize:      c[0].CacheSize,
 	}
 
-	return sm
+	fields := fieldNames[*systemMetrics]()
+
+	return sm, fields
 
 }
 
@@ -181,5 +100,262 @@ func getMemory() {
 
 	// almost every return value is a struct
 	fmt.Printf("Total: %v, Free:%v, Used:%v, UsedPercent:%f%%\n", v.Total, v.Free, v.Used, v.UsedPercent)
+
+}
+
+// percChanged returns true if new differs from old by >= threshold%.
+// Example: threshold = 0.10 means "10%".
+func percChanged(old, new uint64, threshold float64) bool {
+	if old == 0 { // avoid div-by-zero, treat as always changed
+		return new != 0
+	}
+	diff := float64(new) - float64(old)
+	perc := diff / float64(old)
+	if perc < 0 {
+		perc = -perc
+	}
+	return perc >= threshold
+}
+
+// hasPercChanged returns true if new differs from old by >= threshold%.
+// Example: threshold=0.10 means "10%".
+func hasPercChanged(old, new float64, threshold float64) bool {
+	if old == 0 {
+		// if old is 0, treat any nonzero new as "changed"
+		return new != 0
+	}
+	diff := (new - old) / old
+	if diff < 0 {
+		diff = -diff // absolute value
+	}
+	return diff >= threshold
+}
+
+// --------------------------------------------
+// Server background tasks
+
+// TODO Implement in future release
+// Memory checker
+// One for updating metric deltas
+// Another for reaching memory limit and sending event
+
+func (s *GBServer) runMetricCheck() {
+
+	h, _ := host.Info()
+	c, _ := cpu.Info()
+	v, _ := mem.VirtualMemory()
+
+	metrics := s.sm
+	fields := s.smMap
+
+	now := time.Now().Unix()
+
+	for _, f := range fields {
+
+		switch f {
+		case "HostName":
+			if h.Hostname != metrics.HostName {
+				metrics.HostName = h.Hostname
+				err := s.updateSelfInfo(&Delta{
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _HOST_,
+					ValueType: D_STRING_TYPE,
+					Version:   now,
+					Value:     []byte(h.Hostname),
+				})
+				if err != nil {
+					s.logger.Error("failed to update hostname during background run", slog.String("error", err.Error()))
+				}
+			}
+		case "Uptime":
+			if h.Uptime != metrics.Uptime {
+				// not implemented
+			}
+		case "Procs":
+			if h.Procs != metrics.Procs {
+				// not implemented
+			}
+		case "Os":
+			if h.OS != metrics.Os {
+				// not implemented
+			}
+		case "Platform":
+			if h.Platform != metrics.Platform {
+				metrics.Platform = h.Platform
+				err := s.updateSelfInfo(&Delta{
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _PLATFORM_,
+					ValueType: D_STRING_TYPE,
+					Version:   now,
+					Value:     []byte(h.Platform),
+				})
+				if err != nil {
+					s.logger.Error("failed to update platform during background run", slog.String("error", err.Error()))
+				}
+			}
+		case "PlatformFamily":
+			if h.PlatformFamily != metrics.PlatformFamily {
+				metrics.PlatformFamily = h.PlatformFamily
+				err := s.updateSelfInfo(&Delta{
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _PLATFORM_FAMILY_,
+					ValueType: D_STRING_TYPE,
+					Version:   now,
+					Value:     []byte(h.PlatformFamily),
+				})
+				if err != nil {
+					s.logger.Error("failed to update platform family during background run", slog.String("error", err.Error()))
+				}
+			}
+		case "HostID":
+			if h.HostID != metrics.HostID {
+				metrics.HostID = h.HostID
+				err := s.updateSelfInfo(&Delta{
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _HOST_ID_,
+					ValueType: D_STRING_TYPE,
+					Version:   now,
+					Value:     []byte(h.HostID),
+				})
+				if err != nil {
+					s.logger.Error("failed to update hostID during background run", slog.String("error", err.Error()))
+				}
+			}
+		case "TotalMemory":
+			if v.Total != metrics.TotalMemory {
+
+				if percChanged(metrics.TotalMemory, v.Total, 0.10) {
+
+					metrics.TotalMemory = v.Total
+
+					total := make([]byte, 8)
+					binary.BigEndian.PutUint64(total, v.Total)
+					err := s.updateSelfInfo(&Delta{
+						KeyGroup:  SYSTEM_DKG,
+						Key:       _TOTAL_MEMORY_,
+						ValueType: D_UINT64_TYPE,
+						Version:   now,
+						Value:     total,
+					})
+					if err != nil {
+						s.logger.Error("failed to update total memory during background run", slog.String("error", err.Error()))
+					}
+				}
+
+			}
+		case "FreeMemory":
+			if v.Free != metrics.FreeMemory {
+				if percChanged(metrics.FreeMemory, v.Free, 0.10) {
+
+					metrics.FreeMemory = v.Free
+
+					free := make([]byte, 8)
+					binary.BigEndian.PutUint64(free, v.Free)
+					err := s.updateSelfInfo(&Delta{
+						KeyGroup:  SYSTEM_DKG,
+						Key:       _FREE_MEMORY_,
+						ValueType: D_UINT64_TYPE,
+						Version:   now,
+						Value:     free,
+					})
+					if err != nil {
+						s.logger.Error("failed to update free memory during background run", slog.String("error", err.Error()))
+					}
+				}
+			}
+		case "UsedMemory":
+			if v.Used != metrics.UsedMemory {
+				if percChanged(metrics.UsedMemory, v.Used, 0.10) {
+					metrics.UsedMemory = v.Used
+
+					used := make([]byte, 8)
+					binary.BigEndian.PutUint64(used, v.Used)
+					err := s.updateSelfInfo(&Delta{
+						KeyGroup:  SYSTEM_DKG,
+						Key:       _USED_MEMORY_,
+						ValueType: D_UINT64_TYPE,
+						Version:   now,
+						Value:     used,
+					})
+					if err != nil {
+						s.logger.Error("failed to update used memory during background run", slog.String("error", err.Error()))
+					}
+				}
+			}
+		case "UsedPercent":
+			if v.UsedPercent != metrics.UsedPercent {
+				if hasPercChanged(metrics.UsedPercent, v.UsedPercent, 0.10) {
+
+					s.logger.Warn("percentage of memory used has increased/decreased by more than 10%",
+						slog.Float64("previous", metrics.UsedPercent),
+						slog.Float64("new", v.UsedPercent))
+
+					metrics.UsedPercent = v.UsedPercent
+
+					perc := make([]byte, 8)
+					binary.BigEndian.PutUint64(perc, math.Float64bits(v.UsedPercent))
+					err := s.updateSelfInfo(&Delta{
+						KeyGroup:  SYSTEM_DKG,
+						Key:       _MEM_PERC_,
+						ValueType: D_FLOAT64_TYPE,
+						Version:   now,
+						Value:     perc,
+					})
+					if err != nil {
+						s.logger.Error("failed to update used percentage during background run", slog.String("error", err.Error()))
+					}
+				}
+			}
+		case "CpuVendorID":
+			if c[0].VendorID != metrics.CpuVendorID {
+				// not implemented
+			}
+		case "CpuFamily":
+			if c[0].Family != metrics.CpuFamily {
+				// not implemented
+			}
+		case "Cores":
+			if c[0].Cores != metrics.Cores {
+				metrics.Cores = c[0].Cores
+				cores := make([]byte, 4)
+				binary.BigEndian.PutUint32(cores, uint32(c[0].Cores))
+				err := s.updateSelfInfo(&Delta{
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _CPU_CORES_,
+					ValueType: D_INT32_TYPE,
+					Version:   now,
+					Value:     cores,
+				})
+				if err != nil {
+					s.logger.Error("failed to update cores during background run", slog.String("error", err.Error()))
+				}
+			}
+		case "ModelName":
+			if c[0].ModelName != metrics.ModelName {
+				metrics.ModelName = c[0].ModelName
+				err := s.updateSelfInfo(&Delta{
+					KeyGroup:  SYSTEM_DKG,
+					Key:       _CPU_MODE_NAME_,
+					ValueType: D_STRING_TYPE,
+					Version:   now,
+					Value:     []byte(c[0].ModelName),
+				})
+				if err != nil {
+					s.logger.Error("failed to update model name during background run", slog.String("error", err.Error()))
+				}
+			}
+		case "Mhz":
+			if c[0].Mhz != metrics.Mhz {
+				// not implemented
+			}
+		case "CacheSize":
+			if c[0].CacheSize != metrics.CacheSize {
+				// not implemented
+			}
+		default:
+			return // drop
+		}
+
+	}
 
 }

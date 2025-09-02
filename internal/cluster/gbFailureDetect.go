@@ -467,17 +467,26 @@ func (s *GBServer) checkSuspectedNode() {
 				part.f.state = FAULTY
 				part.f.mu.Unlock()
 
+				now := time.Now().Unix()
+
 				s.fail.mu.Lock()
 				delete(s.fail.suspectedNodes, node)
 				s.fail.failedNodes[node] = struct{}{}
 				s.fail.mu.Unlock()
 
-				err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: node, Version: time.Now().Unix(), ValueType: D_UINT8_TYPE, Value: []byte{FAULTY}})
+				err := s.updateSelfInfo(&Delta{KeyGroup: FAILURE_DKG, Key: node, Version: now, ValueType: D_UINT8_TYPE, Value: []byte{FAULTY}})
 				if err != nil {
 					return
 				}
 
 				part.pm.Lock()
+
+				var address string
+				addr, exists := part.keyValues[MakeDeltaKey(ADDR_DKG, _ADDRESS_)]
+				if exists {
+					address = string(addr.Value)
+				}
+
 				clear(part.keyValues)
 				part.keyValues = map[string]*Delta{
 					MakeDeltaKey(FAILURE_DKG, node): {
@@ -490,6 +499,17 @@ func (s *GBServer) checkSuspectedNode() {
 				}
 				part.maxVersion = time.Now().Unix()
 				part.pm.Unlock()
+
+				s.DispatchEvent(Event{
+					Time:      now,
+					EventType: ParticipantMarkedDead,
+					Payload: ParticipantFaulty{
+						Time:    now,
+						Name:    node,
+						Address: address,
+					},
+					Message: "participant marked dead",
+				})
 
 				return
 

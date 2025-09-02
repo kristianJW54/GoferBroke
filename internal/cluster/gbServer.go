@@ -296,7 +296,8 @@ type GBServer struct {
 	jsonBuffer  *jsonRingBuffer
 
 	//Metrics
-	sm *systemMetrics
+	sm    *systemMetrics
+	smMap []string
 
 	bj *backgroundJobs
 
@@ -482,6 +483,9 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 
 	fail := newFailureControl(gbConfig)
 
+	// Init metrics
+	sm, smMap := newSystemMetrics()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bj := newBackgroundJobScheduler()
@@ -528,7 +532,8 @@ func NewServer(serverName string, gbConfig *GbClusterConfig, schema map[string]*
 		slogHandler: slogHandler,
 		jsonBuffer:  jsonBuffer,
 
-		sm: newSystemMetrics(),
+		sm:    sm,
+		smMap: smMap,
 
 		bj: bj,
 
@@ -582,6 +587,7 @@ func (s *GBServer) initSelf() {
 
 	// register our background jobs
 	s.bj.registerBackgroundJob(5*time.Second, 1*time.Second, s.checkSuspectedNode)
+	s.bj.registerBackgroundJob(8*time.Second, 1*time.Second, s.runMetricCheck)
 
 }
 
@@ -1571,10 +1577,10 @@ func (s *GBServer) updateHeartBeat(timeOfUpdate int64) error {
 	return nil
 }
 
-// In this method we will have received a new cluster config value - we will have already updated our view of the participant in the
+// UpdateClusterConfigDeltaAndSelf In this method we will have received a new cluster config value - we will have already updated our view of the participant in the
 // cluster map but because this is a cluster config we will also need to update our own cluster map delta and finally apply that
 // change to the actual cluster config struct of our server
-func (s *GBServer) updateClusterConfigDeltaAndSelf(key string, d *Delta) error {
+func (s *GBServer) UpdateClusterConfigDeltaAndSelf(key string, d *Delta) error {
 
 	s.serverLock.RLock()
 	sch := s.configSchema
@@ -1706,11 +1712,3 @@ func (s *GBServer) startBJ() {
 		}
 	}
 }
-
-// --------------------------------------------
-// Server background tasks
-
-// TODO Implement in future release
-// Memory checker
-// One for updating metric deltas
-// Another for reaching memory limit and sending event

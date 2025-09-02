@@ -77,7 +77,6 @@ func processTestError(ctx *errorContext, e *ErrorEvent, time int64, message stri
 	switch e.Severity {
 
 	case CollectAndAct:
-		fmt.Println("got test error with a severity of CollectAndAct")
 		return nil
 	default:
 		return nil

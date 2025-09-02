@@ -3,54 +3,50 @@ package cluster
 import (
 	"context"
 	"errors"
-	"net"
 	"testing"
 	"time"
 )
 
 func TestConnectToSeedErrorEvent(t *testing.T) {
 
-	lc := net.ListenConfig{}
+	nodeCfg := `
+				Name = "t-1"
+				Host = "localhost"
+				Port = "8081"
+				IsSeed = True
+				Internal {
+					DisableGossip = False
+					DisableStartupMessage = True
+					DefaultLoggerEnabled = False
+				}
 
-	ip := "localhost" // Use the full IP address
-	port := "8081"
+`
 
-	// Initialize config with the seed server address
-	config := &GbClusterConfig{
-		SeedServers: []*Seeds{
-			{
-				Host: ip,
-				Port: port,
-			},
-		},
-		Cluster: &ClusterOptions{
-			ClusterNetworkType: C_LOCAL,
-		},
-	}
+	cfg := `Name = "default-local-cluster"
+	SeedServers = [
+	   {Host: "localhost", Port: "8081"},
+	]
+	Cluster {
+	   ClusterNetworkType = "LOCAL"
+	   NodeSelectionPerGossipRound = 1
+	}`
 
-	nodeConfig := &GbNodeConfig{
-		Internal: &InternalOptions{},
-	}
-
-	gbs2, err := NewServer("test-server", config, nil, nodeConfig, "localhost", "8082", "8083", lc)
+	gbs, err := NewServerFromConfigString(nodeCfg, cfg)
 	if err != nil {
-		t.Errorf("TestServerRunningTwoNodes should not have returned an error - got %v", err)
-		return
+		t.Errorf("error creating new server: %v", err)
 	}
 
 	// Start gbs2 first so that it dials an unresponsive seed to get error
-	go gbs2.StartServer()
+	go gbs.StartServer()
 
 	// Create a child context with timeout to catch if the error event doesn't pull us out
-	ctx, cancel := context.WithTimeout(gbs2.ServerContext, 5*time.Second)
+	ctx, cancel := context.WithTimeout(gbs.ServerContext, 5*time.Second)
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			t.Fatal("❌ Shutdown did not happen in time (timeout expired)")
-		} else {
-			t.Log("✅ Shutdown happened successfully before timeout")
 		}
 	}
 

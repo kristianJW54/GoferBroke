@@ -357,11 +357,11 @@ func TestDeltaHeap(t *testing.T) {
 
 	// Create keyValues with PBDelta messages
 	var keyValues = map[string]*Delta{
-		"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: INTERNAL_D, Version: 1640995203, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
-		"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: INTERNAL_D, Version: 1640995205, Value: []byte("A")},
-		"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: INTERNAL_D, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
-		"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: INTERNAL_D, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
-		"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: INTERNAL_D, Version: 1640995208, Value: []byte("Another simple string.")},
+		"TEST:key6":  {KeyGroup: "TEST", Key: "key6", ValueType: D_BYTE_TYPE, Version: 1640995203, Value: []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")},
+		"TEST:key7":  {KeyGroup: "TEST", Key: "key7", ValueType: D_BYTE_TYPE, Version: 1640995205, Value: []byte("A")},
+		"TEST:key8":  {KeyGroup: "TEST", Key: "key8", ValueType: D_BYTE_TYPE, Version: 1640995206, Value: []byte("Test serialization with repeated values. Test serialization with repeated values.")},
+		"TEST:key9":  {KeyGroup: "TEST", Key: "key9", ValueType: D_BYTE_TYPE, Version: 1640995207, Value: []byte("😃 Emoji support test.")},
+		"TEST:key10": {KeyGroup: "TEST", Key: "key10", ValueType: D_BYTE_TYPE, Version: 1640995208, Value: []byte("Another simple string.")},
 	}
 
 	dh := make(deltaHeap, 5)

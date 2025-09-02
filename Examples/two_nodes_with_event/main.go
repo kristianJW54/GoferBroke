@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"github.com/kristianJW54/GoferBroke/pkg/gossip"
 	"time"
 )
@@ -27,7 +28,7 @@ func main() {
 		Port:        "8081",
 		NetworkType: "LOCAL",
 		IsSeed:      true,
-		ClientPort:  "8083",
+		ClientPort:  "8084",
 	}
 
 	// Now we create our node-1
@@ -89,6 +90,20 @@ func main() {
 	node1.Stop()
 
 	time.Sleep(1 * time.Second)
+
+	err = node1.Update(cluster.CONFIG_DKG, "Name", &cluster.Delta{
+		KeyGroup:  cluster.CONFIG_DKG,
+		Key:       "Name",
+		Version:   time.Now().Unix(),
+		ValueType: cluster.D_STRING_TYPE,
+		Value:     []byte("did this work?"),
+	})
+
+	fmt.Println(string(node1.GetDeltaFromSelf(cluster.CONFIG_DKG, "Name").Value))
+
+	if err != nil {
+		fmt.Println(err)
+	}
 
 	fmt.Println("end of example")
 

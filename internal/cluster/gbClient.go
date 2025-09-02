@@ -619,6 +619,7 @@ func (c *gbClient) enqueueProto(data []byte) {
 	c.enqueueProtoAndFlush(data, false) // Just queue and signal the write loop
 }
 
+// TODO May want responses in their own file?
 //===================================================================================
 // Response Handling
 //===================================================================================
@@ -673,10 +674,10 @@ func (c *gbClient) responseCleanup(rsp *response, respID uint16) {
 func (c *gbClient) waitForResponse(rsp *response) (responsePayload, error) {
 	select {
 	case <-rsp.ctx.Done():
-		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, nil, "response context err -> %s", rsp.ctx.Err())
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, Errors.ContextErr, "response context err -> %s", rsp.ctx.Err())
 
 	case <-c.srv.ServerContext.Done():
-		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, nil, "server context err -> %s", c.srv.ServerContext.Err())
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.ResponseErr, Errors.ContextErr, "server context err -> %s", c.srv.ServerContext.Err())
 
 	case msg := <-rsp.ch:
 		return msg, nil
@@ -725,20 +726,16 @@ func (c *gbClient) getResponseChannel(id uint16) (*response, error) {
 	if id == 0 {
 		return nil, nil
 	}
-
 	responseChan, exists := c.rh.resp.Load(int(id))
 	if !exists {
 		return nil, fmt.Errorf("no response channel found for reqID %d", id)
 	}
-
 	// Type assertion to ensure we have the correct type
 	rsp, ok := responseChan.(*response)
 	if !ok {
 		return nil, fmt.Errorf("invalid type assertion for response channel, reqID: %d", c.ph.reqID)
 	}
-
 	return rsp, nil
-
 }
 
 // Lock not held on entry
@@ -763,6 +760,8 @@ func (c *gbClient) qProtoWithResponse(ctx context.Context, id uint16, proto []by
 // Parse Processors
 //===================================================================================
 
+// processDeltaHdr is used by the Parser to parse the header message of a payload and stores it in the embedded parsed header
+// within the client struct
 func (c *gbClient) processDeltaHdr(arg []byte) error {
 
 	c.ph.command = arg[0]
@@ -780,21 +779,14 @@ func (c *gbClient) processDeltaHdr(arg []byte) error {
 // Dispatcher
 //===================================================================================
 
+// processMessage is used to call a dispatch based on client type
 func (c *gbClient) processMessage(message []byte) {
 
-	//log.Printf("[DEBUG] %s Received message: %s", c.srv.ServerName, string(message))
-	//log.Printf("[DEBUG] %s Processing message with ID: %d", c.srv.ServerName, c.ph.id)
-
 	if c.cType == NODE {
-
 		c.dispatchNodeCommands(message)
-
 	}
-
 	if c.cType == CLIENT {
-
 		c.dispatchClientCommands(message)
-
 	}
 }
 

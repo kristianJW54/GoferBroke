@@ -3,6 +3,7 @@ package cluster
 import (
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 )
 
 const (
@@ -76,12 +77,9 @@ func (c *gbClient) ProcessHeaderFromParser(header []byte) {
 		// Message length
 		msgLength := header[6:8]
 		c.ph.msgLength = binary.BigEndian.Uint16(msgLength) - 2
-		// Header length
-		//headerLength := header[8:10]
-		//c.header.headerLength = binary.BigEndian.Uint16(headerLength) - 2
 
 	} else {
-		fmt.Printf("header length mismatch - got %v, expected %v\n", int(c.ph.headerLength), len(header))
+		c.srv.logger.Warn("header length mismatch", slog.Int("got", int(c.ph.headerLength)), slog.Int("expected", len(header)))
 		return
 	}
 
@@ -98,8 +96,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 	rounds++
 	var i int
 
-	//log.Printf("packet = %v", packet)
-
 	for i = 0; i < len(packet); i++ {
 
 		b = packet[i]
@@ -108,7 +104,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 		case Start:
 			switch b {
 			case 1:
-				//log.Printf("position = %v -- b = %v", c.position, b)
 				c.position = i
 				c.state = ParsingHeader
 			default:
@@ -134,7 +129,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 					c.argBuf = nil
 				} else {
 					if c.position > i-c.drop {
-						fmt.Printf("invalid header range: position=%d, i=%d, drop=%d\n", c.position, i, c.drop)
 						c.state = Start
 						c.argBuf = nil
 						c.drop = 0
@@ -143,7 +137,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 					header = packet[c.position : i-c.drop]
 				}
 
-				//log.Printf("bytes passed to header %v", header)
 				c.ProcessHeaderFromParser(header)
 
 				// Reset drop byte
@@ -152,7 +145,7 @@ func (c *gbClient) ParsePacket(packet []byte) {
 				c.position = i + 1
 
 				// Assume we have parsed a complete and can move to next state
-				//log.Printf("switching to payload")
+
 				c.state = ParsingPayload
 
 				// Check if we can skip byte index with msgLength
@@ -167,8 +160,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 			}
 
 		case ParsingPayload:
-
-			//log.Printf("i = %v -- position = %v -- msgLen = %v", i, c.position, c.header.msgLength)
 
 			if c.msgBuf != nil {
 				// accumulate (split case)
@@ -203,7 +194,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 		case StateREnd:
 
 			if b != '\r' {
-				c.srv.logger.Info("nope 1 -- b", "=", b)
 				return
 			}
 
@@ -216,7 +206,6 @@ func (c *gbClient) ParsePacket(packet []byte) {
 		case StateNEnd:
 
 			if b != '\n' {
-				c.srv.logger.Info("nope 2 -- b", "=", b)
 				return
 			}
 

@@ -226,19 +226,6 @@ type DeltaUpdateEvent struct {
 
 // Do not need these internal handlers
 
-func (ed *EventDispatcher) HandleDeltaUpdateEvent(e Event) error {
-
-	payload, ok := e.Payload.(*DeltaUpdateEvent)
-	if !ok {
-		return fmt.Errorf("invalid payload for DeltaUpdateEvent")
-	}
-
-	fmt.Printf("Delta %s updated: \nPrevious value: %s\nNew value: %s\n", payload.DeltaKey, payload.PreviousValue, payload.CurrentValue)
-
-	return nil
-
-}
-
 //---------------------------------------------------
 // Delta Added
 
@@ -279,4 +266,13 @@ type NewParticipantJoin struct {
 	Name       string
 	Time       int64
 	MaxVersion int64
+}
+
+//---------------------------------------------------
+// Participant declared dead
+
+type ParticipantFaulty struct {
+	Name    string
+	Time    int64
+	Address string
 }

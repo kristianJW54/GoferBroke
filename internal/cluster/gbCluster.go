@@ -986,7 +986,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 
 	select {
 	case <-ctx.Done():
-		return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, nil, "context: %s", ctx.Err())
+		return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, Errors.ContextErr, "context: %s", ctx.Err())
 	default:
 
 	}
@@ -997,7 +997,7 @@ func (s *GBServer) sendDigest(ctx context.Context, conn *gbClient) (responsePayl
 	r, err := conn.waitForResponseAndBlock(resp)
 	if err != nil {
 		if childCtx.Err() != nil {
-			return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, err, "child context: %s", childCtx.Err())
+			return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, err, "child context: %s", ctx.Err())
 		}
 		return responsePayload{}, Errors.ChainGBErrorf(Errors.GenerateDigestErr, err, "")
 	}
@@ -1510,7 +1510,7 @@ func (s *GBServer) startGossipRound() {
 	//}
 
 	s.configLock.RLock()
-	ns := s.gbClusterConfig.getNodeSelection()
+	ns := s.gbClusterConfig.GetNodeSelection()
 	s.configLock.RUnlock()
 
 	pl := len(s.clusterMap.participantArray)
@@ -1599,14 +1599,26 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// Stage 1: Send Digest
 	resp, err := s.sendDigest(ctx, conn)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			// Handle indirect probe here
-			err = s.handleIndirectProbe(ctx, node)
-			if err != nil {
-				// We only return as we should have handled and logged the error already
-				return
+		handledErr := Errors.HandleError(err, func(gbErrors []*Errors.GBError) error {
+
+			for _, gbError := range gbErrors {
+				if gbError.Code == Errors.CONTEXT_ERROR_CODE {
+					probeErr := s.handleIndirectProbe(ctx, node)
+					if probeErr != nil {
+						// May want to take action here?
+						s.logger.Error(probeErr.Error())
+						return nil
+					}
+					return nil
+				}
 			}
-			// Any more cases here?
+
+			return err
+		})
+		if handledErr != nil {
+			s.logger.Error("error gossiping with node", slog.String("node", node),
+				slog.String("error", handledErr.Error()))
+			return
 		}
 		return
 	}

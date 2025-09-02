@@ -8,11 +8,6 @@ import (
 )
 
 /*
-Discovery Header -> Then participant address info (Name-Address)
-+-----------+
-|  Type		|
-| (1 bytes) |
-+-----------+
 
 Digest Header -> Then participant (Name-MaxVersion)
 +----------+-------------------+--------------+------------+--------------------------------+
@@ -44,16 +39,6 @@ const (
 	DREQ // Discovery Request - list of participants with known addresses
 	DRES // Discovery Response - list of participants with mapped addresses
 )
-
-// TODO Remove these and use actual value type const we made --> D__XXX_TYPE
-const (
-	CONFIG_D = iota
-	STATE_D
-	INTERNAL_D
-	CLIENT_D
-)
-
-type cfgCheckSumResponseArray []string
 
 // Discovery for initial connection phase of a node
 type discoveryValues struct {
@@ -573,7 +558,6 @@ func (s *GBServer) serialiseACKDelta(selectedDelta map[string][]Delta, deltaSize
 	return deltaBuf, nil
 }
 
-// TODO Better error handling to pass up
 func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 
 	if delta[0] != byte(DELTA_TYPE) {
@@ -1029,18 +1013,10 @@ func (s *GBServer) serialiseClusterDigestWithArray(subsetArray []string, subsetS
 
 }
 
-//TODO When we deserialise into a tmp struct such as fullDigest - we need to make sure we kill the reference as soon as
-// we are done with it OR find a way to compare against the raw bytes in flight to avoid over allocating memory
-
 // This is still in the read-loop where the parser has called a handler for a specific command
 // the handler has then needed to deSerialise in order to then carry out the command
 // if needed, the server will be reached through the client struct which has the server embedded
 func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err error) {
-
-	//CLRF Check
-	//if bytes.HasSuffix(digest, []byte(CLRF)) {
-	//	bytes.Trim(digest, CLRF)
-	//}
 
 	length := len(digestRaw)
 	lengthMeta := binary.BigEndian.Uint32(digestRaw[1:5])
@@ -1049,7 +1025,6 @@ func deSerialiseDigest(digestRaw []byte) (senderName string, fd *fullDigest, err
 	}
 
 	sizeMeta := binary.BigEndian.Uint16(digestRaw[5:7])
-	//log.Println("sizeMeta = ", sizeMeta)
 
 	digestMap := make(fullDigest)
 
@@ -1198,9 +1173,7 @@ func deserialiseGSA(gsa []byte) (string, *fullDigest, *clusterDelta, error) {
 		return senderName, digest, nil, nil
 	}
 
-	// TODO Think it's here
 	deltaBuf := gsa[digestLength:]
-	//deltaLength := binary.BigEndian.Uint32(gsa[1:5])
 
 	if deltaBuf[0] != DELTA_TYPE {
 		return "", nil, nil, Errors.DeserialiseTypeErr

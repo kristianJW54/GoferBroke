@@ -17,6 +17,14 @@ type Node struct {
 
 }
 
+type Delta struct {
+	KeyGroup  string
+	Key       string
+	Version   int64
+	ValueType uint8
+	Value     []byte
+}
+
 //=====================================================================
 // Node Config
 //=====================================================================

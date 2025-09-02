@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 )
@@ -50,8 +51,6 @@ func TestParser(t *testing.T) {
 		parser: p,
 	}
 
-	fmt.Printf("FULL LENGTH = %v\n", len(testGSA))
-
 	testPacket := testGSA
 
 	// Simulate packet splits:
@@ -64,30 +63,63 @@ func TestParser(t *testing.T) {
 
 	packets := [][]byte{broken1, broken2, broken3}
 
-	for i, packet := range packets {
-		fmt.Printf("---- PACKET %d ----\n", i)
+	for _, packet := range packets {
 		c.ParsePacket(packet)
-		fmt.Printf("state --> %v\n", c.parser.state)
 	}
+
+	if c.msgBuf == nil {
+		t.Errorf("should have parsed into msgBuf")
+	}
+
+	// Take header out of test packet
+	if !bytes.Equal(testPacket[12:], c.msgBuf) {
+		t.Errorf("test packet does not match msgBuf")
+	}
+
 }
 
 func TestSplitPacketFromChunks(t *testing.T) {
+	p := parser{
+		state:    Start,
+		position: 0,
+		drop:     0,
+		argBuf:   make([]byte, 0),
+	}
+
 	client := &gbClient{
-		parser: parser{},
+		parser: p,
 	}
 
 	chunks := [][]byte{split1, split2}
 
-	for i, chunk := range chunks {
-		t.Logf("🔹 Feeding chunk %d (%d bytes)", i+1, len(chunk))
-
+	for _, chunk := range chunks {
 		client.ParsePacket(chunk)
 	}
+
+	s := len(split1[12:])
+
+	checkBuf := make([]byte, len(split1[12:])+len(split2))
+	copy(checkBuf, split1[12:])
+	copy(checkBuf[s:], split2)
+
+	fmt.Println(checkBuf)
+
+	if !bytes.Equal(checkBuf, client.msgBuf) {
+		t.Errorf("split packets does not match msgBuf")
+	}
+
 }
 
 func BenchmarkParseThroughput(b *testing.B) {
+	p := parser{
+		state:    Start,
+		position: 0,
+		drop:     0,
+		argBuf:   make([]byte, 0),
+	}
+
 	client := &gbClient{
-		parser: parser{},
+		parser: p,
 	}
 
 	// Simulate one big stream from real packet chunks

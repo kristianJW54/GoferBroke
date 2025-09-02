@@ -154,14 +154,14 @@ type DeltaAddedEvent struct {
 	DeltaValue []byte
 }
 
-type NewNodeJoin struct {
-	Name    string
-	Time    int64
-	Address string
-}
-
 type NewParticipantJoin struct {
 	Name       string
 	Time       int64
 	MaxVersion int64
+}
+
+type ParticipantFaulty struct {
+	Name    string
+	Time    int64
+	Address string
 }
