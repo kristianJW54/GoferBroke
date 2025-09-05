@@ -1,11 +1,11 @@
 package gossip
 
 import (
-	"errors"
 	"fmt"
 	"github.com/kristianJW54/GoferBroke/internal/Errors"
 	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"net"
+	"os"
 )
 
 type Node struct {
@@ -17,167 +17,120 @@ type Node struct {
 
 }
 
-type Delta struct {
-	KeyGroup  string
-	Key       string
-	Version   int64
-	ValueType uint8
-	Value     []byte
-}
-
-//=====================================================================
-// Node Config
-//=====================================================================
-
-type NodeConfig struct {
-	Name        string
-	Host        string
-	Port        string
-	NetworkType string
-	IsSeed      bool
-	ClientPort  string
-	config      *cluster.GbNodeConfig
-}
-
-func (nc *NodeConfig) InitConfig() error {
-
-	netType, err := cluster.ParseNodeNetworkTypeFromString(nc.NetworkType)
-	if err != nil {
-		return err
-	}
-
-	cfg := cluster.InitDefaultNodeConfig()
-
-	cfg.Name = nc.Name
-	cfg.Host = nc.Host
-	cfg.Port = nc.Port
-	cfg.ClientPort = nc.ClientPort
-	cfg.IsSeed = nc.IsSeed
-	cfg.NetworkType = netType
-
-	nc.config = cfg
-
-	return nil
-
-}
-
-// Methods for config internal control
-// May need locks if we are modifying internal state during live server...?
-
-func (n *Node) EnableDebug() {
-	n.nodeConfig.Internal.DebugMode = true
-}
-
-func (n *Node) DisableDebug() {
-	n.nodeConfig.Internal.DebugMode = false
-}
-
-func (n *Node) EnableGoRoutineTracking() {
-	n.nodeConfig.Internal.GoRoutineTracking = true
-}
-
-func (n *Node) DisableGoRoutineTracking() {
-	n.nodeConfig.Internal.GoRoutineTracking = false
-}
-
-//=====================================================================
-// Cluster Config
-//=====================================================================
-
-type ClusterConfig struct {
-	Name        string
-	SeedServers []Seeds
-	NetworkType string
-	config      *cluster.GbClusterConfig
-}
-
-type Seeds struct {
-	SeedHost string
-	SeedPort string
-}
-
-func (cc *ClusterConfig) InitConfig() error {
-
-	cNet, err := cluster.ParseClusterNetworkTypeFromString(cc.NetworkType)
-	if err != nil {
-		return err
-	}
-
-	cfg := cluster.InitDefaultClusterConfig()
-
-	if len(cc.SeedServers) == 0 {
-		return errors.New("no seed servers")
-	}
-	ss := make([]*cluster.Seeds, len(cc.SeedServers))
-	for i, server := range cc.SeedServers {
-		ss[i] = &cluster.Seeds{
-			Host: server.SeedHost,
-			Port: server.SeedPort,
-		}
-	}
-
-	cfg.Name = cc.Name
-	cfg.Cluster.ClusterNetworkType = cNet
-	cfg.SeedServers = ss
-
-	cc.config = cfg
-
-	fmt.Printf("seeds = %+v\n", cc.SeedServers)
-
-	return nil
-
-}
-
 //=====================================================================
 // Gossip Node
 //=====================================================================
 
-// TODO may need to change the config to file paths to first parse report errors and then build new node??
+func NewNodeFromConfig(config any, node any) (*Node, error) {
+	var nodeConfig *cluster.GbNodeConfig
+	var clusterConfig *cluster.GbClusterConfig
+	var clusterSchema map[string]*cluster.ConfigSchema
 
-func NewNodeFromConfig(Config *ClusterConfig, node *NodeConfig) (*Node, error) {
+	// --- Handle Node ---
+	switch v := node.(type) {
+	case *NodeConfig:
+		nCfg, err := DeriveFromPkg(v)
+		if err != nil {
+			return nil, err
+		}
+		n, ok := nCfg.(*cluster.GbNodeConfig)
+		if !ok {
+			return nil, fmt.Errorf("expected *cluster.GbNodeConfig, got %T", nCfg)
+		}
+		nodeConfig = n
 
-	if len(Config.SeedServers) == 0 ||
-		Config.SeedServers[0].SeedHost == "" ||
-		Config.SeedServers[0].SeedPort == "" {
+	case string:
+		def := cluster.InitDefaultNodeConfig()
+
+		if info, err := os.Stat(v); err == nil && !info.IsDir() {
+			raw, err := os.ReadFile(v)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read node config file: %w", err)
+			}
+			_, err = cluster.BuildConfigFromString(string(raw), def)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse node config file: %w", err)
+			}
+		} else {
+			_, err := cluster.BuildConfigFromString(v, def)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse node config string: %w", err)
+			}
+		}
+		nodeConfig = def
+	}
+
+	// --- Handle Cluster ---
+	switch v := config.(type) {
+	case *ClusterConfig:
+		cCfg, err := DeriveFromPkg(v)
+		if err != nil {
+			return nil, err
+		}
+		c, ok := cCfg.(*cluster.GbClusterConfig)
+		if !ok {
+			return nil, fmt.Errorf("expected *cluster.GbClusterConfig, got %T", cCfg)
+		}
+		clusterConfig = c
+
+	case string:
+		def := cluster.InitDefaultClusterConfig()
+
+		if info, err := os.Stat(v); err == nil && !info.IsDir() {
+			raw, err := os.ReadFile(v)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read cluster config file: %w", err)
+			}
+			sch, err := cluster.BuildConfigFromString(string(raw), def)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse cluster config file: %w", err)
+			}
+			clusterSchema = sch
+		} else {
+			sch, err := cluster.BuildConfigFromString(v, def)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse cluster config string: %w", err)
+			}
+			clusterSchema = sch
+		}
+		clusterConfig = def
+	}
+
+	// Validate seeds
+	if len(clusterConfig.SeedServers) == 0 ||
+		clusterConfig.SeedServers[0].Host == "" ||
+		clusterConfig.SeedServers[0].Port == "" {
 		return nil, fmt.Errorf("%w - seed host or port is missing", Errors.ClusterConfigErr)
 	}
 
-	err := Config.InitConfig()
-	if err != nil {
-		return nil, err
+	fmt.Printf("seeds = %+v\n", clusterConfig.SeedServers)
+
+	// Build schema (if not already parsed)
+	if clusterSchema == nil {
+		clusterSchema = cluster.BuildConfigSchema(clusterConfig)
 	}
 
-	err = node.InitConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	sch := cluster.BuildConfigSchema(Config.config)
-
+	// Create gossip server
 	gbs, err := cluster.NewServer(
-		node.Name,
-		Config.config,
-		sch,
-		node.config,
-		node.Host,
-		node.Port,
-		node.ClientPort,
+		nodeConfig.Name,
+		clusterConfig,
+		clusterSchema,
+		nodeConfig,
+		nodeConfig.Host,
+		nodeConfig.Port,
+		nodeConfig.ClientPort,
 		net.ListenConfig{},
 	)
 	if err != nil {
-		//return nil, Errors.ChainGBErrorf(Errors.ClusterConfigErr, err, "")
 		return nil, err
 	}
 
-	newNode := &Node{
+	return &Node{
 		server:        gbs,
-		nodeConfig:    node.config,
-		clusterConfig: Config.config,
+		nodeConfig:    nodeConfig,
+		clusterConfig: clusterConfig,
 		handlers:      make(map[string][]string),
-	}
-
-	return newNode, nil
-
+	}, nil
 }
 
 // Starting and stopping

@@ -25,29 +25,34 @@ import (
 func main() {
 
 	// Declare cluster wide config - same for all application instances - changes would be gossiped to nodes and applied
-	clusterConfig := &gossip.ClusterConfig{
-		Name: "database_cluster",
-		SeedServers: []gossip.Seeds{
-			{
-				SeedHost: "localhost",
-				SeedPort: "8081",
-			},
-		},
-		NetworkType: "LOCAL",
+	c, err := gossip.BuildClusterConfig("default-cluster", func(config *gossip.ClusterConfig) error {
+
+		config.SeedServers = []*gossip.Seeds{
+			{Host: "localhost", Port: "8081"},
+		}
+
+		config.Cluster.ClusterNetworkType = gossip.C_LOCAL
+
+		return nil
+
+	})
+	if err != nil {
+		fmt.Println(err)
 	}
 
 	// In production this would be dynamically loaded from environment variables or such to ensure unique instances
-	node1Config := &gossip.NodeConfig{
-		Name:        "node",
-		Host:        "localhost",
-		Port:        "8081",
-		NetworkType: "LOCAL",
-		IsSeed:      true,
-		ClientPort:  "8083",
-	}
+	n, err := gossip.BuildNodeConfig("node", "localhost:8081", func(cfg *gossip.NodeConfig) (*gossip.NodeConfig, error) {
+
+		cfg.NetworkType = gossip.LOCAL
+		cfg.IsSeed = true
+		cfg.ClientPort = "8083"
+
+		return cfg, nil
+
+	})
 
 	// Now we create our node-1
-	node1, err := gossip.NewNodeFromConfig(clusterConfig, node1Config)
+	node1, err := gossip.NewNodeFromConfig(c, n)
 	if err != nil {
 		panic(err)
 	}
@@ -72,17 +77,18 @@ func main() {
 	// nodes in the cluster are available
 
 	// Create node-2 config which would be in a new application instance
-	node2Config := &gossip.NodeConfig{
-		Name:        "node",
-		Host:        "localhost",
-		Port:        "8082",
-		NetworkType: "LOCAL",
-		IsSeed:      false,
-		ClientPort:  "8083",
-	}
+	n2, err := gossip.BuildNodeConfig("node2", "localhost:8082", func(cfg *gossip.NodeConfig) (*gossip.NodeConfig, error) {
+
+		cfg.NetworkType = gossip.LOCAL
+		cfg.IsSeed = false
+		cfg.ClientPort = "8084"
+
+		return cfg, nil
+
+	})
 
 	// Now we create our node-2
-	node2, err := gossip.NewNodeFromConfig(clusterConfig, node2Config)
+	node2, err := gossip.NewNodeFromConfig(c, n2)
 	if err != nil {
 		panic(err)
 	}

@@ -947,7 +947,7 @@ func (s *GBServer) dialSeed() (net.Conn, error) {
 		return conn, nil
 	}
 
-	return nil, fmt.Errorf("failed to dial any seed after %d attempts", retries)
+	return nil, Errors.ChainGBErrorf(Errors.DialSeedErr, nil, "failed to dial single seed [%s]", seeds[0].host)
 }
 
 // seedCheck does a basic check to see if this server's address matches a configured seed server address.

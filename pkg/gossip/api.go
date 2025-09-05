@@ -7,11 +7,13 @@ import (
 	"time"
 )
 
-//type DeltaAPI interface {
-//	Store(d *Cluster.Delta) error
-//	Update(group, key string, d *Cluster.Delta) error
-//	GetAll() map[string]Cluster.Delta
-//}
+type Delta struct {
+	KeyGroup  string
+	Key       string
+	Version   int64
+	ValueType uint8
+	Value     []byte
+}
 
 type ValueType int
 
@@ -124,4 +126,8 @@ func (n *Node) GetDeltaFromSelf(keyGroup, key string) Delta {
 
 	return nd
 
+}
+
+func (n *Node) GetClusterName() string {
+	return n.clusterConfig.Name
 }
