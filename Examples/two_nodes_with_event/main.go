@@ -82,6 +82,23 @@ func main() {
 		panic(err)
 	}
 
+	if _, err := node2.OnEvent(gossip.DeltaUpdated, func(event gossip.Event) error {
+
+		fmt.Printf("Handler received event: type=%v, message=%s\n", event.Type(), event.Message())
+
+		delta, ok := event.Payload().(*gossip.DeltaUpdateEvent)
+		if !ok {
+			return fmt.Errorf("event type error")
+		}
+
+		fmt.Printf("\n%s Received updated delta --> %s \nValue: %s\n", "node-1", delta.DeltaKey, string(delta.CurrentValue))
+
+		return nil
+
+	}); err != nil {
+		panic(err)
+	}
+
 	time.Sleep(5 * time.Second)
 
 	newDelta := gossip.CreateNewDelta("test", "key1", gossip.STRING, []byte("Hello there :)"))
@@ -90,6 +107,15 @@ func main() {
 	}
 
 	time.Sleep(5 * time.Second)
+
+	updateDelta := gossip.CreateNewDelta("test", "key1", gossip.STRING, []byte("I am updated"))
+	err = node1.Update("test", "key1", updateDelta)
+	if err != nil {
+		panic(err)
+	}
+
+	time.Sleep(5 * time.Second)
+
 	node2.Stop()
 	time.Sleep(1 * time.Second)
 	node1.Stop()

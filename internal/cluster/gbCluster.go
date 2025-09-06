@@ -523,6 +523,16 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 							// Need to think about how to handle error
 							_ = s.updateSelfInfo(v) // locks a different participant (self), so safe
 						}
+
+						if v.Key != _HEARTBEAT_ {
+							s.DispatchEvent(Event{
+								DeltaUpdated,
+								time.Now().Unix(),
+								de,
+								"Delta updated",
+							})
+						}
+
 					}
 				})
 
@@ -562,16 +572,6 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 						return Errors.ChainGBErrorf(Errors.AddGSAErr, err, "")
 					}
 
-				}
-
-				// Event call for delta updated
-				if v.Key != _HEARTBEAT_ {
-					s.DispatchEvent(Event{
-						DeltaUpdated,
-						time.Now().Unix(),
-						de,
-						"Delta updated",
-					})
 				}
 
 			}
