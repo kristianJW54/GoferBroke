@@ -1237,10 +1237,6 @@ func (c *gbClient) sendGossSynAck(sender string, digest *fullDigest) error {
 
 			cd, e := deserialiseDelta(delta.msg)
 			if e != nil {
-				c.srv.logger.Info("received error when deserialising delta response",
-					slog.String("error", e.Error()),
-					slog.String("sender", sender),
-				)
 				return
 			}
 
@@ -1636,7 +1632,7 @@ func (s *GBServer) gossipWithNode(ctx context.Context, node string) {
 	// Stage 3: Send goss_ack
 	ack, err := s.prepareACK(sender, fdValue)
 	if err != nil || ack == nil {
-		conn.sendErrResp(uint16(0), resp.respID, Errors.NoDigestErr.Net())
+		conn.sendErrResp(uint16(0), resp.respID, Errors.DeltaUpdateNoDeltaErr.Net())
 		return
 	}
 

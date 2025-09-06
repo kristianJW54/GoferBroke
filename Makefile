@@ -1,14 +1,18 @@
-# Binary and source
-BINARY_NAME=goferbroke
-MAIN_PACKAGE=./cmd/main.go
+# =============================
+# Project
+# =============================
+BINARY_NAME := goferbroke
+MAIN_PACKAGE := ./cmd/server
 
+# =============================
 # Git version info
-VERSION=$(shell git describe --tags --always --dirty)
-COMMIT=$(shell git rev-parse HEAD)
+# =============================
+VERSION      := $(shell git describe --tags --always)
+COMMIT       := $(shell git rev-parse --short HEAD)
 
 # Set correct package for ldflags
 VERSION_PKG=github.com/kristianJW54/GoferBroke/internal/version
-LDFLAGS=-X '$(VERSION_PKG).Version=$(VERSION)' -X '$(VERSION_PKG).Commit=$(COMMIT)'
+LDFLAGS=-X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT)
 
 # Default build
 build:

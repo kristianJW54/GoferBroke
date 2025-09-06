@@ -99,7 +99,7 @@ Sync object/player/entity data in real-time between peers.
 
 - Async Logging and Log Buffers ✅
 
-- Add Memory Management Delta Updates and Events
+- Add Memory Management Delta Updates and Events ✅
 
 - Build out Client Commands and Connection Handling
 
@@ -130,24 +130,32 @@ GoferBroke has a custom lexer/parser if wanting to load from file, or we can dec
 
 ```go
 // Declare cluster wide config - same for all application instances - changes would be gossiped to nodes and applied
-clusterConfig := &gossip.ClusterConfig{
-    Name: "database_cluster",
-    SeedServers: []gossip.Seeds{
-        {
-            SeedHost: "localhost",
-            SeedPort: "8081",
-        },
-    },
-    NetworkType: "LOCAL",
+c, err := gossip.BuildClusterConfig("default-cluster", func(config *gossip.ClusterConfig) error {
+
+    config.SeedServers = []*gossip.Seeds{
+        {Host: "localhost", Port: "8081"},
+    }
+
+    config.Cluster.ClusterNetworkType = gossip.C_LOCAL
+
+    return nil
+
+})
+if err != nil {
+    fmt.Println(err)
 }
 
-node1Config := &gossip.NodeConfig{
-    Name:        "node-1", // -- Pulled from envar
-    Host:        "localhost", // -- Pulled from envar
-    Port:        "8081", // -- Pulled from envar
-    NetworkType: "LOCAL", // -- LOCAL as we are using localhost loopback only
-    IsSeed:      true, // If seed then the address would also need to be in cluster config
-    ClientPort:  "8083", // -- What port you want clients (non-nodes) to connect to
+n, err := gossip.BuildNodeConfig("node", "localhost:8081", func(cfg *gossip.NodeConfig) (*gossip.NodeConfig, error) {
+
+    cfg.NetworkType = gossip.LOCAL
+    cfg.IsSeed = true
+    cfg.ClientPort = "8083"
+
+    return cfg, nil
+
+})
+if err != nil {
+    fmt.Println(err)
 }
 
 ```
@@ -161,13 +169,17 @@ In your application you would want to dynamically load new `node` configs for ea
 But for this example we will launch both nodes on the same machine.
 
 ```go
-node2Config := &gossip.NodeConfig{
-    Name:        "node-2",
-    Host:        "localhost",
-    Port:        "8082", // -- different port to node-1 (pulled from envar ideally)
-    NetworkType: "LOCAL",
-    IsSeed:      false, // -- We are not a seed and so shouldn't have our address in cluster config
-    ClientPort:  "8083",
+n2, err := gossip.BuildNodeConfig("node2", "localhost:8082", func(cfg *gossip.NodeConfig) (*gossip.NodeConfig, error) {
+
+    cfg.NetworkType = gossip.LOCAL
+    cfg.IsSeed = false
+    cfg.ClientPort = "8084"
+
+    return cfg, nil
+
+})
+if err != nil {
+    fmt.Println(err)
 }
 ```
 
@@ -175,12 +187,12 @@ node2Config := &gossip.NodeConfig{
 3. Start gossiping - and that's it!
 
 ```go
-node1, err := gossip.NewNodeFromConfig(clusterConfig, node1Config)
+node1, err := gossip.NewNodeFromConfig(c, n)
 if err != nil {
     panic(err)
 }
 
-node2, err := gossip.NewNodeFromConfig(clusterConfig, node2Config)
+node2, err := gossip.NewNodeFromConfig(c, n2)
 if err != nil {
     panic(err)
 }
@@ -217,8 +229,6 @@ note: clusterNetwork must be set to the network type of the IP being used e.g.
 - all private nodes = PRIVATE
 - all public nodes = PUBLIC,
 - a mixture of public and private nodes = DYNAMIC
-
-refer to Network_Strategy.md for further info)
 
 ```bash
 go run ./cmd/server -mode=seed -name=test1 -clusterNetwork=PRIVATE -nodeAddr="192.168.1.xxx:5000" -routes="192.168.1.xxx:5000"

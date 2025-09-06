@@ -51,7 +51,6 @@ func main() {
 
 	})
 
-	// Now we create our node-1
 	node1, err := gossip.NewNodeFromConfig(c, n)
 	if err != nil {
 		panic(err)

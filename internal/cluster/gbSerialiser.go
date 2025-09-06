@@ -670,7 +670,7 @@ func deserialiseDelta(delta []byte) (*clusterDelta, error) {
 func deserialiseDeltaGSA(delta []byte, sender string) (*clusterDelta, error) {
 
 	if delta[0] != byte(DELTA_TYPE) {
-		return nil, fmt.Errorf("byte array is of wrong type - %x - should be %x", delta[0], byte(DELTA_TYPE))
+		return nil, fmt.Errorf("GSA byte array is of wrong type - %x - should be %x", delta[0], byte(DELTA_TYPE))
 	}
 
 	length := len(delta)

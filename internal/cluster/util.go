@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/kristianJW54/GoferBroke/internal"
+	"github.com/kristianJW54/GoferBroke/internal/version"
 	"net/http"
 	_ "net/http/pprof"
 	"runtime"
@@ -117,8 +117,8 @@ func printStartup(s *GBServer) {
 	`)
 	fmt.Println()
 	fmt.Printf("  Go Version         : %s\n", runtime.Version())
-	fmt.Printf("  GoferBroke Version : %s\n", internal.Version)
-	fmt.Printf("  GoferBroke Commit  : %s\n", internal.Commit)
+	fmt.Printf("  GoferBroke Version : %s\n", version.Version)
+	fmt.Printf("  GoferBroke Commit  : %s\n", version.Commit)
 	fmt.Printf("  Server Created on  : %s\n", time.Now().Format(time.DateTime))
 	fmt.Printf("  Server UUID        : %s\n", s.ServerName)
 	fmt.Printf("  Name of node       : %s\n", s.name)
