@@ -565,12 +565,14 @@ func (s *GBServer) addGSADeltaToMap(delta *clusterDelta) error {
 				}
 
 				// Event call for delta updated
-				s.DispatchEvent(Event{
-					DeltaUpdated,
-					time.Now().Unix(),
-					de,
-					"Delta updated",
-				})
+				if v.Key != _HEARTBEAT_ {
+					s.DispatchEvent(Event{
+						DeltaUpdated,
+						time.Now().Unix(),
+						de,
+						"Delta updated",
+					})
+				}
 
 			}
 		} else {

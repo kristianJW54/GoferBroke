@@ -25,7 +25,8 @@ const (
 	FLOAT64
 )
 
-func CreateNewDelta(keyGroup, key string, valueType ValueType, value []byte) *cluster.Delta {
+// CreateNewDelta returns a new delta as a value. The delta must then be added to the nodes cluster map for it to be gossiped
+func CreateNewDelta(keyGroup, key string, valueType ValueType, value []byte) Delta {
 
 	var vt int
 
@@ -42,7 +43,7 @@ func CreateNewDelta(keyGroup, key string, valueType ValueType, value []byte) *cl
 		vt = cluster.D_FLOAT64_TYPE
 	}
 
-	return &cluster.Delta{
+	return Delta{
 		KeyGroup:  keyGroup,
 		Key:       key,
 		Version:   time.Now().Unix(),
@@ -51,14 +52,41 @@ func CreateNewDelta(keyGroup, key string, valueType ValueType, value []byte) *cl
 	}
 }
 
-func (n *Node) Add(d *cluster.Delta) error {
+// Add takes a Delta and adds it to the nodes cluster map
+func (n *Node) Add(d Delta) error {
+
+	buff := make([]byte, len(d.Value))
+	copy(buff, d.Value)
+
+	cd := &cluster.Delta{
+		KeyGroup:  d.KeyGroup,
+		Key:       d.Key,
+		Version:   d.Version,
+		ValueType: d.ValueType,
+		Value:     buff,
+	}
+
 	self := n.server.GetSelfInfo()
-	return self.Store(d)
+	return self.Store(cd)
 }
 
-func (n *Node) Update(keyGroup, key string, d *cluster.Delta) error {
+// Update takes a delta and tries to update it with the provided delta - if no delta is found the provided delta is stored as a new
+// entry into the nodes cluster map
+func (n *Node) Update(keyGroup, key string, d Delta) error {
+
+	buff := make([]byte, len(d.Value))
+	copy(buff, d.Value)
+
+	cd := &cluster.Delta{
+		KeyGroup:  d.KeyGroup,
+		Key:       d.Key,
+		Version:   d.Version,
+		ValueType: d.ValueType,
+		Value:     buff,
+	}
+
 	self := n.server.GetSelfInfo()
-	err := self.Update(keyGroup, key, d, func(toBeUpdated, by *cluster.Delta) {
+	err := self.Update(keyGroup, key, cd, func(toBeUpdated, by *cluster.Delta) {
 
 		// copy fields explicitly; clone the slice
 		toBeUpdated.Version = by.Version
@@ -67,7 +95,7 @@ func (n *Node) Update(keyGroup, key string, d *cluster.Delta) error {
 		toBeUpdated.Value = bytes.Clone(by.Value)
 
 		if keyGroup == cluster.CONFIG_DKG {
-			err := n.server.UpdateClusterConfigDeltaAndSelf(key, d)
+			err := n.server.UpdateClusterConfigDeltaAndSelf(key, cd)
 			if err != nil {
 				return
 			}

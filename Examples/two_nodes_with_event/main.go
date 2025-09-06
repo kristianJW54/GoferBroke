@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/kristianJW54/GoferBroke/internal/cluster"
 	"github.com/kristianJW54/GoferBroke/pkg/gossip"
 	"time"
 )
@@ -96,22 +95,6 @@ func main() {
 	node1.Stop()
 
 	time.Sleep(1 * time.Second)
-
-	// We also update our config which will also update our internal config struct
-	err = node1.Update(cluster.CONFIG_DKG, "Name", &cluster.Delta{
-		KeyGroup:  cluster.CONFIG_DKG,
-		Key:       "Name",
-		Version:   time.Now().Unix(),
-		ValueType: cluster.D_STRING_TYPE,
-		Value:     []byte("did this work?"),
-	})
-
-	fmt.Println(string(node1.GetDeltaFromSelf(cluster.CONFIG_DKG, "Name").Value))
-	fmt.Println(node1.GetClusterName()) // Check - should be -> 'did this work?'
-
-	if err != nil {
-		fmt.Println(err)
-	}
 
 	fmt.Println("end of example")
 

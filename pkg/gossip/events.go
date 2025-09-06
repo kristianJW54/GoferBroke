@@ -66,6 +66,8 @@ func mapInternalEventTypeToPublic(internalType cluster.EventEnum) EventEnum {
 		return DeltaUpdated
 	case cluster.NewParticipantAdded:
 		return NewParticipantAdded
+	case cluster.ParticipantMarkedDead:
+		return ParticipantMarkedDead
 	// TODO Add all safe mappings
 	default:
 		return 0 // <-- Define UnknownEvent EventEnum
@@ -111,10 +113,20 @@ func mapInternalPayloadToPublic(eventType cluster.EventEnum, payload any) any {
 			}
 		}
 		// Handle other types...
+	case cluster.ParticipantMarkedDead:
+		if internal, ok := payload.(*cluster.ParticipantFaulty); ok {
+			return &ParticipantFaulty{
+				Name:    internal.Name,
+				Time:    internal.Time,
+				Address: internal.Address,
+			}
+		}
 	}
 	return payload // fallback if unknown
 }
 
+// OnEvent registers an event handler for an event type. Once the event is received, it will be sent to the callback function
+// where it can be handled
 func (n *Node) OnEvent(eventType EventEnum, handler func(Event) error) (string, error) {
 	id := uuid.New().String()
 
