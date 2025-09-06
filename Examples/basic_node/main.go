@@ -56,6 +56,23 @@ func main() {
 		panic(err)
 	}
 
+	if _, err := node1.OnEvent(gossip.ParticipantMarkedDead, func(event gossip.Event) error {
+
+		fmt.Printf("Handler received event: type=%v, message=%s\n", event.Type(), event.Message())
+
+		_, ok := event.Payload().(*gossip.ParticipantFaulty)
+		if !ok {
+			return fmt.Errorf("event type error")
+		}
+
+		fmt.Printf("participant marked dead")
+
+		return nil
+
+	}); err != nil {
+		panic(err)
+	}
+
 	node1.Start()
 
 	// We give some time between node starts so that the two nodes have different time stamps and can defer correctly
@@ -94,9 +111,9 @@ func main() {
 
 	node2.Start()
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 	node2.Stop()
-	time.Sleep(1 * time.Second)
+	time.Sleep(20 * time.Second)
 	node1.Stop()
 
 	time.Sleep(1 * time.Second)
