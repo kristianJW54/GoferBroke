@@ -503,7 +503,7 @@ func (s *GBServer) checkSuspectedNode() {
 				s.DispatchEvent(Event{
 					Time:      now,
 					EventType: ParticipantMarkedDead,
-					Payload: ParticipantFaulty{
+					Payload: &ParticipantFaulty{
 						Time:    now,
 						Name:    node,
 						Address: address,

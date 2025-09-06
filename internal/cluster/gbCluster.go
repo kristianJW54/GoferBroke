@@ -648,7 +648,7 @@ func (s *GBServer) addParticipantFromTmp(name string, tmpP *tmpParticipant) erro
 	s.DispatchEvent(Event{
 		NewParticipantAdded,
 		now,
-		NewParticipantJoin{
+		&NewParticipantJoin{
 			Name:       name,
 			Time:       now,
 			MaxVersion: maxV,
