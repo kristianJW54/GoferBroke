@@ -20,6 +20,10 @@ GoferBroke is a minimal, high-performance gossip protocol designed for embedding
 
 **No brokers. No databases. No event streams. Just peers sharing state.**
 
+## Check out toy-application to see it in action!
+
+[![Gossip protocol demo](./demo.gif)](https://github.com/kristianJW54/GoferBroke-toy-app)
+
 ## Key Concept
 
 > **Every application instance becomes a node in a decentralized system.**
