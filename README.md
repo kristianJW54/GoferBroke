@@ -22,7 +22,20 @@ GoferBroke is a minimal, high-performance gossip protocol designed for embedding
 
 ## Check out toy-application to see it in action!
 
+**Examples shown were taken using 3 servers:**
+> Digital Ocean Droplet in New York
+
+> Digital Ocean Droplet in UK
+
+> Personal Computer in London
+
 [![Gossip protocol demo](./demo.gif)](https://github.com/kristianJW54/GoferBroke-toy-app)
+
+**Average Gossip duration per round within same regions = 3ms**
+
+**Average Gossip duration per round global = 7ms**
+
+----
 
 ## Key Concept
 
