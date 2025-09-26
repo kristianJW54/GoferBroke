@@ -15,10 +15,6 @@ import (
 	"strings"
 )
 
-// TODO
-// Need two top level different configs - cluster config shared by all nodes and gossiped changes
-// Node config specific to the local node
-
 //=============================================================
 // Server Options + Config
 //=============================================================
@@ -54,6 +50,7 @@ const (
 	DEFAULT_FAILURE_PROBE             = uint8(1)
 	DEFAULT_FAILURE_TIMEOUT           = uint16(300)
 	DEFAULT_FAULTY_FLAG               = uint16(10000)
+	DEFAULT_MAX_FLOW_RATE             = float64(10)
 )
 
 type GbClusterConfig struct {
