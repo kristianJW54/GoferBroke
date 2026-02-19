@@ -9,11 +9,23 @@
 > *Turn any app into a distributed system.*
 
 <p align="center">
-  <a href="https://goreportcard.com/report/github.com/kristianJW54/GoferBroke"><img src="https://goreportcard.com/badge/github.com/kristianJW54/GoferBroke" alt="Go Report Card" /></a>
-  <a href="https://pkg.go.dev/github.com/kristianJW54/GoferBroke"><img src="https://pkg.go.dev/badge/github.com/kristianJW54/GoferBroke.svg" alt="Go Reference" /></a>
-  <a href="https://github.com/kristianJW54/GoferBroke/blob/main/LICENSE"><img src="https://img.shields.io/github/license/kristianJW54/GoferBroke.svg?style=flat-square" alt="License" /></a>
+  <a href="https://goreportcard.com/report/github.com/kristianJW54/GoferBroke">
+    <img src="https://goreportcard.com/badge/github.com/kristianJW54/GoferBroke" alt="Go Report Card" />
+  </a>
+
+  <a href="https://pkg.go.dev/github.com/kristianJW54/GoferBroke">
+    <img src="https://pkg.go.dev/badge/github.com/kristianJW54/GoferBroke.svg" alt="Go Reference" />
+  </a>
+
+  <a href="https://github.com/kristianJW54/GoferBroke/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/kristianJW54/GoferBroke.svg?style=flat-square" alt="License" />
+  </a>
+
+  <a href="https://deepwiki.com/kristianJW54/GoferBroke">
+    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" />
+  </a>
 </p>
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/kristianJW54/GoferBroke)
+)
 
 ## Overview
 
